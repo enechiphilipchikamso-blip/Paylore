@@ -58,11 +58,17 @@ lib-cov
 # Rust / Solana
 target/
 .anchor/
+test-ledger/
+ledger/
 
 # Secrets / keys
+target/deploy/*.json
+*keypair.json
+id.json
 *.pem
 *.key
 *private-key*
+
 
 # Runtime data
 pids
