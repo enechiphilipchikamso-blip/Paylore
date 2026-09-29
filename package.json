@@ -1,0 +1,25 @@
+{
+  "name": "paylore",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": "24.21.0",
+    "pnpm": "10.34.5"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @paylore/web dev",
+    "lint": "pnpm --filter @paylore/web lint",
+    "typecheck": "pnpm --filter @paylore/web typecheck && pnpm --filter @paylore/database typecheck",
+    "test": "pnpm --filter @paylore/web test",
+    "test:e2e": "playwright test",
+    "build": "pnpm --filter @paylore/web build",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e",
+    "anchor:build": "anchor build"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.19.0",
+    "typescript": "6.0.3"
+  }
+}
