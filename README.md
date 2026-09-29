@@ -2,10 +2,6 @@
 
 Paylore is a private on-chain payroll platform for crypto-native organizations.
 
-## Batch 01 Foundation
-
-Batch 01 establishes the reproducible development foundation only.
-
 Included:
 
 - pnpm workspace
@@ -23,9 +19,7 @@ Included:
 - repository hygiene
 - Netlify deployment skeleton
 
-No payroll, wallet authentication, workspace, subscription, contributor, Token-2022, reserve, Gas Tank, claim, recovery, ledger, retention, or deletion feature is implemented in Batch 01.
-
-## Exact Batch 01 Versions
+## Versions
 
 | Component | Version |
 |---|---|
