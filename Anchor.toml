@@ -1,0 +1,7 @@
+[toolchain]
+anchor_version = "1.2.0"
+package_manager = "pnpm"
+
+[provider]
+cluster = "Devnet"
+wallet = "~/.config/solana/id.json"
