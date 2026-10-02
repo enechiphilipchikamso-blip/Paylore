@@ -87,3 +87,17 @@ jobs:
 
       - name: Anchor build
         run: anchor build
+
+      - name: Upload build and test artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-outputs
+          path: |
+            apps/web/.next/
+            playwright-report/
+            test-results/
+            target/deploy/*.so
+            target/idl/
+            target/types/
+          if-no-files-found: ignore
