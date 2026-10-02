@@ -10,7 +10,7 @@ const baseEnv = {
   SOLANA_RPC_PRIMARY: "https://api.devnet.solana.com",
   DATABASE_URL:
     "postgresql://user:pass@localhost:5432/paylore"
-};
+} as const;
 
 describe("parseConfig", () => {
   it("accepts valid configuration", () => {
