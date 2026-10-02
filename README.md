@@ -39,32 +39,3 @@ Included:
 | Rust | 1.89.0 |
 | Anchor CLI | 1.2.0 |
 | Solana CLI | 4.1.2 |
-
-## Repository Structure
-
-```text
-paylore/
-├── .devcontainer/
-├── .github/
-│   └── workflows/
-├── apps/
-│   └── web/
-│       └── src/
-│           ├── app/
-│           └── server/
-├── packages/
-│   └── database/
-│       └── src/
-├── programs/
-│   └── payroll/
-├── tests/
-│   └── e2e/
-├── .env.example
-├── Anchor.toml
-├── Cargo.toml
-├── netlify.toml
-├── package.json
-├── pnpm-workspace.yaml
-├── playwright.config.ts
-├── rust-toolchain.toml
-└── tsconfig.base.json
