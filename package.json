@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "pnpm --filter @paylore/web dev",
     "lint": "pnpm --filter @paylore/web lint",
-    "typecheck": "pnpm --filter @paylore/web typecheck && pnpm --filter @paylore/database typecheck",
+    "typecheck": "pnpm --filter @paylore/web typecheck && pnpm --filter @paylore/database typecheck && tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @paylore/web test",
     "test:e2e": "playwright test",
     "build": "pnpm --filter @paylore/web build",
