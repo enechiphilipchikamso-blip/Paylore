@@ -29,7 +29,7 @@ Included:
 | React | 19.3.0 |
 | React DOM | 19.3.0 |
 | TypeScript | 6.0.3 |
-| ESLint | 10.10.0 |
+| ESLint | 9.39.5 |
 | eslint-config-next | 16.3.6 |
 | Zod | 4.6.5 |
 | Drizzle ORM | 0.45.3 |
