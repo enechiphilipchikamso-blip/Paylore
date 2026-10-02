@@ -8,5 +8,8 @@ edition = "2021"
 license = "UNLICENSED"
 publish = false
 
+[profile.release]
+overflow-checks = true
+
 [workspace.dependencies]
 anchor-lang = "=1.2.0"
