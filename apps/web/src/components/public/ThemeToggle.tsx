@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 
 type Theme = "light" | "dark" | "system";
 
@@ -22,25 +22,34 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("system");
+  const selectRef = useRef<HTMLSelectElement>(null);
 
   useEffect(() => {
+    const select = selectRef.current;
+
+    if (!select) {
+      return;
+    }
+
     try {
       const storedTheme = localStorage.getItem(STORAGE_KEY);
 
       if (isTheme(storedTheme)) {
-        setTheme(storedTheme);
+        select.value = storedTheme;
         applyTheme(storedTheme);
       } else {
+        select.value = "system";
         applyTheme("system");
       }
     } catch {
+      select.value = "system";
       applyTheme("system");
     }
+
+    select.dataset.themeReady = "true";
   }, []);
 
   function handleChange(nextTheme: Theme) {
-    setTheme(nextTheme);
     applyTheme(nextTheme);
 
     try {
@@ -54,8 +63,9 @@ export function ThemeToggle() {
     <label className="theme-control">
       <span className="theme-control__label">Theme</span>
       <select
+        ref={selectRef}
         aria-label="Theme"
-        value={theme}
+        defaultValue="system"
         onChange={(event) =>
           handleChange(event.target.value as Theme)
         }

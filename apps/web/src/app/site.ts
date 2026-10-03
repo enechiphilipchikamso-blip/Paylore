@@ -31,7 +31,7 @@ const configuredSiteOrigin = [
 export const siteOrigin =
   configuredSiteOrigin?.origin ?? LOCAL_DEVELOPMENT_ORIGIN;
 
-export const metadataBase = configuredSiteOrigin;
+export const metadataBase = new URL(siteOrigin);
 
 export const publicRoutes = [
   "/",

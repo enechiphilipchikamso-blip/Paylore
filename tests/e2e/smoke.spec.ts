@@ -48,6 +48,7 @@ test.describe("public experience", () => {
       name: "Theme"
     });
 
+    await expect(theme).toHaveAttribute("data-theme-ready", "true");
     await theme.selectOption("dark");
 
     await expect(theme).toHaveValue("dark");
@@ -129,7 +130,7 @@ test.describe("public experience", () => {
     expect(twitterCard).toBe("summary_large_image");
   });
 
-  test("manifest and icon resources load", async ({ request }) => {
+  test("manifest and icon resources load", async ({ page, request }) => {
     const manifest = await request.get(
       "/manifest.webmanifest"
     );
@@ -166,6 +167,8 @@ test.describe("public experience", () => {
     for (const assetPath of [
       "/brand/paylore.svg",
       "/brand/paylore.png",
+      "/icons/favicon.svg",
+      "/icons/favicon-180x180.png",
       "/icons/paylore-192x192.png",
       "/icons/paylore-512x512.png",
       "/icons/paylore-180x180.png"
@@ -173,12 +176,33 @@ test.describe("public experience", () => {
       const asset = await request.get(assetPath);
       expect(asset.ok()).toBeTruthy();
     }
+
+    const favicon = await request.get("/icons/favicon.svg");
+    const faviconSvg = await favicon.text();
+    expect(faviconSvg).toContain('fill="#f7f9fc"');
+    expect(faviconSvg).toContain('transform="translate(0 -18)"');
+
+    const brandLogo = await request.get("/brand/paylore.svg");
+    expect(await brandLogo.text()).toContain(
+      'transform="translate(0 -18)"'
+    );
+
+    await page.goto("/");
+
+    await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+      "href",
+      "/icons/favicon.svg"
+    );
+    await expect(
+      page.locator('link[rel="apple-touch-icon"]')
+    ).toHaveAttribute("href", "/icons/favicon-180x180.png");
   });
 
-  test("robots and sitemap contain public routes only", async ({
-    request
-  }) => {
-    const robots = await request.get("/robots.txt");
+  test("robots and sitemap contain public routes only", async ({ page }) => {
+    const robots = await page.goto("/robots.txt");
+    if (!robots) {
+      throw new Error("No response received for /robots.txt");
+    }
     expect(robots.ok()).toBeTruthy();
 
     const robotsText = await robots.text();
@@ -186,7 +210,10 @@ test.describe("public experience", () => {
     expect(robotsText).toContain("Disallow: /api/");
     expect(robotsText).toContain("Sitemap:");
 
-    const sitemap = await request.get("/sitemap.xml");
+    const sitemap = await page.goto("/sitemap.xml");
+    if (!sitemap) {
+      throw new Error("No response received for /sitemap.xml");
+    }
     expect(sitemap.ok()).toBeTruthy();
 
     const sitemapText = await sitemap.text();
@@ -204,9 +231,12 @@ test.describe("public experience", () => {
   });
 
   test("health endpoint retains the Batch 01 safe boundary", async ({
-    request
+    page
   }) => {
-    const response = await request.get("/api/health");
+    const response = await page.goto("/api/health");
+    if (!response) {
+      throw new Error("No response received for /api/health");
+    }
 
     expect([200, 503]).toContain(response.status());
 

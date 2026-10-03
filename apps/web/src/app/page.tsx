@@ -45,7 +45,7 @@ export default function Home() {
                 alt=""
                 width={112}
                 height={112}
-                priority
+                loading="eager"
                 unoptimized
               />
             </div>

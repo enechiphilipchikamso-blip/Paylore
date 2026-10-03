@@ -5,6 +5,10 @@
       "node",
       "@playwright/test"
     ],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true
