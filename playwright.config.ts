@@ -5,21 +5,25 @@ import {
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  fullyParallel: false,
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: "html",
+  reporter: [
+    ["line"],
+    ["html"],
+    ["./tests/e2e/merge-video-reporter.ts"]
+  ],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://localhost:3100",
     trace: "retain-on-failure",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure"
+    screenshot: "on",
+    video: "on"
   },
   webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
+    command: "PORT=3100 pnpm dev",
+    url: "http://localhost:3100",
+    reuseExistingServer: false,
     timeout: 120000
   },
   projects: [

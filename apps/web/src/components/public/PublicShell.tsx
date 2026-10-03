@@ -40,7 +40,7 @@ export function PublicShell({
                 alt=""
                 width={40}
                 height={40}
-                priority
+                loading="eager"
                 unoptimized
               />
             </span>

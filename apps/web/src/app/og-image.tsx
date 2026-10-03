@@ -52,10 +52,11 @@ export async function createSocialImage() {
                 background: "#ffffff"
               }}
             >
+              {/* eslint-disable-next-line @next/next/no-img-element -- ImageResponse supports nested images for generated OG images. */}
               <img
                 src={logoSrc}
-                width="72"
-                height="72"
+                width={72}
+                height={72}
                 alt=""
               />
             </div>

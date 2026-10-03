@@ -45,8 +45,8 @@ export const metadata: Metadata = {
     "Solana payroll"
   ],
   icons: {
-    icon: siteConfig.logo,
-    apple: "/icons/paylore-180x180.png"
+    icon: "/icons/favicon.svg",
+    apple: "/icons/favicon-180x180.png"
   },
   openGraph: {
     type: "website",
@@ -76,7 +76,11 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
       <head>
         <script
           dangerouslySetInnerHTML={{
