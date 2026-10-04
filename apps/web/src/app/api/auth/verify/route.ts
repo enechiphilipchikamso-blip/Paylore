@@ -141,17 +141,12 @@ export async function POST(
     }
 
     const challengeInput =
-      challenge.input as Parameters<
-        typeof buildSignInInput
-      > extends never
-        ? never
-        : typeof challenge.input;
+  challenge.input as import("@solana/wallet-standard-features").SolanaSignInInput;
 
     const valid =
       await verifyWalletProof(
         {
-          challengeInput:
-            challengeInput as never,
+          challengeInput,
           expectedMessage:
             challenge.message
         },
