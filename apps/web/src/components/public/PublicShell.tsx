@@ -44,7 +44,10 @@ export function PublicShell({
                 unoptimized
               />
             </span>
-            <span className="brand-lockup__name">Paylore</span>
+
+            <span className="brand-lockup__name">
+              Paylore
+            </span>
           </Link>
 
           <nav
@@ -52,34 +55,56 @@ export function PublicShell({
             aria-label="Primary navigation"
           >
             <ul>
-              {primaryLinks.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href}>{link.label}</Link>
-                </li>
-              ))}
+              {primaryLinks.map(
+                (link) => (
+                  <li key={link.href}>
+                    <Link href={link.href}>
+                      {link.label}
+                    </Link>
+                  </li>
+                )
+              )}
             </ul>
           </nav>
 
           <div className="site-header__actions">
             <ThemeToggle />
+
+            <Link
+              className="auth-link"
+              href="/auth"
+            >
+              Sign in
+            </Link>
           </div>
 
           <details className="mobile-nav">
             <summary>Menu</summary>
+
             <nav aria-label="Mobile navigation">
               <ul>
-                {primaryLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link href={link.href}>{link.label}</Link>
-                  </li>
-                ))}
+                {primaryLinks.map(
+                  (link) => (
+                    <li key={link.href}>
+                      <Link
+                        href={link.href}
+                      >
+                        {link.label}
+                      </Link>
+                    </li>
+                  )
+                )}
               </ul>
             </nav>
           </details>
         </div>
       </header>
 
-      <main id="main-content" className="site-main" tabIndex={-1}>
+      <main
+        id="main-content"
+        className="site-main"
+        tabIndex={-1}
+      >
         {children}
       </main>
 
@@ -100,21 +125,29 @@ export function PublicShell({
                   unoptimized
                 />
               </span>
-              <span className="brand-lockup__name">Paylore</span>
+
+              <span className="brand-lockup__name">
+                Paylore
+              </span>
             </Link>
 
             <p className="site-footer__description">
-              Private on-chain payroll for crypto-native organizations.
+              Private on-chain payroll for
+              crypto-native organizations.
             </p>
           </div>
 
           <nav aria-label="Footer navigation">
             <ul className="site-footer__links">
-              {footerLinks.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href}>{link.label}</Link>
-                </li>
-              ))}
+              {footerLinks.map(
+                (link) => (
+                  <li key={link.href}>
+                    <Link href={link.href}>
+                      {link.label}
+                    </Link>
+                  </li>
+                )
+              )}
             </ul>
           </nav>
         </div>

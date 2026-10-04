@@ -3,6 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { randomBytes } from "node:crypto";
 import {
+  createSession,
   findSessionByTokenHash,
   revokeSessionById,
   revokeSessionByTokenHash,
@@ -124,22 +125,159 @@ export async function createServerSession(
 }> {
   const rawToken =
     randomBytes(32).toString("base64url");
-  const tokenHash = hashOpaqueToken(rawToken);
+
+  const tokenHash =
+    hashOpaqueToken(rawToken);
+
   const issuedAt = new Date();
+
   const expiresAt = new Date(
     issuedAt.getTime() +
       SESSION_HARD_LIFETIME_MS
   );
 
-  await db.insert(
-    await import("@paylore/database").then(
-      ({ sessions }) => sessions
-    )
-  );
+  await createSession(db, {
+    rawTokenHash: tokenHash,
+    userId: input.userId,
+    walletIdentityId: input.walletIdentityId,
+    issuedAt,
+    lastSeenAt: issuedAt,
+    expiresAt
+  });
 
   return {
     rawToken,
     issuedAt,
     expiresAt
   };
+}
+
+export type SessionState =
+  | {
+      status: "unauthenticated";
+    }
+  | {
+      status: "inactivity_expired";
+    }
+  | {
+      status: "hard_expired";
+    }
+  | {
+      status: "authenticated";
+      session: {
+        sessionId: string;
+        userId: string;
+        walletIdentityId: string;
+        walletAddress: string;
+        issuedAt: Date;
+        lastSeenAt: Date;
+        expiresAt: Date;
+      };
+    };
+
+export async function getSessionState(
+  db: Database = getDatabase()
+): Promise<SessionState> {
+  const rawToken =
+    await getSessionTokenFromCookies();
+
+  if (!rawToken) {
+    return {
+      status: "unauthenticated"
+    };
+  }
+
+  const tokenHash =
+    hashOpaqueToken(rawToken);
+
+  const session =
+    await findSessionByTokenHash(
+      db,
+      tokenHash
+    );
+
+  if (!session) {
+    return {
+      status: "unauthenticated"
+    };
+  }
+
+  const now = new Date();
+
+  const evaluation =
+    evaluateSession(
+      {
+        issuedAt: session.issuedAt,
+        lastSeenAt: session.lastSeenAt,
+        expiresAt: session.expiresAt
+      },
+      now
+    );
+
+  if (
+    evaluation.status ===
+    "hard_expired"
+  ) {
+    await revokeSessionById(
+      db,
+      session.id,
+      now
+    );
+
+    return {
+      status: "hard_expired"
+    };
+  }
+
+  if (
+    evaluation.status ===
+    "inactivity_expired"
+  ) {
+    await revokeSessionById(
+      db,
+      session.id,
+      now
+    );
+
+    return {
+      status: "inactivity_expired"
+    };
+  }
+
+  await touchSession(
+    db,
+    session.id,
+    now
+  );
+
+  return {
+    status: "authenticated",
+    session: {
+      sessionId: session.id,
+      userId: session.userId,
+      walletIdentityId:
+        session.walletIdentityId,
+      walletAddress: session.walletAddress,
+      issuedAt: session.issuedAt,
+      lastSeenAt: now,
+      expiresAt: session.expiresAt
+    }
+  };
+}
+
+export async function revokeCurrentSession(
+  db: Database = getDatabase()
+): Promise<void> {
+  const rawToken =
+    await getSessionTokenFromCookies();
+
+  if (!rawToken) {
+    return;
+  }
+
+  await revokeSessionByTokenHash(
+    db,
+    hashOpaqueToken(rawToken),
+    new Date()
+  );
 }
