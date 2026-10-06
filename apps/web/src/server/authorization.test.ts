@@ -6,41 +6,58 @@ import {
 import {
   roleAllows,
   WORKSPACE_ROLE_LABELS
-} from "./authorization";
+} from "./authorization-policy";
 
-describe("workspace authorization", () => {
-  it("keeps the three approved role labels", () => {
-    expect(
-      WORKSPACE_ROLE_LABELS
-        .organization_admin
-    ).toBe(
-      "Organization Administrator"
+describe(
+  "workspace authorization",
+  () => {
+    it(
+      "keeps the three approved role labels",
+      () => {
+        expect(
+          WORKSPACE_ROLE_LABELS
+            .organization_admin
+        ).toBe(
+          "Organization Administrator"
+        );
+
+        expect(
+          WORKSPACE_ROLE_LABELS
+            .finance_auditor
+        ).toBe(
+          "Finance/Auditor"
+        );
+
+        expect(
+          WORKSPACE_ROLE_LABELS
+            .contributor
+        ).toBe(
+          "Contributor"
+        );
+      }
     );
 
-    expect(
-      WORKSPACE_ROLE_LABELS
-        .finance_auditor
-    ).toBe("Finance/Auditor");
+    it(
+      "checks exact allowed roles",
+      () => {
+        expect(
+          roleAllows(
+            "organization_admin",
+            [
+              "organization_admin"
+            ]
+          )
+        ).toBe(true);
 
-    expect(
-      WORKSPACE_ROLE_LABELS
-        .contributor
-    ).toBe("Contributor");
-  });
-
-  it("checks exact allowed roles", () => {
-    expect(
-      roleAllows(
-        "organization_admin",
-        ["organization_admin"]
-      )
-    ).toBe(true);
-
-    expect(
-      roleAllows(
-        "contributor",
-        ["organization_admin"]
-      )
-    ).toBe(false);
-  });
-});
+        expect(
+          roleAllows(
+            "contributor",
+            [
+              "organization_admin"
+            ]
+          )
+        ).toBe(false);
+      }
+    );
+  }
+);

@@ -1,15 +1,22 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import {
+  useState,
+  type FormEvent
+} from "react";
 import { useRouter } from "next/navigation";
 
 export function CreateWorkspaceForm() {
   const router = useRouter();
 
-  const [name, setName] = useState("");
-  const [error, setError] = useState<
-    string | null
-  >(null);
+  const [name, setName] =
+    useState("");
+
+  const [error, setError] =
+    useState<string | null>(
+      null
+    );
+
   const [submitting, setSubmitting] =
     useState(false);
 
@@ -18,7 +25,8 @@ export function CreateWorkspaceForm() {
   ) {
     event.preventDefault();
 
-    const trimmedName = name.trim();
+    const trimmedName =
+      name.trim();
 
     if (!trimmedName) {
       setError(
@@ -40,7 +48,8 @@ export function CreateWorkspaceForm() {
               "content-type":
                 "application/json"
             },
-            credentials: "same-origin",
+            credentials:
+              "same-origin",
             body: JSON.stringify({
               name: trimmedName
             })
@@ -49,21 +58,36 @@ export function CreateWorkspaceForm() {
 
       const body =
         (await response.json()) as
-          | { workspaceId: string }
-          | { error: string };
+          | {
+              workspaceId: string;
+            }
+          | {
+              error: string;
+            };
 
       if (
         !response.ok ||
-        !("workspaceId" in body)
+        !("workspaceId" in
+          body)
       ) {
+        if (
+          response.status === 429 &&
+          "error" in body
+        ) {
+          throw new Error(
+            "Workspace creation is temporarily limited. Try again shortly."
+          );
+        }
+
         throw new Error(
-          "Workspace could not be created."
+          "Workspace could not be created. Try again."
         );
       }
 
       router.replace(
-        `/workspace/${body.workspaceId}`
+        `/workspace/${body.workspaceId}?created=1`
       );
+
       router.refresh();
     } catch (cause) {
       setSubmitting(false);
@@ -71,7 +95,7 @@ export function CreateWorkspaceForm() {
       setError(
         cause instanceof Error
           ? cause.message
-          : "Workspace could not be created."
+          : "Workspace could not be created. Try again."
       );
     }
   }
@@ -79,7 +103,11 @@ export function CreateWorkspaceForm() {
   return (
     <form
       className="auth-form"
-      onSubmit={handleSubmit}
+      onSubmit={(
+        event: FormEvent<HTMLFormElement>
+      ) =>
+        void handleSubmit(event)
+      }
     >
       <div className="field">
         <label htmlFor="workspace-name">
@@ -93,11 +121,18 @@ export function CreateWorkspaceForm() {
           autoComplete="organization"
           value={name}
           onChange={(event) =>
-            setName(event.target.value)
+            setName(
+              event.target.value
+            )
           }
           maxLength={120}
           required
         />
+
+        <p className="field__helper">
+          Workspace names do not need
+          to be unique.
+        </p>
       </div>
 
       <button
@@ -107,7 +142,7 @@ export function CreateWorkspaceForm() {
       >
         {submitting
           ? "Creating workspace…"
-          : "Create Workspace"}
+          : "Create workspace"}
       </button>
 
       {error ? (

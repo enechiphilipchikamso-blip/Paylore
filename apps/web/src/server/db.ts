@@ -10,13 +10,16 @@ type DatabaseContainer = ReturnType<
   typeof createDatabase
 >;
 
-let databaseContainer: DatabaseContainer | undefined;
+let databaseContainer:
+  | DatabaseContainer
+  | undefined;
 
 export function getDatabase(): Database {
   if (!databaseContainer) {
-    databaseContainer = createDatabase(
-      loadConfig().DATABASE_URL
-    );
+    databaseContainer =
+      createDatabase(
+        loadConfig().DATABASE_URL
+      );
   }
 
   return databaseContainer.db;

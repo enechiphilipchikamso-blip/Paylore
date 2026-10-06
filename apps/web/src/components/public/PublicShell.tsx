@@ -5,15 +5,33 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const primaryLinks = [
   { href: "/", label: "Home" },
-  { href: "/product", label: "Product" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/docs", label: "Docs" }
+  {
+    href: "/product",
+    label: "Product"
+  },
+  {
+    href: "/pricing",
+    label: "Pricing"
+  },
+  {
+    href: "/docs",
+    label: "Docs"
+  }
 ];
 
 const footerLinks = [
-  { href: "/terms", label: "Terms" },
-  { href: "/privacy", label: "Privacy" },
-  { href: "/security", label: "Security" }
+  {
+    href: "/terms",
+    label: "Terms"
+  },
+  {
+    href: "/privacy",
+    label: "Privacy"
+  },
+  {
+    href: "/security",
+    label: "Security"
+  }
 ];
 
 export function PublicShell({
@@ -23,7 +41,10 @@ export function PublicShell({
 }) {
   return (
     <>
-      <a className="skip-link" href="#main-content">
+      <a
+        className="skip-link"
+        href="#main-content"
+      >
         Skip to content
       </a>
 
@@ -57,8 +78,14 @@ export function PublicShell({
             <ul>
               {primaryLinks.map(
                 (link) => (
-                  <li key={link.href}>
-                    <Link href={link.href}>
+                  <li
+                    key={link.href}
+                  >
+                    <Link
+                      href={
+                        link.href
+                      }
+                    >
                       {link.label}
                     </Link>
                   </li>
@@ -79,17 +106,29 @@ export function PublicShell({
           </div>
 
           <details className="mobile-nav">
-            <summary>Menu</summary>
+            <summary>
+              Menu
+            </summary>
 
-            <nav aria-label="Mobile navigation">
+            <nav
+              aria-label="Mobile navigation"
+            >
               <ul>
                 {primaryLinks.map(
                   (link) => (
-                    <li key={link.href}>
+                    <li
+                      key={
+                        link.href
+                      }
+                    >
                       <Link
-                        href={link.href}
+                        href={
+                          link.href
+                        }
                       >
-                        {link.label}
+                        {
+                          link.label
+                        }
                       </Link>
                     </li>
                   )
@@ -132,18 +171,31 @@ export function PublicShell({
             </Link>
 
             <p className="site-footer__description">
-              Private on-chain payroll for
-              crypto-native organizations.
+              Private on-chain payroll
+              for crypto-native
+              organizations.
             </p>
           </div>
 
-          <nav aria-label="Footer navigation">
+          <nav
+            aria-label="Footer navigation"
+          >
             <ul className="site-footer__links">
               {footerLinks.map(
                 (link) => (
-                  <li key={link.href}>
-                    <Link href={link.href}>
-                      {link.label}
+                  <li
+                    key={
+                      link.href
+                    }
+                  >
+                    <Link
+                      href={
+                        link.href
+                      }
+                    >
+                      {
+                        link.label
+                      }
                     </Link>
                   </li>
                 )

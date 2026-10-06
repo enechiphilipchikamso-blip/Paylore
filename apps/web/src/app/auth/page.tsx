@@ -8,7 +8,10 @@ import {
 import {
   WalletProvider
 } from "../../components/auth/WalletProvider";
-import { isSafeReturnTo } from "../../server/security";
+import {
+  isSafeReturnTo
+} from "../../server/security";
+import { siteOrigin } from "../site";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -32,7 +35,9 @@ export default async function AuthPage({
     await searchParams;
 
   const nextPath =
-    isSafeReturnTo(params.next);
+    isSafeReturnTo(
+      params.next
+    );
 
   const reason =
     params.reason ===
@@ -44,11 +49,13 @@ export default async function AuthPage({
       : undefined;
 
   return (
-    <WalletProvider>
+    <WalletProvider
+      origin={siteOrigin}
+    >
       <PublicPage
-        eyebrow="Secure entry"
-        title="Wallet authentication"
-        description="Connect a supported Solana wallet and explicitly sign a short-lived authentication challenge."
+        eyebrow="SECURE ENTRY"
+        title="Sign in to Paylore"
+        description="Connect one of the supported Solana wallets and sign the Paylore authentication request. This signature proves wallet control; it does not send payroll funds or a payroll transaction."
       >
         <WalletAuthPanel
           nextPath={nextPath}

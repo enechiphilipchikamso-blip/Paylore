@@ -12,55 +12,18 @@ import {
 } from "@paylore/database";
 import { getDatabase } from "./db";
 import { hashOpaqueToken } from "./security";
+import {
+  evaluateSession,
+  SESSION_HARD_LIFETIME_MS
+} from "./session-policy";
 
-export const SESSION_INACTIVITY_MS =
-  12 * 60 * 60 * 1000;
+export {
+  evaluateSession,
+  SESSION_HARD_LIFETIME_MS,
+  SESSION_INACTIVITY_MS
+} from "./session-policy";
 
-export const SESSION_HARD_LIFETIME_MS =
-  7 * 24 * 60 * 60 * 1000;
-
-export type SessionEvaluation =
-  | {
-      status: "authenticated";
-    }
-  | {
-      status: "inactivity_expired";
-    }
-  | {
-      status: "hard_expired";
-    };
-
-export function evaluateSession(
-  input: {
-    issuedAt: Date;
-    lastSeenAt: Date;
-    expiresAt: Date;
-  },
-  now: Date
-): SessionEvaluation {
-  if (
-    now.getTime() >=
-    input.expiresAt.getTime()
-  ) {
-    return {
-      status: "hard_expired"
-    };
-  }
-
-  if (
-    now.getTime() -
-      input.lastSeenAt.getTime() >=
-    SESSION_INACTIVITY_MS
-  ) {
-    return {
-      status: "inactivity_expired"
-    };
-  }
-
-  return {
-    status: "authenticated"
-  };
-}
+export type { SessionEvaluation } from "./session-policy";
 
 function cookieNameForEnvironment(
   nodeEnv: string | undefined
@@ -108,7 +71,6 @@ export async function persistSessionCookie(
 
 export async function clearSessionCookie(): Promise<void> {
   const store = await cookies();
-
   store.delete(getSessionCookieName());
 }
 
@@ -126,9 +88,6 @@ export async function createServerSession(
   const rawToken =
     randomBytes(32).toString("base64url");
 
-  const tokenHash =
-    hashOpaqueToken(rawToken);
-
   const issuedAt = new Date();
 
   const expiresAt = new Date(
@@ -137,9 +96,11 @@ export async function createServerSession(
   );
 
   await createSession(db, {
-    rawTokenHash: tokenHash,
+    rawTokenHash:
+      hashOpaqueToken(rawToken),
     userId: input.userId,
-    walletIdentityId: input.walletIdentityId,
+    walletIdentityId:
+      input.walletIdentityId,
     issuedAt,
     lastSeenAt: issuedAt,
     expiresAt
@@ -187,13 +148,10 @@ export async function getSessionState(
     };
   }
 
-  const tokenHash =
-    hashOpaqueToken(rawToken);
-
   const session =
     await findSessionByTokenHash(
       db,
-      tokenHash
+      hashOpaqueToken(rawToken)
     );
 
   if (!session) {
@@ -257,7 +215,8 @@ export async function getSessionState(
       userId: session.userId,
       walletIdentityId:
         session.walletIdentityId,
-      walletAddress: session.walletAddress,
+      walletAddress:
+        session.walletAddress,
       issuedAt: session.issuedAt,
       lastSeenAt: now,
       expiresAt: session.expiresAt

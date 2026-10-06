@@ -17,13 +17,15 @@ export function SignOutButton() {
         "/api/auth/logout",
         {
           method: "POST",
-          credentials: "same-origin"
+          credentials:
+            "same-origin"
         }
       );
     } finally {
       router.replace(
         "/auth?reason=logged-out"
       );
+
       router.refresh();
     }
   }
@@ -32,7 +34,9 @@ export function SignOutButton() {
     <button
       className="button button--secondary"
       type="button"
-      onClick={() => void signOut()}
+      onClick={() =>
+        void signOut()
+      }
       disabled={busy}
     >
       {busy

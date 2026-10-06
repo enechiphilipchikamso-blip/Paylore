@@ -5,47 +5,21 @@ import {
   createWorkspaceWithAdminMembership,
   type Database
 } from "@paylore/database";
+import {
+  decideWorkspaceCreation,
+  WORKSPACE_CREATION_MAX_ATTEMPTS,
+  WORKSPACE_CREATION_WINDOW_MS
+} from "./workspaces-policy";
 
-export const WORKSPACE_CREATION_WINDOW_MS =
-  15 * 60 * 1000;
+export {
+  decideWorkspaceCreation,
+  WORKSPACE_CREATION_MAX_ATTEMPTS,
+  WORKSPACE_CREATION_WINDOW_MS
+} from "./workspaces-policy";
 
-export const WORKSPACE_CREATION_MAX_ATTEMPTS = 5;
-
-export type WorkspaceCreationDecision = {
-  allowed: boolean;
-  retryAfterSeconds: number;
-};
-
-export function decideWorkspaceCreation(
-  attemptCount: number,
-  elapsedMs: number
-): WorkspaceCreationDecision {
-  if (
-    attemptCount <=
-    WORKSPACE_CREATION_MAX_ATTEMPTS
-  ) {
-    return {
-      allowed: true,
-      retryAfterSeconds: 0
-    };
-  }
-
-  const remainingMs = Math.max(
-    0,
-    WORKSPACE_CREATION_WINDOW_MS -
-      elapsedMs
-  );
-
-  return {
-    allowed: false,
-    retryAfterSeconds: Math.max(
-      1,
-      Math.ceil(
-        remainingMs / 1000
-      )
-    )
-  };
-}
+export type {
+  WorkspaceCreationDecision
+} from "./workspaces-policy";
 
 export class WorkspaceCreationRateLimitError extends Error {
   readonly retryAfterSeconds: number;
@@ -76,13 +50,10 @@ export async function createWorkspaceForUser(
       input.userId
     );
 
-  const elapsedMs =
-    limit.elapsedSeconds * 1000;
-
   const decision =
     decideWorkspaceCreation(
       limit.attemptCount,
-      elapsedMs
+      limit.elapsedSeconds * 1000
     );
 
   if (!decision.allowed) {

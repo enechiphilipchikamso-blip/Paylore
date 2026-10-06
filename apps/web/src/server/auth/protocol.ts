@@ -1,8 +1,9 @@
-import "server-only";
-
 import {
   createSignInMessageText
 } from "@solana/wallet-standard-util";
+import {
+  z
+} from "zod";
 import type {
   SolanaSignInInput
 } from "@solana/wallet-standard-features";
@@ -16,15 +17,21 @@ export const DEVNET_CHAIN_ID =
 export const AUTH_STATEMENT =
   "Sign in to Paylore. This signature authorizes your wallet to access your Paylore account.";
 
-export type AuthChallengeRecord = {
-  nonce: string;
-  walletAddress: string;
-  input: SolanaSignInInput;
-  message: string;
-  issuedAt: Date;
-  expirationTime: Date;
-  consumedAt: Date | null;
-};
+export const solanaSignInInputSchema =
+  z.object({
+    domain: z.string().min(1),
+    address: z.string().min(32).max(64),
+    statement: z.string().min(1),
+    version: z.literal("1"),
+    chainId: z.literal(DEVNET_CHAIN_ID),
+    nonce: z.string().regex(
+      /^[a-f0-9]{64}$/
+    ),
+    issuedAt: z.string().datetime(),
+    expirationTime:
+      z.string().datetime(),
+    uri: z.string().url()
+  });
 
 export function buildSignInInput(input: {
   walletAddress: string;
@@ -33,9 +40,12 @@ export function buildSignInInput(input: {
   expirationTime: Date;
   requestUrl: string;
 }): SolanaSignInInput {
+  const request =
+    new URL(input.requestUrl);
+
   const authUrl = new URL(
     "/auth",
-    input.requestUrl
+    request.origin
   );
 
   return {
@@ -45,7 +55,8 @@ export function buildSignInInput(input: {
     version: "1",
     chainId: DEVNET_CHAIN_ID,
     nonce: input.nonce,
-    issuedAt: input.issuedAt.toISOString(),
+    issuedAt:
+      input.issuedAt.toISOString(),
     expirationTime:
       input.expirationTime.toISOString(),
     uri: authUrl.toString()
@@ -53,25 +64,35 @@ export function buildSignInInput(input: {
 }
 
 export function buildChallenge(
-  input: Parameters<typeof buildSignInInput>[0]
+  input: Parameters<
+    typeof buildSignInInput
+  >[0]
 ): {
   input: SolanaSignInInput;
   message: string;
 } {
-  const challengeInput = buildSignInInput(input);
+  const challengeInput =
+    buildSignInInput(input);
 
   return {
     input: challengeInput,
-    message: createSignInMessageText(
-      challengeInput
-    )
+    message:
+      createSignInMessageText(
+        challengeInput
+      )
   };
 }
 
 export function challengeIsUsable(
   challenge: Pick<
-    AuthChallengeRecord,
-    "issuedAt" | "expirationTime" | "consumedAt"
+    {
+      issuedAt: Date;
+      expirationTime: Date;
+      consumedAt: Date | null;
+    },
+    "issuedAt" |
+      "expirationTime" |
+      "consumedAt"
   >,
   now: Date
 ): boolean {
@@ -80,7 +101,8 @@ export function challengeIsUsable(
   }
 
   return (
-    challenge.issuedAt.getTime() <= now.getTime() &&
+    challenge.issuedAt.getTime() <=
+      now.getTime() &&
     challenge.expirationTime.getTime() >
       now.getTime()
   );
