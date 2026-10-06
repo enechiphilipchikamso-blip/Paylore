@@ -1,19 +1,23 @@
-import "server-only";
-
 import { createHash } from "node:crypto";
 import { address } from "@solana/kit";
 
 export class RequestSecurityError extends Error {
-  constructor(message = "Request security validation failed.") {
+  constructor(
+    message =
+      "Request security validation failed."
+  ) {
     super(message);
-    this.name = "RequestSecurityError";
+    this.name =
+      "RequestSecurityError";
   }
 }
 
 export function assertSameOrigin(
   request: Request
 ): void {
-  const origin = request.headers.get("origin");
+  const origin = request.headers.get(
+    "origin"
+  );
 
   if (!origin) {
     throw new RequestSecurityError(
@@ -21,7 +25,8 @@ export function assertSameOrigin(
     );
   }
 
-  const requestOrigin = new URL(request.url).origin;
+  const requestOrigin =
+    new URL(request.url).origin;
 
   if (origin !== requestOrigin) {
     throw new RequestSecurityError(

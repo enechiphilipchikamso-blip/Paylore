@@ -8,8 +8,10 @@ import {
 } from "../../components/auth/SignOutButton";
 import {
   WORKSPACE_ROLE_LABELS
-} from "../../server/authorization";
-import { getDatabase } from "../../server/db";
+} from "../../server/authorization-policy";
+import {
+  getDatabase
+} from "../../server/db";
 import {
   getSessionState
 } from "../../server/session";
@@ -62,7 +64,9 @@ export default async function AppGatewayPage() {
       sessionState.session.userId
     );
 
-  if (memberships.length === 1) {
+  if (
+    memberships.length === 1
+  ) {
     redirect(
       `/workspace/${memberships[0].workspaceId}`
     );
@@ -77,36 +81,32 @@ export default async function AppGatewayPage() {
 
         <h1>
           {memberships.length === 0
-            ? "Create your Paylore workspace"
+            ? "Create a workspace"
             : "Choose a workspace"}
         </h1>
 
         <p>
           Signed in as{" "}
           <strong>
-            {sessionState.session.walletAddress}
+            {`${sessionState.session.walletAddress.slice(0, 5)}…${sessionState.session.walletAddress.slice(-4)}`}
           </strong>
           .
         </p>
       </header>
 
       {memberships.length === 0 ? (
-        <>
-          <div className="invite-state">
-            <h2>
-              You do not have a workspace
-              membership yet.
-            </h2>
+        <section className="invite-state">
+          <h2>
+            Create a workspace
+          </h2>
 
-            <p>
-              Creating a workspace makes the
-              authenticated creator its Organization
-              Administrator.
-            </p>
+          <p>
+            Creating a workspace does
+            not activate billing.
+          </p>
 
-            <CreateWorkspaceForm />
-          </div>
-        </>
+          <CreateWorkspaceForm />
+        </section>
       ) : (
         <section
           className="workspace-grid"
@@ -116,10 +116,14 @@ export default async function AppGatewayPage() {
             (membership) => (
               <article
                 className="workspace-card"
-                key={membership.workspaceId}
+                key={
+                  membership.workspaceId
+                }
               >
                 <h2>
-                  {membership.workspaceName}
+                  {
+                    membership.workspaceName
+                  }
                 </h2>
 
                 <span className="workspace-card__role">
@@ -129,11 +133,6 @@ export default async function AppGatewayPage() {
                     ]
                   }
                 </span>
-
-                <p className="workspace-card__meta">
-                  Workspace ID:{" "}
-                  {membership.workspaceId}
-                </p>
 
                 <div className="protected-actions">
                   <a

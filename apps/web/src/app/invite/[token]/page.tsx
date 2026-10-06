@@ -7,13 +7,8 @@ import {
   InvitationActions
 } from "../../../components/auth/InvitationActions";
 import {
-  WalletProvider
-} from "../../../components/auth/WalletProvider";
-import {
+  findInvitationEntry,
   invitationWalletMatches
-} from "../../../server/invitations";
-import {
-  findInvitationEntry
 } from "../../../server/invitations";
 import {
   getDatabase
@@ -56,8 +51,12 @@ export default async function InvitationEntryPage({
         title="Invitation unavailable"
         description="This invitation is invalid or has expired."
       >
-        <div className="error-box" role="alert">
-          The invitation could not be validated.
+        <div
+          className="error-box"
+          role="alert"
+        >
+          The invitation could not be
+          validated.
         </div>
       </PublicPage>
     );
@@ -66,14 +65,15 @@ export default async function InvitationEntryPage({
   const sessionState =
     await getSessionState();
 
+  const authPath =
+    `/auth?next=${encodeURIComponent(
+      `/invite/${token}`
+    )}`;
+
   if (
     sessionState.status ===
     "unauthenticated"
   ) {
-    const authPath = `/auth?next=${encodeURIComponent(
-      `/invite/${token}`
-    )}`;
-
     return (
       <PublicPage
         eyebrow="Invitation"
@@ -86,10 +86,10 @@ export default async function InvitationEntryPage({
           </h2>
 
           <p>
-            Possessing this link does not grant
-            access. Connect and authenticate the
-            wallet associated with the invitation
-            target.
+            Possessing this link does not
+            grant access. Connect and
+            authenticate the wallet associated
+            with the invitation target.
           </p>
 
           <Link
@@ -111,7 +111,7 @@ export default async function InvitationEntryPage({
       <PublicPage
         eyebrow="Invitation"
         title="Re-authentication required"
-        description="Your previous session expired because of inactivity."
+        description="Your previous session expired after 12 hours of inactivity."
       >
         <div className="invite-state">
           <Link
@@ -120,7 +120,7 @@ export default async function InvitationEntryPage({
               `/invite/${token}`
             )}`}
           >
-            Re-authenticate wallet
+            Sign in again
           </Link>
         </div>
       </PublicPage>
@@ -135,7 +135,7 @@ export default async function InvitationEntryPage({
       <PublicPage
         eyebrow="Invitation"
         title="Fresh sign-in required"
-        description="Your previous session reached its hard lifetime."
+        description="Your previous session reached its 7-day maximum lifetime."
       >
         <div className="invite-state">
           <Link
@@ -158,33 +158,28 @@ export default async function InvitationEntryPage({
     );
 
   if (!walletMatches) {
-    const authPath = `/auth?next=${encodeURIComponent(
-      `/invite/${token}`
-    )}`;
-
     return (
-      <WalletProvider>
-        <PublicPage
-          eyebrow="Invitation"
-          title="Wrong Wallet Connected"
-          description="The authenticated wallet does not match the wallet associated with this invitation target."
+      <PublicPage
+        eyebrow="Invitation"
+        title="Wrong Wallet Connected"
+        description="The authenticated wallet does not match the wallet associated with this invitation target."
+      >
+        <div
+          className="invite-state"
+          role="alert"
         >
-          <div
-            className="invite-state"
-            role="alert"
-          >
-            <p>
-              Disconnect the current wallet or
-              switch to the wallet associated with
-              this invitation, then retry.
-            </p>
+          <p>
+            Switch to the wallet associated
+            with this invitation, then retry
+            verification.
+          </p>
 
-            <InvitationActions
-              authPath={authPath}
-            />
-          </div>
-        </PublicPage>
-      </WalletProvider>
+          <InvitationActions
+            authPath={authPath}
+            retryPath={`/invite/${token}`}
+          />
+        </div>
+      </PublicPage>
     );
   }
 
@@ -195,15 +190,19 @@ export default async function InvitationEntryPage({
       description={`The authenticated wallet matches the invitation target for ${invitation.workspaceName}.`}
     >
       <div className="invite-state">
-        <div className="notice">
+        <div
+          className="success-box"
+          role="status"
+        >
           Wallet verification succeeded.
         </div>
 
         <p>
-          Batch 03 establishes the protected
-          invitation-entry contract. It does not
-          issue or manage contributor invitations or
-          create the later contributor directory.
+          The invitation target has been
+          verified for the authenticated
+          wallet. Invitation issuance and
+          contributor management are handled
+          separately.
         </p>
 
         <p className="workspace-card__meta">

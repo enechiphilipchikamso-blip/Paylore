@@ -4,28 +4,19 @@ import {
   getWorkspaceForUser,
   type Database
 } from "@paylore/database";
+import {
+  roleAllows,
+  WORKSPACE_ROLE_LABELS
+} from "./authorization-policy";
 
-export type WorkspaceRole =
-  | "organization_admin"
-  | "finance_auditor"
-  | "contributor";
+export {
+  roleAllows,
+  WORKSPACE_ROLE_LABELS
+} from "./authorization-policy";
 
-export const WORKSPACE_ROLE_LABELS: Record<
-  WorkspaceRole,
-  string
-> = {
-  organization_admin:
-    "Organization Administrator",
-  finance_auditor: "Finance/Auditor",
-  contributor: "Contributor"
-};
-
-export function roleAllows(
-  role: WorkspaceRole,
-  allowedRoles: readonly WorkspaceRole[]
-): boolean {
-  return allowedRoles.includes(role);
-}
+export type {
+  WorkspaceRole
+} from "./authorization-policy";
 
 export class WorkspaceAuthorizationError extends Error {
   constructor() {

@@ -14,10 +14,10 @@
   "dependencies": {
     "@jup-ag/wallet-adapter": "0.2.6",
     "@paylore/database": "workspace:*",
-    "@solana/kit": "8.3.0",
-    "@solana/wallet-adapter-react": "0.15.40",
+    "@solana/kit": "8.4.0",
     "@solana/wallet-standard-features": "1.5.0",
     "@solana/wallet-standard-util": "1.1.4",
+    "@wallet-standard/app": "1.1.0",
     "next": "16.3.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -25,11 +25,12 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@eslint/compat": "2.1.1",
     "@types/node": "24.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "eslint": "9.39.5",
-    "eslint-config-next": "16.3.6",
+    "eslint": "10.12.0",
+    "eslint-config-next": "16.3.8",
     "typescript": "6.0.3",
     "vitest": "5.0.2"
   }

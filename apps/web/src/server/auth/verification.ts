@@ -1,13 +1,6 @@
-import "server-only";
-
 import {
   address,
-  getAddressEncoder,
-  getBase64Encoder,
-  getPublicKeyFromAddress,
-  getUtf8Encoder,
-  signatureBytes,
-  verifySignature
+  getAddressEncoder
 } from "@solana/kit";
 import {
   verifySignIn
@@ -17,103 +10,145 @@ import type {
   SolanaSignInOutput
 } from "@solana/wallet-standard-features";
 import {
-  DEVNET_CHAIN_ID
+  DEVNET_CHAIN_ID,
+  solanaSignInInputSchema
 } from "./protocol";
 
-type WalletProof = {
-  method: "siws" | "raw";
+export type WalletProof = {
   walletAddress: string;
+  account: {
+    address: string;
+    publicKey: string;
+    chains: string[];
+    features: string[];
+  };
+  signedMessage: string;
   signature: string;
-  signedMessage?: string;
 };
+
+function base64ToBytes(
+  value: string
+): Uint8Array {
+  return Uint8Array.from(
+    Buffer.from(value, "base64")
+  );
+}
+
+function isValidBase64(
+  value: string
+): boolean {
+  return (
+    value.length > 0 &&
+    value.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]*={0,2}$/.test(
+      value
+    )
+  );
+}
 
 export async function verifyWalletProof(
   input: {
     challengeInput: SolanaSignInInput;
-    expectedMessage: string;
+    expectedAuthUrl: string;
   },
   proof: WalletProof
 ): Promise<boolean> {
+  const parsedChallenge =
+    solanaSignInInputSchema.safeParse(
+      input.challengeInput
+    );
+
+  if (!parsedChallenge.success) {
+    return false;
+  }
+
+  const expectedUrl =
+    new URL(input.expectedAuthUrl);
+
   if (
-    input.challengeInput.address !==
-    proof.walletAddress
+    parsedChallenge.data.address !==
+    proof.walletAddress ||
+    proof.account.address !==
+      proof.walletAddress
   ) {
     return false;
   }
 
   if (
-    input.challengeInput.chainId !==
-    DEVNET_CHAIN_ID
+    parsedChallenge.data.chainId !==
+      DEVNET_CHAIN_ID ||
+    parsedChallenge.data.domain !==
+      expectedUrl.host ||
+    parsedChallenge.data.uri !==
+      expectedUrl.toString()
   ) {
     return false;
   }
-
-  const expectedAuthUri = new URL(
-    "/auth",
-    `https://${input.challengeInput.domain}`
-  );
 
   if (
-    input.challengeInput.uri !==
-    expectedAuthUri.toString()
+    !isValidBase64(
+      proof.account.publicKey
+    ) ||
+    !isValidBase64(
+      proof.signedMessage
+    ) ||
+    !isValidBase64(
+      proof.signature
+    )
   ) {
     return false;
-  }
-
-  if (proof.method === "siws") {
-    if (!proof.signedMessage) {
-      return false;
-    }
-
-    try {
-      const signInOutput: SolanaSignInOutput = {
-        account: {
-          address: proof.walletAddress,
-          publicKey:
-            getAddressEncoder().encode(
-              address(proof.walletAddress)
-            ),
-          chains: [DEVNET_CHAIN_ID],
-          features: []
-        },
-        signedMessage:
-          getBase64Encoder().encode(
-            proof.signedMessage
-          ),
-        signature:
-          getBase64Encoder().encode(
-            proof.signature
-          )
-      };
-
-      return await verifySignIn(
-        input.challengeInput,
-        signInOutput
-      );
-    } catch {
-      return false;
-    }
   }
 
   try {
-    const publicKey =
-      await getPublicKeyFromAddress(
+    const expectedPublicKey =
+      getAddressEncoder().encode(
         address(proof.walletAddress)
       );
 
-    const valid = await verifySignature(
-      publicKey,
-      signatureBytes(
-        getBase64Encoder().encode(
+    const publicKeyMatches =
+      Buffer.from(
+        expectedPublicKey
+      ).equals(
+        Buffer.from(
+          base64ToBytes(
+            proof.account.publicKey
+          )
+        )
+      );
+
+    if (!publicKeyMatches) {
+      return false;
+    }
+
+    const output: SolanaSignInOutput = {
+      account: {
+        address:
+          proof.account.address,
+        publicKey:
+          base64ToBytes(
+            proof.account.publicKey
+          ),
+        chains:
+          proof.account.chains,
+        features:
+          proof.account.features
+      },
+      signedMessage:
+        base64ToBytes(
+          proof.signedMessage
+        ),
+      signature:
+        base64ToBytes(
           proof.signature
         )
-      ),
-      getUtf8Encoder().encode(
-        input.expectedMessage
+    };
+
+    return Boolean(
+      await verifySignIn(
+        parsedChallenge.data,
+        output
       )
     );
-
-    return Boolean(valid);
   } catch {
     return false;
   }

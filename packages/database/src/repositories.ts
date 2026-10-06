@@ -6,8 +6,12 @@ import {
   isNull,
   sql
 } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-import type { Database } from "./client";
+import {
+  randomUUID
+} from "node:crypto";
+import type {
+  Database
+} from "./client";
 import {
   authChallenges,
   invitationEntryTargets,
@@ -23,11 +27,19 @@ export async function findAuthChallenge(
   db: Database,
   nonce: string
 ) {
-  const rows = await db
-    .select()
-    .from(authChallenges)
-    .where(eq(authChallenges.nonce, nonce))
-    .limit(1);
+  const rows =
+    await db
+      .select()
+      .from(
+        authChallenges
+      )
+      .where(
+        eq(
+          authChallenges.nonce,
+          nonce
+        )
+      )
+      .limit(1);
 
   return rows[0] ?? null;
 }
@@ -43,14 +55,21 @@ export async function insertAuthChallenge(
     expirationTime: Date;
   }
 ) {
-  await db.insert(authChallenges).values({
-    nonce: input.nonce,
-    walletAddress: input.walletAddress,
-    input: input.challengeInput,
-    message: input.message,
-    issuedAt: input.issuedAt,
-    expirationTime: input.expirationTime
-  });
+  await db
+    .insert(authChallenges)
+    .values({
+      nonce: input.nonce,
+      walletAddress:
+        input.walletAddress,
+      input:
+        input.challengeInput,
+      message:
+        input.message,
+      issuedAt:
+        input.issuedAt,
+      expirationTime:
+        input.expirationTime
+    });
 }
 
 export async function consumeAuthChallenge(
@@ -58,21 +77,33 @@ export async function consumeAuthChallenge(
   nonce: string,
   now: Date
 ): Promise<boolean> {
-  const rows = await db
-    .update(authChallenges)
-    .set({
-      consumedAt: now
-    })
-    .where(
-      and(
-        eq(authChallenges.nonce, nonce),
-        isNull(authChallenges.consumedAt),
-        gt(authChallenges.expirationTime, now)
+  const rows =
+    await db
+      .update(
+        authChallenges
       )
-    )
-    .returning({
-      nonce: authChallenges.nonce
-    });
+      .set({
+        consumedAt: now
+      })
+      .where(
+        and(
+          eq(
+            authChallenges.nonce,
+            nonce
+          ),
+          isNull(
+            authChallenges.consumedAt
+          ),
+          gt(
+            authChallenges.expirationTime,
+            now
+          )
+        )
+      )
+      .returning({
+        nonce:
+          authChallenges.nonce
+      });
 
   return rows.length === 1;
 }
@@ -81,70 +112,112 @@ export async function findOrCreateUserWalletIdentity(
   db: Database,
   walletAddress: string
 ) {
-  const existing = await db
-    .select({
-      userId: walletIdentities.userId,
-      walletIdentityId: walletIdentities.id
-    })
-    .from(walletIdentities)
-    .where(eq(walletIdentities.address, walletAddress))
-    .limit(1);
+  const existing =
+    await db
+      .select({
+        userId:
+          walletIdentities.userId,
+        walletIdentityId:
+          walletIdentities.id
+      })
+      .from(
+        walletIdentities
+      )
+      .where(
+        eq(
+          walletIdentities.address,
+          walletAddress
+        )
+      )
+      .limit(1);
 
   if (existing[0]) {
     return existing[0];
   }
 
-  return db.transaction(async (tx) => {
-    const userId = randomUUID();
-    const walletIdentityId = randomUUID();
+  return db.transaction(
+    async (tx) => {
+      const userId =
+        randomUUID();
 
-    await tx.insert(users).values({
-      id: userId
-    });
+      const walletIdentityId =
+        randomUUID();
 
-    const inserted = await tx
-      .insert(walletIdentities)
-      .values({
-        id: walletIdentityId,
-        userId,
-        address: walletAddress
-      })
-      .onConflictDoNothing({
-        target: walletIdentities.address
-      })
-      .returning({
-        id: walletIdentities.id,
-        userId: walletIdentities.userId
-      });
+      await tx
+        .insert(users)
+        .values({
+          id: userId
+        });
 
-    if (inserted.length === 1) {
-      return {
-        userId: inserted[0].userId,
-        walletIdentityId: inserted[0].id
-      };
+      const inserted =
+        await tx
+          .insert(
+            walletIdentities
+          )
+          .values({
+            id:
+              walletIdentityId,
+            userId,
+            address:
+              walletAddress
+          })
+          .onConflictDoNothing({
+            target:
+              walletIdentities.address
+          })
+          .returning({
+            id:
+              walletIdentities.id,
+            userId:
+              walletIdentities.userId
+          });
+
+      if (inserted.length === 1) {
+        return {
+          userId:
+            inserted[0].userId,
+          walletIdentityId:
+            inserted[0].id
+        };
+      }
+
+      await tx
+        .delete(users)
+        .where(
+          eq(
+            users.id,
+            userId
+          )
+        );
+
+      const concurrent =
+        await tx
+          .select({
+            userId:
+              walletIdentities.userId,
+            walletIdentityId:
+              walletIdentities.id
+          })
+          .from(
+            walletIdentities
+          )
+          .where(
+            eq(
+              walletIdentities.address,
+              walletAddress
+            )
+          )
+          .limit(1);
+
+      if (!concurrent[0]) {
+        throw new Error(
+          "Wallet identity could not be established."
+        );
+      }
+
+      return concurrent[0];
     }
-
-    await tx
-      .delete(users)
-      .where(eq(users.id, userId));
-
-    const concurrent = await tx
-      .select({
-        userId: walletIdentities.userId,
-        walletIdentityId: walletIdentities.id
-      })
-      .from(walletIdentities)
-      .where(eq(walletIdentities.address, walletAddress))
-      .limit(1);
-
-    if (!concurrent[0]) {
-      throw new Error(
-        "Wallet identity could not be established."
-      );
-    }
-
-    return concurrent[0];
-  });
+  );
 }
 
 export async function createSession(
@@ -158,22 +231,31 @@ export async function createSession(
     expiresAt: Date;
   }
 ) {
-  const inserted = await db
-    .insert(sessions)
-    .values({
-      tokenHash: input.rawTokenHash,
-      userId: input.userId,
-      walletIdentityId: input.walletIdentityId,
-      issuedAt: input.issuedAt,
-      lastSeenAt: input.lastSeenAt,
-      expiresAt: input.expiresAt
-    })
-    .returning({
-      id: sessions.id
-    });
+  const inserted =
+    await db
+      .insert(sessions)
+      .values({
+        tokenHash:
+          input.rawTokenHash,
+        userId:
+          input.userId,
+        walletIdentityId:
+          input.walletIdentityId,
+        issuedAt:
+          input.issuedAt,
+        lastSeenAt:
+          input.lastSeenAt,
+        expiresAt:
+          input.expiresAt
+      })
+      .returning({
+        id: sessions.id
+      });
 
   if (!inserted[0]) {
-    throw new Error("Session could not be created.");
+    throw new Error(
+      "Session could not be created."
+    );
   }
 
   return inserted[0];
@@ -183,31 +265,43 @@ export async function findSessionByTokenHash(
   db: Database,
   tokenHash: string
 ) {
-  const rows = await db
-    .select({
-      id: sessions.id,
-      userId: sessions.userId,
-      walletIdentityId: sessions.walletIdentityId,
-      walletAddress: walletIdentities.address,
-      issuedAt: sessions.issuedAt,
-      lastSeenAt: sessions.lastSeenAt,
-      expiresAt: sessions.expiresAt
-    })
-    .from(sessions)
-    .innerJoin(
-      walletIdentities,
-      eq(
-        sessions.walletIdentityId,
-        walletIdentities.id
+  const rows =
+    await db
+      .select({
+        id: sessions.id,
+        userId:
+          sessions.userId,
+        walletIdentityId:
+          sessions.walletIdentityId,
+        walletAddress:
+          walletIdentities.address,
+        issuedAt:
+          sessions.issuedAt,
+        lastSeenAt:
+          sessions.lastSeenAt,
+        expiresAt:
+          sessions.expiresAt
+      })
+      .from(sessions)
+      .innerJoin(
+        walletIdentities,
+        eq(
+          sessions.walletIdentityId,
+          walletIdentities.id
+        )
       )
-    )
-    .where(
-      and(
-        eq(sessions.tokenHash, tokenHash),
-        isNull(sessions.revokedAt)
+      .where(
+        and(
+          eq(
+            sessions.tokenHash,
+            tokenHash
+          ),
+          isNull(
+            sessions.revokedAt
+          )
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
 
   return rows[0] ?? null;
 }
@@ -224,8 +318,13 @@ export async function touchSession(
     })
     .where(
       and(
-        eq(sessions.id, sessionId),
-        isNull(sessions.revokedAt)
+        eq(
+          sessions.id,
+          sessionId
+        ),
+        isNull(
+          sessions.revokedAt
+        )
       )
     );
 }
@@ -240,7 +339,12 @@ export async function revokeSessionById(
     .set({
       revokedAt
     })
-    .where(eq(sessions.id, sessionId));
+    .where(
+      eq(
+        sessions.id,
+        sessionId
+      )
+    );
 }
 
 export async function revokeSessionByTokenHash(
@@ -255,8 +359,13 @@ export async function revokeSessionByTokenHash(
     })
     .where(
       and(
-        eq(sessions.tokenHash, tokenHash),
-        isNull(sessions.revokedAt)
+        eq(
+          sessions.tokenHash,
+          tokenHash
+        ),
+        isNull(
+          sessions.revokedAt
+        )
       )
     );
 }
@@ -267,35 +376,18 @@ export async function listWorkspaceMemberships(
 ) {
   return db
     .select({
-      workspaceId: workspaces.id,
-      workspaceName: workspaces.name,
-      role: workspaceMemberships.role,
-      createdAt: workspaces.createdAt
+      workspaceId:
+        workspaces.id,
+      workspaceName:
+        workspaces.name,
+      role:
+        workspaceMemberships.role,
+      createdAt:
+        workspaces.createdAt
     })
-    .from(workspaceMemberships)
-    .innerJoin(
-      workspaces,
-      eq(
-        workspaceMemberships.workspaceId,
-        workspaces.id
-      )
+    .from(
+      workspaceMemberships
     )
-    .where(eq(workspaceMemberships.userId, userId))
-    .orderBy(asc(workspaces.createdAt));
-}
-
-export async function getWorkspaceForUser(
-  db: Database,
-  userId: string,
-  workspaceId: string
-) {
-  const rows = await db
-    .select({
-      workspaceId: workspaces.id,
-      workspaceName: workspaces.name,
-      role: workspaceMemberships.role
-    })
-    .from(workspaceMemberships)
     .innerJoin(
       workspaces,
       eq(
@@ -304,12 +396,56 @@ export async function getWorkspaceForUser(
       )
     )
     .where(
-      and(
-        eq(workspaceMemberships.userId, userId),
-        eq(workspaceMemberships.workspaceId, workspaceId)
+      eq(
+        workspaceMemberships.userId,
+        userId
       )
     )
-    .limit(1);
+    .orderBy(
+      asc(
+        workspaces.createdAt
+      )
+    );
+}
+
+export async function getWorkspaceForUser(
+  db: Database,
+  userId: string,
+  workspaceId: string
+) {
+  const rows =
+    await db
+      .select({
+        workspaceId:
+          workspaces.id,
+        workspaceName:
+          workspaces.name,
+        role:
+          workspaceMemberships.role
+      })
+      .from(
+        workspaceMemberships
+      )
+      .innerJoin(
+        workspaces,
+        eq(
+          workspaceMemberships.workspaceId,
+          workspaces.id
+        )
+      )
+      .where(
+        and(
+          eq(
+            workspaceMemberships.userId,
+            userId
+          ),
+          eq(
+            workspaceMemberships.workspaceId,
+            workspaceId
+          )
+        )
+      )
+      .limit(1);
 
   return rows[0] ?? null;
 }
@@ -321,21 +457,32 @@ export async function createWorkspaceWithAdminMembership(
     name: string;
   }
 ) {
-  const workspaceId = randomUUID();
+  const workspaceId =
+    randomUUID();
 
-  await db.transaction(async (tx) => {
-    await tx.insert(workspaces).values({
-      id: workspaceId,
-      name: input.name,
-      createdByUserId: input.userId
-    });
+  await db.transaction(
+    async (tx) => {
+      await tx
+        .insert(workspaces)
+        .values({
+          id: workspaceId,
+          name: input.name,
+          createdByUserId:
+            input.userId
+        });
 
-    await tx.insert(workspaceMemberships).values({
-      workspaceId,
-      userId: input.userId,
-      role: "organization_admin"
-    });
-  });
+      await tx
+        .insert(
+          workspaceMemberships
+        )
+        .values({
+          workspaceId,
+          userId: input.userId,
+          role:
+            "organization_admin"
+        });
+    }
+  );
 
   return {
     workspaceId
@@ -349,42 +496,48 @@ export async function consumeWorkspaceCreationAttempt(
   attemptCount: number;
   elapsedSeconds: number;
 }> {
-  const result = await db.execute(sql`
-    INSERT INTO "workspace_creation_rate_limits"
-      ("user_id", "window_started_at", "attempt_count")
-    VALUES
-      (${userId}, now(), 1)
-    ON CONFLICT ("user_id")
-    DO UPDATE SET
-      "attempt_count" =
-        CASE
-          WHEN now() - "workspace_creation_rate_limits"."window_started_at"
-            >= interval '15 minutes'
-          THEN 1
-          ELSE "workspace_creation_rate_limits"."attempt_count" + 1
-        END,
-      "window_started_at" =
-        CASE
-          WHEN now() - "workspace_creation_rate_limits"."window_started_at"
-            >= interval '15 minutes'
-          THEN now()
-          ELSE "workspace_creation_rate_limits"."window_started_at"
-        END
-    RETURNING
-      "attempt_count",
-      extract(
-        epoch FROM (
-          now() - "window_started_at"
-        )
-      ) AS "elapsed_seconds"
-  `);
+  const result =
+    await db.execute(sql`
+      INSERT INTO "workspace_creation_rate_limits"
+        ("user_id", "window_started_at", "attempt_count")
+      VALUES
+        (${userId}, now(), 1)
+      ON CONFLICT ("user_id")
+      DO UPDATE SET
+        "attempt_count" =
+          CASE
+            WHEN now() - "workspace_creation_rate_limits"."window_started_at"
+              >= interval '15 minutes'
+            THEN 1
+            ELSE "workspace_creation_rate_limits"."attempt_count" + 1
+          END,
+        "window_started_at" =
+          CASE
+            WHEN now() - "workspace_creation_rate_limits"."window_started_at"
+              >= interval '15 minutes'
+            THEN now()
+            ELSE "workspace_creation_rate_limits"."window_started_at"
+          END
+      RETURNING
+        "attempt_count",
+        extract(
+          epoch FROM (
+            now() - "window_started_at"
+          )
+        ) AS "elapsed_seconds"
+    `);
 
-  const row = result[0] as
-    | {
-        attempt_count: number | string;
-        elapsed_seconds: number | string;
-      }
-    | undefined;
+  const row =
+    result[0] as
+      | {
+          attempt_count:
+            | number
+            | string;
+          elapsed_seconds:
+            | number
+            | string;
+        }
+      | undefined;
 
   if (!row) {
     throw new Error(
@@ -393,8 +546,14 @@ export async function consumeWorkspaceCreationAttempt(
   }
 
   return {
-    attemptCount: Number(row.attempt_count),
-    elapsedSeconds: Number(row.elapsed_seconds)
+    attemptCount:
+      Number(
+        row.attempt_count
+      ),
+    elapsedSeconds:
+      Number(
+        row.elapsed_seconds
+      )
   };
 }
 
@@ -403,29 +562,41 @@ export async function findInvitationEntryTarget(
   tokenHash: string,
   now: Date
 ) {
-  const rows = await db
-    .select({
-      workspaceId: invitationEntryTargets.workspaceId,
-      workspaceName: workspaces.name,
-      contributorWalletAddress:
-        invitationEntryTargets.contributorWalletAddress,
-      expiresAt: invitationEntryTargets.expiresAt
-    })
-    .from(invitationEntryTargets)
-    .innerJoin(
-      workspaces,
-      eq(
-        invitationEntryTargets.workspaceId,
-        workspaces.id
+  const rows =
+    await db
+      .select({
+        workspaceId:
+          invitationEntryTargets.workspaceId,
+        workspaceName:
+          workspaces.name,
+        contributorWalletAddress:
+          invitationEntryTargets.contributorWalletAddress,
+        expiresAt:
+          invitationEntryTargets.expiresAt
+      })
+      .from(
+        invitationEntryTargets
       )
-    )
-    .where(
-      and(
-        eq(invitationEntryTargets.tokenHash, tokenHash),
-        gt(invitationEntryTargets.expiresAt, now)
+      .innerJoin(
+        workspaces,
+        eq(
+          invitationEntryTargets.workspaceId,
+          workspaces.id
+        )
       )
-    )
-    .limit(1);
+      .where(
+        and(
+          eq(
+            invitationEntryTargets.tokenHash,
+            tokenHash
+          ),
+          gt(
+            invitationEntryTargets.expiresAt,
+            now
+          )
+        )
+      )
+      .limit(1);
 
   return rows[0] ?? null;
 }

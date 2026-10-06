@@ -13,9 +13,6 @@ import {
   getDatabase
 } from "../../../../server/db";
 import {
-  buildSignInInput
-} from "../../../../server/auth/protocol";
-import {
   createServerSession,
   getSessionTokenFromCookies,
   persistSessionCookie
@@ -31,21 +28,27 @@ const verifySchema = z.object({
     .string()
     .regex(/^[a-f0-9]{64}$/),
 
-  method: z.enum([
-    "siws",
-    "raw"
-  ]),
-
   walletAddress: z
     .string()
     .min(32)
     .max(64),
 
+  publicKey: z
+    .string()
+    .min(4)
+    .max(512),
+
+  chains: z
+    .array(z.string())
+    .min(1),
+
+  features: z
+    .array(z.string()),
+
   signedMessage: z
     .string()
     .min(1)
-    .max(16384)
-    .optional(),
+    .max(16384),
 
   signature: z
     .string()
@@ -141,20 +144,30 @@ export async function POST(
     }
 
     const challengeInput =
-  challenge.input as import("@solana/wallet-standard-features").SolanaSignInInput;
+      challenge.input as import("@solana/wallet-standard-features").SolanaSignInInput;
 
     const valid =
       await verifyWalletProof(
         {
           challengeInput,
-          expectedMessage:
-            challenge.message
+          expectedAuthUrl: new URL(
+            "/auth",
+            new URL(request.url).origin
+          ).toString()
         },
         {
-          method:
-            parsed.data.method,
           walletAddress:
             parsed.data.walletAddress,
+          account: {
+            address:
+              parsed.data.walletAddress,
+            publicKey:
+              parsed.data.publicKey,
+            chains:
+              parsed.data.chains,
+            features:
+              parsed.data.features
+          },
           signedMessage:
             parsed.data.signedMessage,
           signature:

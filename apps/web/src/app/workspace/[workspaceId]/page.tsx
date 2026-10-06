@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import {
+  notFound,
+  redirect
+} from "next/navigation";
 import {
   SignOutButton
 } from "../../../components/auth/SignOutButton";
 import {
   WORKSPACE_ROLE_LABELS
-} from "../../../server/authorization";
-import { getDatabase } from "../../../server/db";
+} from "../../../server/authorization-policy";
+import {
+  getDatabase
+} from "../../../server/db";
 import {
   getSessionState
 } from "../../../server/session";
@@ -23,14 +28,22 @@ export const metadata: Metadata = {
 };
 
 export default async function WorkspacePage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{
     workspaceId: string;
   }>;
+  searchParams: Promise<{
+    created?: string;
+  }>;
 }) {
-  const { workspaceId } =
-    await params;
+  const {
+    workspaceId
+  } = await params;
+
+  const query =
+    await searchParams;
 
   const sessionState =
     await getSessionState();
@@ -104,15 +117,25 @@ export default async function WorkspacePage({
       </header>
 
       <section className="invite-state">
+        {query.created === "1" ? (
+          <div
+            className="success-box"
+            role="status"
+          >
+            Workspace created
+          </div>
+        ) : null}
+
         <h2>
           Workspace access is active
         </h2>
 
         <p>
-          This authenticated workspace boundary
-          is intentionally established before
-          billing, contributor management, or
-          payroll functionality.
+          This workspace is available
+          through your authenticated
+          membership. Future workspace
+          capabilities build on this
+          authorization boundary.
         </p>
 
         <p className="workspace-card__meta">
