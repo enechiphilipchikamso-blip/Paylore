@@ -173,7 +173,7 @@ export default async function AppGatewayPage() {
             </h2>
             <p>
               Set up another workspace for a separate team or
-              organization. Creating one does not activate billing.
+              organization.
             </p>
           </div>
 
