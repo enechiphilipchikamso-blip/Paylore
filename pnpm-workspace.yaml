@@ -8,3 +8,10 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
   utf-8-validate: false
+
+peerDependencyRules:
+  allowedVersions:
+    # Remove each exception once upstream declares support for the installed version.
+    "eslint-plugin-import@2.32.0>eslint": "^10.0.0"
+    "eslint-plugin-jsx-a11y@6.10.2>eslint": "^10.0.0"
+    "eslint-plugin-react@7.37.5>eslint": "^10.0.0"

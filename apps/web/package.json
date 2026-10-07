@@ -12,7 +12,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@jup-ag/wallet-adapter": "0.2.6",
     "@paylore/database": "workspace:*",
     "@solana/kit": "8.4.0",
     "@solana/wallet-standard-features": "1.5.0",
@@ -32,6 +31,7 @@
     "eslint": "10.12.0",
     "eslint-config-next": "16.3.8",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
     "vitest": "5.0.2"
   }
 }

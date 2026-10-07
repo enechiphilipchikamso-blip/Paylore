@@ -103,3 +103,6 @@ vite.config.ts.timestamp-*
 .fusebox/
 .dynamodb/
 .firebase/
+
+# Local dependency compatibility notes
+/DEPENDENCY-COMPATIBILITY.md

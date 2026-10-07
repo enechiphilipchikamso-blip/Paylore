@@ -26,6 +26,21 @@ export type WalletProof = {
   signature: string;
 };
 
+type WalletIdentifier =
+  `${string}:${string}`;
+
+function isWalletIdentifier(
+  value: string
+): value is WalletIdentifier {
+  const separator =
+    value.indexOf(":");
+
+  return (
+    separator > 0 &&
+    separator < value.length - 1
+  );
+}
+
 function base64ToBytes(
   value: string
 ): Uint8Array {
@@ -81,6 +96,17 @@ export async function verifyWalletProof(
       expectedUrl.host ||
     parsedChallenge.data.uri !==
       expectedUrl.toString()
+  ) {
+    return false;
+  }
+
+  if (
+    !proof.account.chains.every(
+      isWalletIdentifier
+    ) ||
+    !proof.account.features.every(
+      isWalletIdentifier
+    )
   ) {
     return false;
   }

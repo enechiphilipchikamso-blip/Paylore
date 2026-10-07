@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   useEffect,
   useState
@@ -9,10 +10,14 @@ import type {
   SolanaSignInInput,
   SolanaSignInOutput
 } from "@solana/wallet-standard-features";
+import {
+  isWalletCancellation
+} from "./walletErrors";
 
 const SUPPORTED_WALLET_OPTIONS = [
   {
     label: "Phantom",
+    iconSrc: "/brand/wallets/phantom.svg",
     aliases: [
       "Phantom",
       "Phantom Wallet"
@@ -20,6 +25,7 @@ const SUPPORTED_WALLET_OPTIONS = [
   },
   {
     label: "Solflare",
+    iconSrc: "/brand/wallets/solflare.svg",
     aliases: [
       "Solflare",
       "Solflare Wallet"
@@ -27,15 +33,17 @@ const SUPPORTED_WALLET_OPTIONS = [
   },
   {
     label: "Backpack",
+    iconSrc: "/brand/wallets/backpack.png",
     aliases: [
       "Backpack",
       "Backpack Wallet"
     ]
   },
   {
-    label:
-      "Jupiter Wallet Extension",
+    label: "Jupiter",
+    iconSrc: "/brand/wallets/jupiter.svg",
     aliases: [
+      "Jupiter",
       "Jupiter Wallet Extension",
       "Jupiter Wallet"
     ]
@@ -44,7 +52,6 @@ const SUPPORTED_WALLET_OPTIONS = [
 
 type StandardWallet = {
   name: string;
-  icon: string;
   features: Record<
     string,
     unknown
@@ -81,7 +88,9 @@ type StandardConnectFeature = {
 type StandardSignInFeature = {
   signIn(
     input: SolanaSignInInput
-  ): Promise<SolanaSignInOutput>;
+  ): Promise<
+    readonly SolanaSignInOutput[]
+  >;
 };
 
 type StandardDisconnectFeature = {
@@ -205,24 +214,6 @@ function getSupportedWalletLabel(
   );
 }
 
-function isCancellation(
-  cause: unknown
-): boolean {
-  if (!(cause instanceof Error)) {
-    return false;
-  }
-
-  const value =
-    `${cause.name} ${cause.message}`
-      .toLowerCase();
-
-  return (
-    value.includes("reject") ||
-    value.includes("cancel") ||
-    value.includes("denied")
-  );
-}
-
 function connectFeatureFor(
   wallet: StandardWallet
 ): StandardConnectFeature | null {
@@ -317,40 +308,6 @@ export function WalletAuthPanel({
     useState<string | null>(
       null
     );
-
-  const [
-    isMobileBrowser,
-    setIsMobileBrowser
-  ] = useState(false);
-
-  useEffect(() => {
-    const mobileQuery =
-      window.matchMedia(
-        "(max-width: 767px)"
-      );
-
-    const update = () => {
-      setIsMobileBrowser(
-        mobileQuery.matches ||
-          /Android|iPhone|iPad|iPod|Mobile/i.test(
-            navigator.userAgent
-          )
-      );
-    };
-
-    update();
-
-    mobileQuery.addEventListener(
-      "change",
-      update
-    );
-
-    return () =>
-      mobileQuery.removeEventListener(
-        "change",
-        update
-      );
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -540,7 +497,7 @@ export function WalletAuthPanel({
       setStatus("idle");
 
       setError(
-        isCancellation(cause)
+        isWalletCancellation(cause)
           ? "Connection canceled"
           : "Connection failed. Try again."
       );
@@ -620,14 +577,26 @@ export function WalletAuthPanel({
           challengeBody)
       ) {
         throw new Error(
-          "Authentication failed. Try again."
+          challengeResponse.status >= 500
+            ? "Sign-in is temporarily unavailable. Please try again."
+            : "Authentication failed. Please try again."
         );
       }
 
-      const output =
+      const [output] =
         await signInFeature.signIn(
           challengeBody.input
         );
+
+      if (
+        !output?.account ||
+        typeof output.account.address !==
+          "string"
+      ) {
+        throw new Error(
+          "The wallet returned an incomplete sign-in response. Reconnect your wallet and try again."
+        );
+      }
 
       if (
         output.account.address !==
@@ -689,7 +658,9 @@ export function WalletAuthPanel({
 
       if (!verifyResponse.ok) {
         throw new Error(
-          "Authentication failed. Try again."
+          verifyResponse.status >= 500
+            ? "Sign-in is temporarily unavailable. Please try again."
+            : "Authentication failed. Please try again."
         );
       }
 
@@ -704,11 +675,11 @@ export function WalletAuthPanel({
       setStatus("idle");
 
       setError(
-        isCancellation(cause)
+        isWalletCancellation(cause)
           ? "Authentication was canceled."
           : cause instanceof Error
             ? cause.message
-            : "Authentication failed. Try again."
+            : "Authentication failed. Please try again."
       );
     }
   }
@@ -716,10 +687,6 @@ export function WalletAuthPanel({
   return (
     <div className="auth-card">
       <div className="auth-card__header">
-        <p className="eyebrow">
-          SECURE ENTRY
-        </p>
-
         <h2>
           Sign in to Paylore
         </h2>
@@ -797,89 +764,69 @@ export function WalletAuthPanel({
         </div>
       </div>
 
-      {isMobileBrowser ? (
-        <div className="mobile-wallet-notice">
-          <p>
-            Paylore wallet connection
-            for the MVP requires a
-            desktop browser with
-            Phantom, Solflare,
-            Backpack, or Jupiter
-            Wallet Extension.
-          </p>
-
-          <p>
-            Open Paylore in a desktop
-            browser to connect your
-            wallet.
-          </p>
-        </div>
-      ) : (
-        <div className="auth-actions">
-          {!connected ? (
-            <button
-              className="button"
-              type="button"
-              onClick={
-                refreshWalletOptions
-              }
-              disabled={
-                status ===
-                "connecting"
-              }
-            >
-              {failure
-                ? "Try again"
+      <div className="auth-actions">
+        {!connected ? (
+          <button
+            className="button"
+            type="button"
+            onClick={
+              refreshWalletOptions
+            }
+            disabled={
+              status ===
+              "connecting"
+            }
+          >
+            {failure
+              ? "Try again"
+              : status ===
+                  "connecting"
+                ? "Connecting…"
+                : "Connect wallet"}
+          </button>
+        ) : (
+          <button
+            className="button"
+            type="button"
+            onClick={() =>
+              void authenticate()
+            }
+            disabled={
+              status ===
+                "signing" ||
+              status ===
+                "success"
+            }
+          >
+            {failure
+              ? "Try again"
+              : status ===
+                  "signing"
+                ? "Signing…"
                 : status ===
-                    "connecting"
-                  ? "Connecting…"
-                  : "Connect wallet"}
-            </button>
-          ) : (
-            <button
-              className="button"
-              type="button"
-              onClick={() =>
-                void authenticate()
-              }
-              disabled={
-                status ===
-                  "signing" ||
-                status ===
-                  "success"
-              }
-            >
-              {failure
-                ? "Try again"
-                : status ===
-                    "signing"
-                  ? "Signing…"
-                  : status ===
-                      "success"
-                    ? "Signed in"
-                    : "Sign in with wallet"}
-            </button>
-          )}
+                    "success"
+                  ? "Signed in"
+                  : "Sign in with wallet"}
+          </button>
+        )}
 
-          {connected ? (
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() =>
-                void disconnectWallet()
-              }
-              disabled={
-                status === "signing"
-              }
-            >
-              Disconnect wallet
-            </button>
-          ) : null}
-        </div>
-      )}
+        {connected ? (
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() =>
+              void disconnectWallet()
+            }
+            disabled={
+              status === "signing"
+            }
+          >
+            Disconnect wallet
+          </button>
+        ) : null}
+      </div>
 
-      {chooserOpen &&
-      !isMobileBrowser ? (
+      {chooserOpen ? (
         <section
           className="wallet-chooser"
           aria-label="Choose a supported wallet"
@@ -891,9 +838,7 @@ export function WalletAuthPanel({
               </h3>
 
               <p>
-                Only the four wallets
-                supported by Paylore are
-                shown.
+                Choose a wallet available in this browser.
               </p>
             </div>
 
@@ -943,15 +888,30 @@ export function WalletAuthPanel({
                       }
                     }}
                   >
-                    <span>
-                      {option.label}
+                    <span
+                      className="wallet-choice__icon"
+                      aria-hidden="true"
+                    >
+                      <Image
+                        src={option.iconSrc}
+                        alt=""
+                        width={44}
+                        height={44}
+                        unoptimized
+                      />
                     </span>
 
-                    <small>
-                      {detectedWallet
-                        ? "Available"
-                        : "Not detected"}
-                    </small>
+                    <span className="wallet-choice__copy">
+                      <span className="wallet-choice__name">
+                        {option.label}
+                      </span>
+
+                      {!detectedWallet ? (
+                        <small>
+                          Not detected in this browser
+                        </small>
+                      ) : null}
+                    </span>
                   </button>
                 );
               }

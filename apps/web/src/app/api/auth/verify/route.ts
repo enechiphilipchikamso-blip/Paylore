@@ -19,8 +19,10 @@ import {
 } from "../../../../server/session";
 import {
   assertSameOrigin,
+  getRequestOrigin,
   hashOpaqueToken,
-  isValidSolanaAddress
+  isValidSolanaAddress,
+  RequestSecurityError
 } from "../../../../server/security";
 
 const verifySchema = z.object({
@@ -65,80 +67,65 @@ export async function POST(
 ) {
   try {
     assertSameOrigin(request);
+  } catch (cause) {
+    if (cause instanceof RequestSecurityError) {
+      console.warn(
+        "[auth.verify] Rejected request origin.",
+        cause.message
+      );
 
-    const body =
-      await request.json();
-
-    const parsed =
-      verifySchema.safeParse(body);
-
-    if (!parsed.success) {
       return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
-        { status: 401 }
+        { error: "invalid_request" },
+        { status: 403 }
       );
     }
 
-    if (
-      !isValidSolanaAddress(
-        parsed.data.walletAddress
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
-        { status: 401 }
-      );
-    }
+    throw cause;
+  }
 
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "authentication_failed" },
+      { status: 401 }
+    );
+  }
+
+  const parsed =
+    verifySchema.safeParse(body);
+
+  if (
+    !parsed.success ||
+    !isValidSolanaAddress(
+      parsed.data.walletAddress
+    )
+  ) {
+    return NextResponse.json(
+      { error: "authentication_failed" },
+      { status: 401 }
+    );
+  }
+
+  try {
     const db = getDatabase();
-
     const challenge =
       await findAuthChallenge(
         db,
         parsed.data.nonce
       );
 
-    if (!challenge) {
-      return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
-        { status: 401 }
-      );
-    }
-
-    const now = new Date();
-
     if (
+      !challenge ||
       challenge.consumedAt ||
       challenge.expirationTime.getTime() <=
-        now.getTime()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
-        { status: 401 }
-      );
-    }
-
-    if (
+        Date.now() ||
       challenge.walletAddress !==
-      parsed.data.walletAddress
+        parsed.data.walletAddress
     ) {
       return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
+        { error: "authentication_failed" },
         { status: 401 }
       );
     }
@@ -152,39 +139,30 @@ export async function POST(
           challengeInput,
           expectedAuthUrl: new URL(
             "/auth",
-            new URL(request.url).origin
+            getRequestOrigin(request)
           ).toString()
         },
         {
-          walletAddress:
-            parsed.data.walletAddress,
+          walletAddress: parsed.data.walletAddress,
           account: {
-            address:
-              parsed.data.walletAddress,
-            publicKey:
-              parsed.data.publicKey,
-            chains:
-              parsed.data.chains,
-            features:
-              parsed.data.features
+            address: parsed.data.walletAddress,
+            publicKey: parsed.data.publicKey,
+            chains: parsed.data.chains,
+            features: parsed.data.features
           },
-          signedMessage:
-            parsed.data.signedMessage,
-          signature:
-            parsed.data.signature
+          signedMessage: parsed.data.signedMessage,
+          signature: parsed.data.signature
         }
       );
 
     if (!valid) {
       return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
+        { error: "authentication_failed" },
         { status: 401 }
       );
     }
 
+    const now = new Date();
     const consumed =
       await consumeAuthChallenge(
         db,
@@ -194,10 +172,7 @@ export async function POST(
 
     if (!consumed) {
       return NextResponse.json(
-        {
-          error:
-            "authentication_failed"
-        },
+        { error: "authentication_failed" },
         { status: 401 }
       );
     }
@@ -207,7 +182,6 @@ export async function POST(
         db,
         parsed.data.walletAddress
       );
-
     const existingToken =
       await getSessionTokenFromCookies();
 
@@ -235,16 +209,17 @@ export async function POST(
 
     return NextResponse.json({
       authenticated: true,
-      walletAddress:
-        parsed.data.walletAddress
+      walletAddress: parsed.data.walletAddress
     });
-  } catch {
+  } catch (cause) {
+    console.error(
+      "[auth.verify] Sign-in could not be completed due to a server error.",
+      cause
+    );
+
     return NextResponse.json(
-      {
-        error:
-          "authentication_failed"
-      },
-      { status: 401 }
+      { error: "authentication_unavailable" },
+      { status: 503 }
     );
   }
 }
