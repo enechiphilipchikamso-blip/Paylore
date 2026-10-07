@@ -1,8 +1,16 @@
 import type { Metadata, Viewport } from "next";
+import { Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
+import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
 import { metadataBase, siteConfig } from "./site";
 import "./globals.css";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-space-grotesk"
+});
 
 const themeBootstrapScript = `
 (function () {
@@ -88,8 +96,9 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body>
+      <body className={spaceGrotesk.variable}>
         <PublicShell>{children}</PublicShell>
+        <ErudaDevTools />
       </body>
     </html>
   );

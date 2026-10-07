@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CreateWorkspaceForm
@@ -64,26 +65,22 @@ export default async function AppGatewayPage() {
       sessionState.session.userId
     );
 
-  if (
-    memberships.length === 1
-  ) {
-    redirect(
-      `/workspace/${memberships[0].workspaceId}`
-    );
-  }
-
   return (
     <div className="protected-wrap">
       <header className="protected-header">
         <p className="eyebrow">
-          Workspace access
+          Workspace home
         </p>
 
         <h1>
-          {memberships.length === 0
-            ? "Create a workspace"
-            : "Choose a workspace"}
+          Your workspaces
         </h1>
+
+        <p>
+          {memberships.length === 0
+            ? "Create a workspace to get started."
+            : "Choose a workspace to continue, or create another one."}
+        </p>
 
         <p>
           Signed in as{" "}
@@ -94,61 +91,94 @@ export default async function AppGatewayPage() {
         </p>
       </header>
 
-      {memberships.length === 0 ? (
-        <section className="invite-state">
-          <h2>
-            Create a workspace
-          </h2>
+      <div className="workspace-dashboard">
+        <section
+          className="workspace-dashboard__list"
+          aria-labelledby="workspace-list-heading"
+        >
+          <div className="workspace-dashboard__section-heading">
+            <div>
+              <h2 id="workspace-list-heading">
+                Workspace list
+              </h2>
+              <p>
+                {memberships.length === 1
+                  ? "1 workspace"
+                  : `${memberships.length} workspaces`}
+              </p>
+            </div>
+          </div>
 
-          <p>
-            Creating a workspace does
-            not activate billing.
-          </p>
+          {memberships.length === 0 ? (
+            <div className="workspace-empty-state">
+              <h3>No workspaces yet</h3>
+              <p>
+                Create your first workspace to get started.
+              </p>
+            </div>
+          ) : (
+            <div className="workspace-grid">
+              {memberships.map(
+                (membership) => (
+                  <article
+                    className="workspace-card"
+                    key={
+                      membership.workspaceId
+                    }
+                  >
+                    <div>
+                      <h3>
+                        {
+                          membership.workspaceName
+                        }
+                      </h3>
+                      <span className="workspace-card__role">
+                        {
+                          WORKSPACE_ROLE_LABELS[
+                            membership.role
+                          ]
+                        }
+                      </span>
+                    </div>
+
+                    <div className="protected-actions">
+                      <Link
+                        className="button"
+                        href={`/workspace/${membership.workspaceId}`}
+                      >
+                        Open workspace
+                      </Link>
+                    </div>
+                  </article>
+                )
+              )}
+            </div>
+          )}
+        </section>
+
+        <section
+          className="invite-state workspace-create-card"
+          id="create-workspace"
+          aria-labelledby="create-workspace-heading"
+        >
+          <div>
+            <p className="eyebrow">
+              Add a workspace
+            </p>
+            <h2 id="create-workspace-heading">
+              Create a workspace
+            </h2>
+            <p>
+              Set up another workspace for a separate team or
+              organization. Creating one does not activate billing.
+            </p>
+          </div>
 
           <CreateWorkspaceForm />
         </section>
-      ) : (
-        <section
-          className="workspace-grid"
-          aria-label="Your workspaces"
-        >
-          {memberships.map(
-            (membership) => (
-              <article
-                className="workspace-card"
-                key={
-                  membership.workspaceId
-                }
-              >
-                <h2>
-                  {
-                    membership.workspaceName
-                  }
-                </h2>
+      </div>
 
-                <span className="workspace-card__role">
-                  {
-                    WORKSPACE_ROLE_LABELS[
-                      membership.role
-                    ]
-                  }
-                </span>
-
-                <div className="protected-actions">
-                  <a
-                    className="button"
-                    href={`/workspace/${membership.workspaceId}`}
-                  >
-                    Enter workspace
-                  </a>
-                </div>
-              </article>
-            )
-          )}
-        </section>
-      )}
-
-      <div className="protected-actions">
+      <div className="protected-actions workspace-dashboard__footer">
         <SignOutButton />
       </div>
     </div>

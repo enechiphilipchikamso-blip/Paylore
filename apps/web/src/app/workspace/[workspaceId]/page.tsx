@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import {
   notFound,
   redirect
@@ -16,7 +17,8 @@ import {
   getSessionState
 } from "../../../server/session";
 import {
-  getWorkspaceForUser
+  getWorkspaceForUser,
+  listWorkspaceMemberships
 } from "@paylore/database";
 
 export const metadata: Metadata = {
@@ -81,12 +83,19 @@ export default async function WorkspacePage({
     );
   }
 
-  const workspace =
-    await getWorkspaceForUser(
-      getDatabase(),
-      sessionState.session.userId,
-      workspaceId
-    );
+  const db = getDatabase();
+  const [workspace, memberships] =
+    await Promise.all([
+      getWorkspaceForUser(
+        db,
+        sessionState.session.userId,
+        workspaceId
+      ),
+      listWorkspaceMemberships(
+        db,
+        sessionState.session.userId
+      )
+    ]);
 
   if (!workspace) {
     notFound();
@@ -94,6 +103,62 @@ export default async function WorkspacePage({
 
   return (
     <div className="protected-wrap">
+      <nav
+        className="workspace-navigation"
+        aria-label="Workspace navigation"
+      >
+        <Link
+          className="workspace-navigation__all"
+          href="/app"
+        >
+          All workspaces
+        </Link>
+
+        <details className="workspace-switcher">
+          <summary>
+            <span>Current workspace</span>
+            <strong>
+              {workspace.workspaceName}
+            </strong>
+          </summary>
+
+          <div className="workspace-switcher__menu">
+            <p>Switch workspace</p>
+            {memberships.map(
+              (membership) => (
+                <Link
+                  className="workspace-switcher__option"
+                  href={`/workspace/${membership.workspaceId}`}
+                  key={membership.workspaceId}
+                  aria-current={
+                    membership.workspaceId === workspace.workspaceId
+                      ? "page"
+                      : undefined
+                  }
+                >
+                  <span>
+                    {membership.workspaceName}
+                  </span>
+                  <small>
+                    {
+                      WORKSPACE_ROLE_LABELS[
+                        membership.role
+                      ]
+                    }
+                  </small>
+                </Link>
+              )
+            )}
+            <Link
+              className="workspace-switcher__create"
+              href="/app#create-workspace"
+            >
+              Create workspace
+            </Link>
+          </div>
+        </details>
+      </nav>
+
       <header className="protected-header">
         <p className="eyebrow">
           Workspace

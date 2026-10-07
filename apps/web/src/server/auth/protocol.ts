@@ -1,12 +1,12 @@
 import {
   createSignInMessageText
 } from "@solana/wallet-standard-util";
+import type {
+  SolanaSignInInputWithRequiredFields
+} from "@solana/wallet-standard-util";
 import {
   z
 } from "zod";
-import type {
-  SolanaSignInInput
-} from "@solana/wallet-standard-features";
 
 export const AUTH_CHALLENGE_TTL_MS =
   5 * 60 * 1000;
@@ -39,7 +39,7 @@ export function buildSignInInput(input: {
   issuedAt: Date;
   expirationTime: Date;
   requestUrl: string;
-}): SolanaSignInInput {
+}): SolanaSignInInputWithRequiredFields {
   const request =
     new URL(input.requestUrl);
 
@@ -68,7 +68,7 @@ export function buildChallenge(
     typeof buildSignInInput
   >[0]
 ): {
-  input: SolanaSignInInput;
+  input: SolanaSignInInputWithRequiredFields;
   message: string;
 } {
   const challengeInput =

@@ -6,12 +6,8 @@ import {
   WalletAuthPanel
 } from "../../components/auth/WalletAuthPanel";
 import {
-  WalletProvider
-} from "../../components/auth/WalletProvider";
-import {
   isSafeReturnTo
 } from "../../server/security";
-import { siteOrigin } from "../site";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -49,19 +45,15 @@ export default async function AuthPage({
       : undefined;
 
   return (
-    <WalletProvider
-      origin={siteOrigin}
+    <PublicPage
+      eyebrow="SECURE ENTRY"
+      title="Sign in to Paylore"
+      description="Connect one of the supported Solana wallets and sign the Paylore authentication request. This signature proves wallet control; it does not send payroll funds or a payroll transaction."
     >
-      <PublicPage
-        eyebrow="SECURE ENTRY"
-        title="Sign in to Paylore"
-        description="Connect one of the supported Solana wallets and sign the Paylore authentication request. This signature proves wallet control; it does not send payroll funds or a payroll transaction."
-      >
-        <WalletAuthPanel
-          nextPath={nextPath}
-          reason={reason}
-        />
-      </PublicPage>
-    </WalletProvider>
+      <WalletAuthPanel
+        nextPath={nextPath}
+        reason={reason}
+      />
+    </PublicPage>
   );
 }
