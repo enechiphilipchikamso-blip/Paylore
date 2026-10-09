@@ -131,3 +131,21 @@ test("mobile menu stays inside an opaque content-height dropdown", async ({
     );
   }
 });
+
+test("site menu marks the current page with a blended accent line", async ({
+  page
+}) => {
+  await page.goto("/product");
+  await page.locator(".site-menu summary").click();
+
+  const currentLink = page
+    .getByRole("navigation", { name: "Site navigation" })
+    .getByRole("link", { name: "Product" });
+
+  await expect(currentLink).toHaveAttribute("aria-current", "page");
+  await expect(
+    page
+      .getByRole("navigation", { name: "Site navigation" })
+      .getByRole("link", { name: "Pricing" })
+  ).not.toHaveAttribute("aria-current", "page");
+});
