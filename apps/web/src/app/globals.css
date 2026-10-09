@@ -429,6 +429,7 @@ ul {
 }
 
 .site-menu a {
+  position: relative;
   display: block;
   padding: 0.65rem 0.75rem;
   border-radius: var(--radius-sm);
@@ -436,9 +437,46 @@ ul {
   text-decoration: none;
 }
 
+.site-menu a[aria-current="page"] {
+  background: linear-gradient(
+    90deg,
+    var(--color-brand-soft),
+    var(--color-surface-muted) 75%,
+    transparent
+  );
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.site-menu a[aria-current="page"]::after {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.25rem;
+  left: 0.75rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-brand),
+    var(--color-focus),
+    transparent
+  );
+  content: "";
+}
+
 .site-menu a:hover,
 .site-menu a:focus-visible {
   background: var(--color-surface-muted);
+}
+
+.site-menu a[aria-current="page"]:hover,
+.site-menu a[aria-current="page"]:focus-visible {
+  background: linear-gradient(
+    90deg,
+    var(--color-brand-soft),
+    var(--color-surface-muted) 75%,
+    transparent
+  );
 }
 
 @keyframes menu-enter {

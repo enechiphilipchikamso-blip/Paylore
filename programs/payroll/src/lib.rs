@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("47a4wetWPtTh6mgL27LozzyhhMcb1ZCJbC9S8wkM9xRd");
+declare_id!("A9G24bGQp9ospDBaXux1xqYBoQHYgQXtVSTFoVTjxo9k");
 
 #[program]
 pub mod paylore_payroll {

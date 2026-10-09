@@ -1,18 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { SiteMenu } from "./SiteMenu";
 import { ThemeToggle } from "./ThemeToggle";
-
-const navigationLinks = [
-  { href: "/", label: "Home" },
-  { href: "/product", label: "Product" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/terms", label: "Terms" },
-  { href: "/privacy", label: "Privacy" },
-  { href: "/security", label: "Security" },
-  { href: "/docs", label: "Docs" },
-  { href: "/auth", label: "Sign In" }
-];
 
 export function PublicShell({
   children
@@ -42,25 +32,7 @@ export function PublicShell({
 
           <div className="site-header__actions">
             <ThemeToggle />
-            <details className="site-menu">
-              <summary>
-                <span className="site-menu__icon" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                Menu
-              </summary>
-              <nav aria-label="Site navigation">
-                <ul>
-                  {navigationLinks.map((link) => (
-                    <li key={link.href}>
-                      <Link href={link.href}>{link.label}</Link>
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-            </details>
+            <SiteMenu />
           </div>
         </div>
       </header>
