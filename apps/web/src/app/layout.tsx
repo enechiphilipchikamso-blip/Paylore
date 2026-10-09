@@ -18,6 +18,8 @@ const themeBootstrapScript = `
     var stored = localStorage.getItem("paylore-theme");
     if (stored === "light" || stored === "dark") {
       document.documentElement.setAttribute("data-theme", stored);
+    } else if (stored === "system") {
+      document.documentElement.removeAttribute("data-theme");
     }
   } catch (_) {}
 })();

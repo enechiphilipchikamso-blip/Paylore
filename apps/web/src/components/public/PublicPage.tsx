@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 type PublicPageProps = {
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 };
 
@@ -18,9 +18,11 @@ export function PublicPage({
       <header className="page-heading">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
-        <p className="page-heading__description">
-          {description}
-        </p>
+        {description ? (
+          <p className="page-heading__description">
+            {description}
+          </p>
+        ) : null}
       </header>
 
       <div className="content-stack">{children}</div>

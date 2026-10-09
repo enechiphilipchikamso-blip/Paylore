@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -16,6 +17,28 @@ export const workspaceRoleEnum =
     "organization_admin",
     "finance_auditor",
     "contributor"
+  ]);
+
+export const subscriptionStatusEnum =
+  pgEnum("subscription_status", [
+    "inactive",
+    "active",
+    "cancel_scheduled",
+    "archived"
+  ]);
+
+export const contributorLifecycleEnum =
+  pgEnum("contributor_lifecycle", [
+    "invited",
+    "active",
+    "left"
+  ]);
+
+export const contributorOnboardingEnum =
+  pgEnum("contributor_onboarding_status", [
+    "pending",
+    "complete",
+    "incomplete"
   ]);
 
 export const users = pgTable(
@@ -275,6 +298,133 @@ export const workspaces =
     ]
   );
 
+export const workspaceSubscriptions =
+  pgTable(
+    "workspace_subscriptions",
+    {
+      workspaceId:
+        uuid("workspace_id")
+          .primaryKey()
+          .references(
+            () => workspaces.id,
+            { onDelete: "cascade" }
+          ),
+
+      status:
+        subscriptionStatusEnum(
+          "status"
+        )
+          .notNull()
+          .default("inactive"),
+
+      periodStart:
+        timestamp("period_start", {
+          withTimezone: true
+        }),
+
+      periodEnd:
+        timestamp("period_end", {
+          withTimezone: true
+        }),
+
+      cancelAtPeriodEnd:
+        boolean("cancel_at_period_end")
+          .notNull()
+          .default(false),
+
+      createdAt:
+        timestamp("created_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow(),
+
+      updatedAt:
+        timestamp("updated_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow()
+    },
+    (table) => [
+      index(
+        "workspace_subscriptions_status_period_end_idx"
+      ).on(table.status, table.periodEnd)
+    ]
+  );
+
+export const subscriptionPayments =
+  pgTable(
+    "subscription_payments",
+    {
+      id: uuid("id")
+        .defaultRandom()
+        .primaryKey(),
+
+      workspaceId:
+        uuid("workspace_id")
+          .notNull()
+          .references(
+            () => workspaces.id,
+            { onDelete: "cascade" }
+          ),
+
+      userId:
+        uuid("user_id")
+          .notNull()
+          .references(
+            () => users.id,
+            { onDelete: "restrict" }
+          ),
+
+      signature:
+        text("signature")
+          .notNull(),
+
+      mint:
+        text("mint")
+          .notNull(),
+
+      recipient:
+        text("recipient")
+          .notNull(),
+
+      amountBaseUnits:
+        text("amount_base_units")
+          .notNull(),
+
+      periodStart:
+        timestamp("period_start", {
+          withTimezone: true
+        }).notNull(),
+
+      periodEnd:
+        timestamp("period_end", {
+          withTimezone: true
+        }).notNull(),
+
+      verifiedAt:
+        timestamp("verified_at", {
+          withTimezone: true
+        }).notNull(),
+
+      createdAt:
+        timestamp("created_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow()
+    },
+    (table) => [
+      uniqueIndex(
+        "subscription_payments_signature_uq"
+      ).on(table.signature),
+      index(
+        "subscription_payments_workspace_created_idx"
+      ).on(table.workspaceId, table.createdAt)
+    ]
+  );
+
 export const workspaceMemberships =
   pgTable(
     "workspace_memberships",
@@ -392,6 +542,223 @@ export const invitationEntryTargets =
       ).on(
         table.expiresAt
       )
+    ]
+  );
+
+export const contributors =
+  pgTable(
+    "contributors",
+    {
+      id: uuid("id")
+        .defaultRandom()
+        .primaryKey(),
+
+      workspaceId:
+        uuid("workspace_id")
+          .notNull()
+          .references(
+            () => workspaces.id,
+            { onDelete: "cascade" }
+          ),
+
+      displayName:
+        text("display_name")
+          .notNull(),
+
+      identityWalletAddress:
+        text("identity_wallet_address")
+          .notNull(),
+
+      effectivePayoutAddress:
+        text("effective_payout_address")
+          .notNull(),
+
+      role:
+        workspaceRoleEnum("role")
+          .notNull()
+          .default("contributor"),
+
+      lifecycle:
+        contributorLifecycleEnum(
+          "lifecycle"
+        )
+          .notNull()
+          .default("invited"),
+
+      onboardingStatus:
+        contributorOnboardingEnum(
+          "onboarding_status"
+        )
+          .notNull()
+          .default("pending"),
+
+      organizationLabel:
+        text("organization_label"),
+
+      adminNote:
+        text("admin_note"),
+
+      createdAt:
+        timestamp("created_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow(),
+
+      updatedAt:
+        timestamp("updated_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow()
+    },
+    (table) => [
+      uniqueIndex(
+        "contributors_workspace_identity_wallet_uq"
+      ).on(
+        table.workspaceId,
+        table.identityWalletAddress
+      ),
+      index(
+        "contributors_workspace_lifecycle_idx"
+      ).on(table.workspaceId, table.lifecycle)
+    ]
+  );
+
+export const contributorInvitations =
+  pgTable(
+    "contributor_invitations",
+    {
+      id: uuid("id")
+        .defaultRandom()
+        .primaryKey(),
+
+      tokenHash:
+        text("token_hash")
+          .notNull()
+          .unique(),
+
+      workspaceId:
+        uuid("workspace_id")
+          .notNull()
+          .references(
+            () => workspaces.id,
+            { onDelete: "cascade" }
+          ),
+
+      contributorId:
+        uuid("contributor_id")
+          .notNull()
+          .references(
+            () => contributors.id,
+            { onDelete: "cascade" }
+          ),
+
+      createdByUserId:
+        uuid("created_by_user_id")
+          .notNull()
+          .references(
+            () => users.id,
+            { onDelete: "restrict" }
+          ),
+
+      expiresAt:
+        timestamp("expires_at", {
+          withTimezone: true
+        }).notNull(),
+
+      acceptedAt:
+        timestamp("accepted_at", {
+          withTimezone: true
+        }),
+
+      createdAt:
+        timestamp("created_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow()
+    },
+    (table) => [
+      index(
+        "contributor_invitations_workspace_id_idx"
+      ).on(table.workspaceId),
+      index(
+        "contributor_invitations_expires_at_idx"
+      ).on(table.expiresAt)
+    ]
+  );
+
+export const workspaceReserves =
+  pgTable(
+    "workspace_reserves",
+    {
+      workspaceId:
+        uuid("workspace_id")
+          .primaryKey()
+          .references(
+            () => workspaces.id,
+            { onDelete: "cascade" }
+          ),
+
+      address:
+        text("address")
+          .notNull(),
+
+      encryptedPrivateKey:
+        text("encrypted_private_key")
+          .notNull(),
+
+      privateKeyNonce:
+        text("private_key_nonce")
+          .notNull(),
+
+      privateKeyAuthTag:
+        text("private_key_auth_tag")
+          .notNull(),
+
+      encryptedDataKey:
+        text("encrypted_data_key")
+          .notNull(),
+
+      dataKeyNonce:
+        text("data_key_nonce")
+          .notNull(),
+
+      dataKeyAuthTag:
+        text("data_key_auth_tag")
+          .notNull(),
+
+      encryptedBackup:
+        text("encrypted_backup")
+          .notNull(),
+
+      backupNonce:
+        text("backup_nonce")
+          .notNull(),
+
+      backupAuthTag:
+        text("backup_auth_tag")
+          .notNull(),
+
+      createdAt:
+        timestamp("created_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow(),
+
+      updatedAt:
+        timestamp("updated_at", {
+          withTimezone: true
+        })
+          .notNull()
+          .defaultNow()
+    },
+    (table) => [
+      uniqueIndex(
+        "workspace_reserves_address_uq"
+      ).on(table.address)
     ]
   );
 

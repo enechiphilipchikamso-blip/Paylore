@@ -3,35 +3,15 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ThemeToggle } from "./ThemeToggle";
 
-const primaryLinks = [
+const navigationLinks = [
   { href: "/", label: "Home" },
-  {
-    href: "/product",
-    label: "Product"
-  },
-  {
-    href: "/pricing",
-    label: "Pricing"
-  },
-  {
-    href: "/docs",
-    label: "Docs"
-  }
-];
-
-const footerLinks = [
-  {
-    href: "/terms",
-    label: "Terms"
-  },
-  {
-    href: "/privacy",
-    label: "Privacy"
-  },
-  {
-    href: "/security",
-    label: "Security"
-  }
+  { href: "/product", label: "Product" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/security", label: "Security" },
+  { href: "/docs", label: "Docs" },
+  { href: "/auth", label: "Sign In" }
 ];
 
 export function PublicShell({
@@ -41,20 +21,13 @@ export function PublicShell({
 }) {
   return (
     <>
-      <a
-        className="skip-link"
-        href="#main-content"
-      >
+      <a className="skip-link" href="#main-content">
         Skip to content
       </a>
 
       <header className="site-header">
         <div className="site-container site-header__inner">
-          <Link
-            className="brand-lockup"
-            href="/"
-            aria-label="Paylore home"
-          >
+          <Link className="brand-lockup" href="/" aria-label="Paylore home">
             <span className="brand-lockup__mark">
               <Image
                 src="/brand/paylore.svg"
@@ -65,145 +38,54 @@ export function PublicShell({
                 unoptimized
               />
             </span>
-
-            <span className="brand-lockup__name">
-              Paylore
-            </span>
           </Link>
-
-          <nav
-            className="desktop-nav"
-            aria-label="Primary navigation"
-          >
-            <ul>
-              {primaryLinks.map(
-                (link) => (
-                  <li
-                    key={link.href}
-                  >
-                    <Link
-                      href={
-                        link.href
-                      }
-                    >
-                      {link.label}
-                    </Link>
-                  </li>
-                )
-              )}
-            </ul>
-          </nav>
 
           <div className="site-header__actions">
             <ThemeToggle />
-
-            <Link
-              className="auth-link"
-              href="/auth"
-            >
-              Sign in
-            </Link>
-          </div>
-
-          <details className="mobile-nav">
-            <summary>
-              Menu
-            </summary>
-
-            <nav
-              aria-label="Mobile navigation"
-            >
-              <ul>
-                {primaryLinks.map(
-                  (link) => (
-                    <li
-                      key={
-                        link.href
-                      }
-                    >
-                      <Link
-                        href={
-                          link.href
-                        }
-                      >
-                        {
-                          link.label
-                        }
-                      </Link>
+            <details className="site-menu">
+              <summary>
+                <span className="site-menu__icon" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                Menu
+              </summary>
+              <nav aria-label="Site navigation">
+                <ul>
+                  {navigationLinks.map((link) => (
+                    <li key={link.href}>
+                      <Link href={link.href}>{link.label}</Link>
                     </li>
-                  )
-                )}
-              </ul>
-            </nav>
-          </details>
+                  ))}
+                </ul>
+              </nav>
+            </details>
+          </div>
         </div>
       </header>
 
-      <main
-        id="main-content"
-        className="site-main"
-        tabIndex={-1}
-      >
+      <main id="main-content" className="site-main" tabIndex={-1}>
         {children}
       </main>
 
       <footer className="site-footer">
-        <div className="site-container site-footer__inner">
-          <div>
-            <Link
-              className="brand-lockup brand-lockup--footer"
-              href="/"
-              aria-label="Paylore home"
-            >
-              <span className="brand-lockup__mark">
-                <Image
-                  src="/brand/paylore.svg"
-                  alt=""
-                  width={32}
-                  height={32}
-                  loading="eager"
-                  unoptimized
-                />
-              </span>
-
-              <span className="brand-lockup__name">
-                Paylore
-              </span>
-            </Link>
-
-            <p className="site-footer__description">
-              Private on-chain payroll
-              for crypto-native
-              organizations.
-            </p>
-          </div>
-
-          <nav
-            aria-label="Footer navigation"
-          >
-            <ul className="site-footer__links">
-              {footerLinks.map(
-                (link) => (
-                  <li
-                    key={
-                      link.href
-                    }
-                  >
-                    <Link
-                      href={
-                        link.href
-                      }
-                    >
-                      {
-                        link.label
-                      }
-                    </Link>
-                  </li>
-                )
-              )}
-            </ul>
-          </nav>
-        </div>
+        <nav
+          className="site-container site-footer__inner"
+          aria-label="Legal information"
+        >
+          <ul className="site-footer__links">
+            <li>
+              <Link href="/terms">Terms</Link>
+            </li>
+            <li>
+              <Link href="/privacy">Privacy</Link>
+            </li>
+            <li>
+              <Link href="/security">Security</Link>
+            </li>
+          </ul>
+        </nav>
       </footer>
     </>
   );
