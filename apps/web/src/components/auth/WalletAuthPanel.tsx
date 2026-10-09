@@ -296,6 +296,22 @@ export function WalletAuthPanel({
       StandardAccount | null
     >(null);
 
+  const [lastUsedWallet, setLastUsedWallet] = useState<string | null>(() => {
+    try {
+      const storedWallet = localStorage.getItem("paylore-last-wallet");
+      if (
+        storedWallet &&
+        SUPPORTED_WALLET_OPTIONS.some((option) => option.label === storedWallet)
+      ) {
+        return storedWallet;
+      }
+    } catch {
+      // Fall back to the default state when browser storage is unavailable.
+    }
+
+    return null;
+  });
+
   const [status, setStatus] =
     useState<
       | "idle"
@@ -427,6 +443,20 @@ export function WalletAuthPanel({
   const failure =
     Boolean(error);
 
+  const orderedWalletOptions = [
+    ...SUPPORTED_WALLET_OPTIONS
+  ].sort((left, right) => {
+    if (left.label === lastUsedWallet) {
+      return -1;
+    }
+
+    if (right.label === lastUsedWallet) {
+      return 1;
+    }
+
+    return left.label.localeCompare(right.label);
+  });
+
   function refreshWalletOptions() {
     if (!walletRegistry) {
       setError(
@@ -491,6 +521,21 @@ export function WalletAuthPanel({
       setAccount(
         nextAccount
       );
+
+      const walletLabel =
+        getSupportedWalletLabel(wallet);
+
+      if (walletLabel) {
+        setLastUsedWallet(walletLabel);
+        try {
+          localStorage.setItem(
+            "paylore-last-wallet",
+            walletLabel
+          );
+        } catch {
+          setLastUsedWallet(walletLabel);
+        }
+      }
 
       setStatus("idle");
     } catch (cause) {
@@ -777,12 +822,19 @@ export function WalletAuthPanel({
               "connecting"
             }
           >
-            {failure
-              ? "Try again"
-              : status ===
-                  "connecting"
-                ? "Connecting…"
-                : "Connect wallet"}
+            {failure ? (
+              "Try again"
+            ) : status === "connecting" ? (
+              <span className="loading-indicator">
+                <span
+                  className="loading-indicator__icon"
+                  aria-hidden="true"
+                />
+                Connecting…
+              </span>
+            ) : (
+              "Connect wallet"
+            )}
           </button>
         ) : (
           <button
@@ -798,15 +850,21 @@ export function WalletAuthPanel({
                 "success"
             }
           >
-            {failure
-              ? "Try again"
-              : status ===
-                  "signing"
-                ? "Signing…"
-                : status ===
-                    "success"
-                  ? "Signed in"
-                  : "Sign in with wallet"}
+            {failure ? (
+              "Try again"
+            ) : status === "signing" ? (
+              <span className="loading-indicator">
+                <span
+                  className="loading-indicator__icon"
+                  aria-hidden="true"
+                />
+                Signing…
+              </span>
+            ) : status === "success" ? (
+              "Signed in"
+            ) : (
+              "Sign in with wallet"
+            )}
           </button>
         )}
 
@@ -857,7 +915,7 @@ export function WalletAuthPanel({
           </div>
 
           <div className="wallet-choices">
-            {SUPPORTED_WALLET_OPTIONS.map(
+            {orderedWalletOptions.map(
               (option) => {
                 const detectedWallet =
                   walletOptions.find(
@@ -906,6 +964,17 @@ export function WalletAuthPanel({
                         {option.label}
                       </span>
 
+                      {option.label ===
+                      lastUsedWallet ? (
+                        <small className="wallet-choice__last-used">
+                          <span
+                            className="wallet-choice__last-used-signal"
+                            aria-hidden="true"
+                          />
+                          Last used
+                        </small>
+                      ) : null}
+
                       {!detectedWallet ? (
                         <small>
                           Not detected in this browser
@@ -924,6 +993,11 @@ export function WalletAuthPanel({
         Signing in is an
         authentication action. It
         does not send payroll funds.
+      </p>
+
+      <p className="auth-mobile-note">
+        Paylore wallet connection requires a desktop browser with Phantom,
+        Solflare, Backpack, or Jupiter Wallet Extension.
       </p>
 
       {error ? (
