@@ -106,3 +106,7 @@ vite.config.ts.timestamp-*
 
 # Local dependency compatibility notes
 /DEPENDENCY-COMPATIBILITY.md
+
+# Generated repository snapshot
+/project-snapshot.md
+/repomix.config.json
