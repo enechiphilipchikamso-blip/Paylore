@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CreateWorkspaceForm
 } from "../../components/auth/CreateWorkspaceForm";
+import { OpenWorkspaceLink } from "../../components/workspace/OpenWorkspaceLink";
 import {
   SignOutButton
 } from "../../components/auth/SignOutButton";
@@ -67,22 +67,27 @@ export default async function AppGatewayPage() {
       getDatabase(),
       sessionState.session.userId
     );
+  const administrators = memberships.filter(
+    (membership) => membership.role === "organization_admin"
+  );
+  const contributors = memberships.filter(
+    (membership) => membership.role === "contributor"
+  );
+  const finance = memberships.filter(
+    (membership) => membership.role === "finance_auditor"
+  );
 
   return (
     <div className="protected-wrap">
       <header className="protected-header">
-        <p className="eyebrow">
-          Workspace home
-        </p>
-
         <h1>
-          Your workspaces
+          Choose a workspace
         </h1>
 
         <p>
           {memberships.length === 0
-            ? "Create a workspace to get started."
-            : "Choose a workspace to continue, or create another one."}
+            ? "You do not have a workspace membership yet. Create a workspace to begin."
+            : "Workspace access is determined by your authenticated membership. Selecting a workspace does not change your role or authorization."}
         </p>
 
         <p>
@@ -101,62 +106,38 @@ export default async function AppGatewayPage() {
         >
           <div className="workspace-dashboard__section-heading">
             <div>
-              <h2 id="workspace-list-heading">
-                Workspace list
-              </h2>
-              <p>
-                {memberships.length === 1
-                  ? "1 workspace"
-                  : `${memberships.length} workspaces`}
-              </p>
+              <h2 id="workspace-list-heading">Your workspace memberships</h2>
             </div>
           </div>
 
           {memberships.length === 0 ? (
             <div className="workspace-empty-state">
-              <h3>No workspaces yet</h3>
-              <p>
-                Create your first workspace to get started.
-              </p>
+              <h3>No workspace membership yet</h3>
+              <p>Create a workspace to begin.</p>
             </div>
-          ) : (
-            <div className="workspace-grid">
-              {memberships.map(
-                (membership) => (
-                  <article
-                    className="workspace-card"
-                    key={
-                      membership.workspaceId
-                    }
-                  >
+          ) : null}
+          {[
+            { title: "Workspaces as Administrator", items: administrators },
+            { title: "Workspaces as Contributor", items: contributors },
+            { title: "Workspaces as Finance/Auditor", items: finance }
+          ].map((group) => group.items.length > 0 ? (
+            <section className="workspace-role-group" key={group.title}>
+              <h3>{group.title}</h3>
+              <div className="workspace-grid">
+                {group.items.map((membership) => (
+                  <article className="workspace-card" key={membership.workspaceId}>
                     <div>
-                      <h3>
-                        {
-                          membership.workspaceName
-                        }
-                      </h3>
+                      <h4>{membership.workspaceName}</h4>
                       <span className="workspace-card__role">
-                        {
-                          WORKSPACE_ROLE_LABELS[
-                            membership.role
-                          ]
-                        }
+                        {WORKSPACE_ROLE_LABELS[membership.role]}
                       </span>
                     </div>
-
-                    <div className="protected-actions">
-                      <Link
-                        className="button"
-                        href={`/workspace/${membership.workspaceId}`}
-                      >
-                        Open workspace
-                      </Link>
-                    </div>
+                    <OpenWorkspaceLink workspaceId={membership.workspaceId} />
                   </article>
-                )
-              )}
-            </div>
-          )}
+                ))}
+              </div>
+            </section>
+          ) : null)}
         </section>
 
         <section

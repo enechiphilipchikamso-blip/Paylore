@@ -46,7 +46,7 @@ export default async function AuthPage({
 
   return (
     <PublicPage
-      eyebrow="SECURE ENTRY"
+      eyebrow="WALLET AUTHENTICATION"
       title="Sign in to Paylore"
       description="Connect one of the supported Solana wallets and sign the Paylore authentication request. This signature proves wallet control; it does not send payroll funds or a payroll transaction."
     >

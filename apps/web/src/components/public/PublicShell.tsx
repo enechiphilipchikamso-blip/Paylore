@@ -44,19 +44,24 @@ export function PublicShell({
       <footer className="site-footer">
         <nav
           className="site-container site-footer__inner"
-          aria-label="Legal information"
+          aria-label="Footer navigation"
         >
-          <ul className="site-footer__links">
-            <li>
-              <Link href="/terms">Terms</Link>
-            </li>
-            <li>
-              <Link href="/privacy">Privacy</Link>
-            </li>
-            <li>
-              <Link href="/security">Security</Link>
-            </li>
-          </ul>
+          <div className="site-footer__content">
+            <p className="site-footer__description">
+              Private on-chain payroll for crypto-native organizations.
+            </p>
+            <ul className="site-footer__links">
+              <li>
+                <Link href="/terms">Terms</Link>
+              </li>
+              <li>
+                <Link href="/privacy">Privacy</Link>
+              </li>
+              <li>
+                <Link href="/security">Security</Link>
+              </li>
+            </ul>
+          </div>
         </nav>
       </footer>
     </>

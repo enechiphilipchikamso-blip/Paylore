@@ -40,9 +40,13 @@ const payloreConfigSchema = z.object({
     .enum(["helius", "quicknode", "solana", "custom"])
     .optional(),
   PAYLORE_RPC_SECONDARY_URL: z
-    .string()
-    .url()
-    .optional(),
+    .preprocess(
+      (value) =>
+        typeof value === "string" && value.trim() === ""
+          ? undefined
+          : value,
+      z.string().url().optional()
+    ),
   PAYLORE_RPC_SECONDARY_API_KEY: z
     .string()
     .optional(),

@@ -1,15 +1,21 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
 import { metadataBase, siteConfig } from "./site";
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
+const geistSans = Geist({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-space-grotesk"
+  variable: "--font-geist-sans"
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-geist-mono"
 });
 
 const themeBootstrapScript = `
@@ -98,7 +104,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={spaceGrotesk.variable}>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <PublicShell>{children}</PublicShell>
         <ErudaDevTools />
       </body>

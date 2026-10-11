@@ -280,6 +280,18 @@ export function WalletAuthPanel({
   >([]);
 
   const [
+    walletDiscoveryStatus,
+    setWalletDiscoveryStatus
+  ] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+
+  const [
+    walletDiscoveryAttempt,
+    setWalletDiscoveryAttempt
+  ] = useState(0);
+
+  const [
     chooserOpen,
     setChooserOpen
   ] = useState(false);
@@ -337,12 +349,14 @@ export function WalletAuthPanel({
             setWalletRegistry(
               getWallets() as WalletRegistry
             );
+            setWalletDiscoveryStatus("ready");
           }
         }
       )
       .catch(() => {
         if (active) {
           setWalletRegistry(null);
+          setWalletDiscoveryStatus("error");
           setError(
             "Wallet discovery is unavailable. Try again."
           );
@@ -352,7 +366,7 @@ export function WalletAuthPanel({
     return () => {
       active = false;
     };
-  }, []);
+  }, [walletDiscoveryAttempt]);
 
   useEffect(() => {
     if (!walletRegistry) {
@@ -459,9 +473,11 @@ export function WalletAuthPanel({
 
   function refreshWalletOptions() {
     if (!walletRegistry) {
-      setError(
-        "Wallet discovery is still loading. Try again."
-      );
+      if (walletDiscoveryStatus === "error") {
+        setError(null);
+        setWalletDiscoveryStatus("loading");
+        setWalletDiscoveryAttempt((attempt) => attempt + 1);
+      }
       return;
     }
 
@@ -737,14 +753,8 @@ export function WalletAuthPanel({
         </h2>
 
         <p>
-          Connect one of the
-          supported Solana wallets
-          and sign the Paylore
-          authentication request.
-          This signature proves
-          wallet control; it does
-          not send payroll funds or
-          a payroll transaction.
+          Choose a supported wallet, review the Paylore authentication
+          request, and sign only after confirming the message.
         </p>
       </div>
 
@@ -818,11 +828,19 @@ export function WalletAuthPanel({
               refreshWalletOptions
             }
             disabled={
-              status ===
-              "connecting"
+              status === "connecting" ||
+              walletDiscoveryStatus === "loading"
             }
           >
-            {failure ? (
+            {walletDiscoveryStatus === "loading" ? (
+              <span className="loading-indicator">
+                <span
+                  className="loading-indicator__icon"
+                  aria-hidden="true"
+                />
+                Discovering wallets…
+              </span>
+            ) : failure ? (
               "Try again"
             ) : status === "connecting" ? (
               <span className="loading-indicator">

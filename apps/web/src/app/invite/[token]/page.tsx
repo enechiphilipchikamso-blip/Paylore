@@ -7,6 +7,9 @@ import {
   InvitationActions
 } from "../../../components/auth/InvitationActions";
 import {
+  InvitationAcceptAction
+} from "../../../components/auth/InvitationAcceptAction";
+import {
   findInvitationEntry,
   invitationWalletMatches
 } from "../../../server/invitations";
@@ -200,9 +203,8 @@ export default async function InvitationEntryPage({
         <p>
           The invitation target has been
           verified for the authenticated
-          wallet. Invitation issuance and
-          contributor management are handled
-          separately.
+          wallet. Accepting adds this wallet
+          to the workspace as a contributor.
         </p>
 
         <p className="workspace-card__meta">
@@ -210,12 +212,7 @@ export default async function InvitationEntryPage({
           {invitation.workspaceId}
         </p>
 
-        <Link
-          className="button button--secondary"
-          href="/app"
-        >
-          Continue to workspace gateway
-        </Link>
+        <InvitationAcceptAction token={token} />
       </div>
     </PublicPage>
   );

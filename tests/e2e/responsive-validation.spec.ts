@@ -100,15 +100,14 @@ test("public page remains usable at target responsive viewport sizes", async ({
     await page.goBack();
     await expect(page).toHaveURL(/\/$/);
 
-    const theme = page.getByRole("combobox", { name: "Theme" });
+    const theme = page.locator(".theme-toggle");
     await expect(theme).toBeVisible();
-    await expect(theme).toHaveAttribute("data-theme-ready", "true");
     await movePointerTo(page, theme);
-    await theme.selectOption("dark");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await theme.selectOption("light");
+    await theme.click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await theme.selectOption("system");
+    await theme.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await theme.click();
     await expect(page.locator("html")).not.toHaveAttribute("data-theme");
 
     const documentWidth = await page.evaluate(

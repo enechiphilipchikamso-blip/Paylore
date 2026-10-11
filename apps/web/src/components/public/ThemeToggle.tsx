@@ -70,6 +70,65 @@ function nextTheme(theme: Theme): Theme {
   return themes[(themes.indexOf(theme) + 1) % themes.length] ?? "system";
 }
 
+function ThemeIcon({ theme }: { theme: Theme }) {
+  if (theme === "light") {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        width="18"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        data-theme-icon="light"
+      >
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+      </svg>
+    );
+  }
+
+  if (theme === "dark") {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        width="18"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        data-theme-icon="dark"
+      >
+        <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      data-theme-icon="system"
+    >
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="M8 21h8m-4-4v4" />
+    </svg>
+  );
+}
+
 export function ThemeToggle() {
   const theme = useSyncExternalStore(
     subscribeToThemeChange,
@@ -78,66 +137,15 @@ export function ThemeToggle() {
   );
   const next = nextTheme(theme);
 
-  function toggleTheme() {
-    saveTheme(next);
-  }
-
   return (
     <button
       className="theme-toggle"
       type="button"
       aria-label={`Theme: ${theme}. Activate to switch to ${next}.`}
       title={`Theme: ${theme}`}
-      onClick={toggleTheme}
+      onClick={() => saveTheme(next)}
     >
-      {theme === "light" ? (
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          data-theme-icon="light"
-        >
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
-        </svg>
-      ) : theme === "dark" ? (
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          data-theme-icon="dark"
-        >
-          <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" />
-        </svg>
-      ) : (
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          data-theme-icon="system"
-        >
-          <rect x="3" y="4" width="18" height="13" rx="2" />
-          <path d="M8 21h8m-4-4v4" />
-        </svg>
-      )}
+      <ThemeIcon theme={theme} />
     </button>
   );
 }

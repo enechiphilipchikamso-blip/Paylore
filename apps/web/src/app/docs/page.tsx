@@ -36,9 +36,10 @@ export default function DocsPage() {
         <article className="card">
           <h2>Wallet connection and sign-in</h2>
           <p>
-            Paylore separates wallet connection from authentication. Connect a
-            supported wallet, then sign the Paylore authentication request to
-            establish your session.
+            Paylore separates wallet connection from authentication. Connect
+            one of the supported Solana wallets and sign the Paylore
+            authentication request. This signature proves wallet control; it
+            does not send payroll funds or a payroll transaction.
           </p>
         </article>
         <article className="card">
@@ -54,7 +55,9 @@ export default function DocsPage() {
           <p>
             Organizations can maintain contributor records, import CSV/XLSX
             files, validate Solana addresses, detect duplicate wallets, and
-            issue workspace-specific invitation links.
+            issue individual contributor-bound invitation links. Only the
+            authenticated wallet assigned to that contributor can accept its
+            invitation.
           </p>
         </article>
         <article className="card">
