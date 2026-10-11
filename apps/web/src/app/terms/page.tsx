@@ -80,11 +80,11 @@ export default function TermsPage() {
     <PublicPage
       eyebrow="TERMS"
       title="Terms of Service"
-      description="Planning-authored product-aligned draft. Final production publication requires user/legal approval."
+      description="This document is not yet effective. Final production publication requires certain legal approvals."
     >
       <article className="surface-card prose legal-copy">
         <p className="legal-copy__effective">
-          Effective date: [USER APPROVAL DATE]
+          Effective date: [Not yet effective]
         </p>
         {terms.map((section) => (
           <section key={section.title}>
