@@ -18,16 +18,8 @@ export function SiteMenu() {
   const pathname = usePathname();
 
   return (
-    <details className="site-menu">
-      <summary>
-        <span className="site-menu__icon" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-        Menu
-      </summary>
-      <nav aria-label="Site navigation">
+    <>
+      <nav className="desktop-nav" aria-label="Primary navigation">
         <ul>
           {navigationLinks.map((link) => (
             <li key={link.href}>
@@ -41,6 +33,34 @@ export function SiteMenu() {
           ))}
         </ul>
       </nav>
-    </details>
+
+      <details
+        className="site-menu mobile-nav"
+        suppressHydrationWarning
+      >
+        <summary>
+          <span className="site-menu__icon" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          Menu
+        </summary>
+        <nav aria-label="Site navigation">
+          <ul>
+            {navigationLinks.map((link) => (
+              <li key={link.href}>
+                <Link
+                  href={link.href}
+                  aria-current={pathname === link.href ? "page" : undefined}
+                >
+                  {link.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </details>
+    </>
   );
 }

@@ -19,11 +19,10 @@ test.describe(
         await page.goto("/auth");
 
         await expect(
-          page.getByText(
-            "SECURE ENTRY",
-            { exact: true }
-          )
-        ).toBeVisible();
+          page.locator(".page-heading__description")
+        ).toHaveText(
+          "Connect one of the supported Solana wallets and sign the Paylore authentication request. This signature proves wallet control; it does not send payroll funds or a payroll transaction."
+        );
 
         await expect(
           page.getByRole("heading", {

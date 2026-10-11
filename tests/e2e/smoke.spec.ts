@@ -35,50 +35,53 @@ test.describe("public experience", () => {
 
     await expect(page).toHaveURL(/\/product$/);
     await expect(
-      page.getByRole("heading", { name: "Private payroll on Solana" })
+    page.getByRole("heading", {
+      name: "Private payroll without giving up clear operational control"
+    })
     ).toBeVisible();
   });
 
-  test("theme selector supports light, dark, and system", async ({
+  test("theme icon cycles through light, dark, and system", async ({
     page
   }) => {
     await page.goto("/");
 
-    const theme = page.getByRole("combobox", {
-      name: "Theme"
-    });
+    const theme = page.locator(".theme-toggle");
+    await expect(theme).toBeVisible();
+    await expect(theme.locator("svg")).toHaveAttribute(
+      "data-theme-icon",
+      "system"
+    );
 
-    await expect(theme).toHaveAttribute("data-theme-ready", "true");
-    await theme.selectOption("dark");
+    await theme.click();
+    await expect(theme.locator("svg")).toHaveAttribute(
+      "data-theme-icon",
+      "light"
+    );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-    await expect(theme).toHaveValue("dark");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
+    await theme.click();
+    await expect(theme.locator("svg")).toHaveAttribute(
+      "data-theme-icon",
       "dark"
     );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
     await page.reload();
 
-    await expect(theme).toHaveValue("dark");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
+    const reloadedTheme = page.locator(".theme-toggle");
+    await expect(reloadedTheme.locator("svg")).toHaveAttribute(
+      "data-theme-icon",
       "dark"
     );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
-    await theme.selectOption("light");
-
-    await expect(theme).toHaveValue("light");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
-      "light"
+    await reloadedTheme.click();
+    await expect(reloadedTheme.locator("svg")).toHaveAttribute(
+      "data-theme-icon",
+      "system"
     );
-
-    await theme.selectOption("system");
-
-    await expect(theme).toHaveValue("system");
-    await expect(page.locator("html")).not.toHaveAttribute(
-      "data-theme"
-    );
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme");
   });
 
   test("mobile navigation is keyboard operable", async ({ page }) => {

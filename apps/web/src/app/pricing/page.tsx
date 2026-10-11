@@ -13,14 +13,18 @@ export default function PricingPage() {
   return (
     <PublicPage
       eyebrow="PAYLORE WORKSPACE"
-      title="Paylore Workspace"
-      description="One workspace, one clear plan, manual USDC renewal, and the operational controls required for private on-chain payroll."
+      title="One clear plan for every workspace."
+      description="Pay monthly in USDC with manual renewal and clear organization controls."
     >
-      <section className="surface-card price-card">
+      <section
+        aria-labelledby="pricing-plan-heading"
+        className="surface-card price-card"
+      >
         <div>
-          <p className="eyebrow">Paylore Workspace</p>
+          <p className="eyebrow">Workspace plan</p>
+          <h2 id="pricing-plan-heading">Paylore Workspace</h2>
           <div className="price-card__price">
-            <span className="price-card__amount">$49</span>
+            <span className="price-card__amount financial-value">$49</span>
             <span className="price-card__period">/ month</span>
           </div>
         </div>

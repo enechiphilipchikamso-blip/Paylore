@@ -13,7 +13,7 @@ export default function ProductPage() {
   return (
     <PublicPage
       eyebrow="THE PAYLORE PRODUCT"
-      title="Private payroll without giving up clear operational control."
+      title="Private payroll without giving up clear operational control"
       description="Paylore gives crypto-native organizations a structured way to manage USDC payroll while keeping compensation amounts confidential inside the payroll system."
     >
       <section className="content-stack">
@@ -42,8 +42,9 @@ export default function ProductPage() {
           <p>
             Organizations can maintain workspace-local contributor records,
             import contributor data from CSV or XLSX, validate Solana
-            addresses, detect duplicate wallets, and manage workspace-specific
-            invitation links.
+            addresses, detect duplicate wallets, and manage individual
+            contributor-bound invitation links. Only the authenticated wallet
+            assigned to a contributor can accept that contributor&apos;s invitation.
           </p>
           <h2>Confidential reserve</h2>
           <p>

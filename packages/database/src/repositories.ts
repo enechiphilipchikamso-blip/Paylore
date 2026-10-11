@@ -912,6 +912,40 @@ export async function scheduleSubscriptionCancellation(
   return rows[0] ?? current;
 }
 
+export async function keepSubscriptionActive(
+  db: Database,
+  workspaceId: string,
+  now = new Date()
+) {
+  const rows =
+    await db
+      .update(workspaceSubscriptions)
+      .set({
+        status: "active",
+        cancelAtPeriodEnd: false,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(
+            workspaceSubscriptions.workspaceId,
+            workspaceId
+          ),
+          eq(
+            workspaceSubscriptions.status,
+            "cancel_scheduled"
+          ),
+          gt(
+            workspaceSubscriptions.periodEnd,
+            now
+          )
+        )
+      )
+      .returning();
+
+  return rows[0] ?? null;
+}
+
 export async function listSubscriptionPayments(
   db: Database,
   workspaceId: string

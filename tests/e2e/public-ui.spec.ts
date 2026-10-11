@@ -3,6 +3,116 @@ import {
   test
 } from "@playwright/test";
 
+test("compact interface scale applies across public and app routes", async ({
+  page
+}) => {
+  for (const route of ["/", "/auth", "/app"]) {
+    await page.setViewportSize({
+      width: 1440,
+      height: 900
+    });
+    await page.goto(route);
+
+    const sizes = await page.evaluate(() => ({
+      root: getComputedStyle(document.documentElement).fontSize,
+      body: getComputedStyle(document.body).fontSize,
+      menuIcon: getComputedStyle(
+        document.querySelector(".site-menu__icon")!
+      ).width,
+      themeIcon: getComputedStyle(
+        document.querySelector(".theme-toggle svg")!
+      ).width,
+      container: getComputedStyle(
+        document.querySelector(".site-container")!
+      ).width
+    }));
+
+    expect(sizes.root).toBe("14px");
+    expect(sizes.body).toBe("14px");
+    expect(sizes.menuIcon).toBe("14px");
+    expect(sizes.themeIcon).toBe("18px");
+    expect(sizes.container).toBe("1008px");
+  }
+});
+
+test("Geist Sans is used for the UI and Geist Mono aligns financial values", async ({
+  page
+}) => {
+  await page.goto("/pricing");
+
+  const fonts = await page.evaluate(() => {
+    const sans = getComputedStyle(document.body).fontFamily;
+    const mono = getComputedStyle(
+      document.querySelector(".price-card__amount")!
+    );
+    const code = document.createElement("code");
+    const employeeId = document.createElement("span");
+    employeeId.className = "employee-id";
+    document.body.append(code, employeeId);
+    const codeFont = getComputedStyle(code).fontFamily;
+    const employeeIdFont = getComputedStyle(employeeId).fontFamily;
+    code.remove();
+    employeeId.remove();
+
+    return {
+      sans,
+      declaredSans: getComputedStyle(document.documentElement)
+        .getPropertyValue("--font-geist-sans")
+        .trim(),
+      amountFont: mono.fontFamily,
+      declaredMono: getComputedStyle(document.documentElement)
+        .getPropertyValue("--font-geist-mono")
+        .trim(),
+      amountNumericVariant: mono.fontVariantNumeric,
+      amountNumericFeatures: mono.fontFeatureSettings,
+      fontsLoaded: document.fonts.check(`14px ${sans}`) &&
+        document.fonts.check(`14px ${mono.fontFamily}`),
+      codeFont,
+      employeeIdFont
+    };
+  });
+
+  expect(fonts.sans).toContain(fonts.declaredSans);
+  expect(fonts.amountFont).toContain(fonts.declaredMono);
+  expect(fonts.codeFont).toContain(fonts.declaredMono);
+  expect(fonts.employeeIdFont).toContain(fonts.declaredMono);
+  expect(fonts.fontsLoaded).toBe(true);
+  expect(fonts.amountNumericVariant).toContain("tabular-nums");
+  expect(fonts.amountNumericFeatures).toContain("tnum");
+});
+
+test("workspace loading action keeps a circular spinner and faded button style", async ({
+  page
+}) => {
+  await page.goto("/");
+  const loadingAction = await page.evaluate(() => {
+    const link = document.createElement("a");
+    link.className = "button";
+    link.setAttribute("aria-busy", "true");
+    link.innerHTML =
+      '<span class="open-workspace-link__content"><span class="loading-indicator__icon" aria-hidden="true"></span>Opening Workspace...</span>';
+    document.body.append(link);
+    const icon = link.querySelector(".loading-indicator__icon")!;
+    const initial = {
+      width: getComputedStyle(icon).width,
+      height: getComputedStyle(icon).height,
+      display: getComputedStyle(icon).display,
+      flexBasis: getComputedStyle(icon).flexBasis,
+      borderRadius: getComputedStyle(icon).borderRadius,
+      opacity: getComputedStyle(link).opacity
+    };
+    link.remove();
+    return initial;
+  });
+
+  expect(loadingAction.width).toBe("14px");
+  expect(loadingAction.height).toBe("14px");
+  expect(loadingAction.display).toBe("block");
+  expect(loadingAction.flexBasis).toBe("14px");
+  expect(loadingAction.borderRadius).toBe("50%");
+  expect(loadingAction.opacity).toBe("0.58");
+});
+
 test("theme preference hydrates cleanly and cycles through all modes", async ({
   page
 }) => {
@@ -69,6 +179,38 @@ test("theme preference hydrates cleanly and cycles through all modes", async ({
   expect(hydrationErrors).toEqual([]);
 });
 
+test("mobile menu browser-restored open state does not cause hydration errors", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    const observer = new MutationObserver(() => {
+      const menu = document.querySelector<HTMLDetailsElement>(".site-menu");
+      if (!menu) return;
+      menu.open = true;
+      observer.disconnect();
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  });
+
+  const hydrationErrors: string[] = [];
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      /hydration|hydrated|server rendered html/i.test(message.text())
+    ) {
+      hydrationErrors.push(message.text());
+    }
+  });
+
+  await page.goto("/");
+
+  await expect(page.locator(".site-menu")).toHaveAttribute("open", "");
+  await expect(
+    page.getByRole("navigation", { name: "Site navigation" })
+  ).toBeVisible();
+  expect(hydrationErrors).toEqual([]);
+});
+
 test("mobile menu stays inside an opaque content-height dropdown", async ({
   page
 }) => {
@@ -79,11 +221,25 @@ test("mobile menu stays inside an opaque content-height dropdown", async ({
   await page.goto("/");
 
   const menu = page.locator(".site-menu");
+  const menuLabelSize = await menu
+    .locator("summary")
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  const menuIconWidth = await menu
+    .locator(".site-menu__icon")
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).width));
+  expect(menuLabelSize).toBeLessThan(16);
+  expect(menuIconWidth).toBeLessThan(16);
+
   await menu.locator("summary").click();
 
   const panel = menu.locator("nav");
   await expect(panel).toBeVisible();
   await expect(panel.getByRole("listitem")).toHaveCount(8);
+  const navigationLinkSize = await panel
+    .getByRole("link")
+    .first()
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  expect(navigationLinkSize).toBeLessThan(16);
 
   const panelBounds = await panel.boundingBox();
   expect(panelBounds).not.toBeNull();
