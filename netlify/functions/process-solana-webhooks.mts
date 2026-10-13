@@ -2,7 +2,7 @@ import {
   claimDueSolanaWebhookEvents,
   createDatabase,
   updateSolanaWebhookEventState
-} from "../../packages/database";
+} from "../../packages/database/src/index";
 import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/config";
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 
