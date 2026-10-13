@@ -3,3 +3,9 @@ command = "pnpm build"
 
 [build.environment]
 NODE_VERSION = "24.21.0"
+# Network names (e.g. "devnet") are public, non-sensitive values that appear in
+# source code, tests, and .env.example, so exclude them from secrets scanning.
+SECRETS_SCAN_OMIT_KEYS = "SOLANA_NETWORK,PAYLORE_NETWORK"
+
+[functions]
+directory = "netlify/functions"
