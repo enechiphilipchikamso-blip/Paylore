@@ -3,9 +3,12 @@ command = "pnpm build"
 
 [build.environment]
 NODE_VERSION = "24.21.0"
-# Network names (e.g. "devnet") are public, non-sensitive values that appear in
-# source code, tests, and .env.example, so exclude them from secrets scanning.
-SECRETS_SCAN_OMIT_KEYS = "SOLANA_NETWORK,PAYLORE_NETWORK"
+# These are public, non-sensitive values (network names, RPC provider names, and
+# on-chain Solana addresses such as mints, the payroll program ID, and the
+# subscription recipient wallet) that legitimately appear in source code, tests,
+# and .env.example, so exclude them from secrets scanning. Real credentials (RPC
+# URLs/API keys, envelope keys, webhook secrets, DATABASE_URL) stay scanned.
+SECRETS_SCAN_OMIT_KEYS = "SOLANA_NETWORK,PAYLORE_NETWORK,PAYLORE_RPC_PRIMARY_PROVIDER,PAYLORE_RPC_SECONDARY_PROVIDER,PAYLORE_SUBSCRIPTION_RECIPIENT,PAYLORE_SUBSCRIPTION_USDC_MINT,PAYLORE_WRAPPED_USDC_MINT,PAYLORE_PAYROLL_PROGRAM_ID"
 
 [functions]
 directory = "netlify/functions"
