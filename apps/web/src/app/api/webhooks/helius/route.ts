@@ -1,6 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { persistSolanaWebhookEvents } from "@paylore/database";
 import { loadPayloreConfig } from "../../../../server/config";
+import { getDatabase } from "../../../../server/db";
+import { normalizeHeliusWebhookPayload } from "../../../../server/solana/webhook-policy";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const MAX_EVENTS_PER_DELIVERY = 100;
@@ -73,17 +76,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
-  if (
-    !Array.isArray(payload) ||
-    payload.length === 0 ||
-    payload.length > MAX_EVENTS_PER_DELIVERY ||
-    payload.some((event) => !event || typeof event !== "object" || Array.isArray(event))
-  ) {
+  const events = normalizeHeliusWebhookPayload(payload);
+  if (!events || events.length > MAX_EVENTS_PER_DELIVERY) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
-  return NextResponse.json(
-    { status: "accepted", events: payload.length },
-    { status: 202, headers: { "Cache-Control": "no-store" } }
-  );
+  try {
+    const stored = await persistSolanaWebhookEvents(
+      getDatabase(),
+      events.map((event) => ({
+        ...event,
+        status: "received"
+      }))
+    );
+    return NextResponse.json(
+      {
+        status: "received",
+        events: events.length,
+        inserted: stored.inserted,
+        duplicates: stored.duplicates
+      },
+      { status: 202, headers: { "Cache-Control": "no-store" } }
+    );
+  } catch {
+    console.error(JSON.stringify({ event: "helius_webhook_persistence_failed" }));
+    return NextResponse.json(
+      { error: "webhook_event_not_persisted" },
+      { status: 503 }
+    );
+  }
 }

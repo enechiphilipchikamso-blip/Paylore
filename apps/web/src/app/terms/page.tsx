@@ -71,7 +71,7 @@ const terms = [
 export const metadata = createPublicMetadata({
   title: "Terms of Service",
   description:
-    "Planning-authored product-aligned Terms of Service draft for Paylore. Final production publication requires user/legal approval.",
+    "These Terms of Service are effective as of October 12, 2026.",
   path: "/terms"
 });
 
@@ -80,12 +80,13 @@ export default function TermsPage() {
     <PublicPage
       eyebrow="TERMS"
       title="Terms of Service"
-      description="This document is not yet effective. Final production publication requires certain legal approvals."
+      description="These Terms of Service are effective as of October 12, 2026."
     >
       <article className="surface-card prose legal-copy">
         <p className="legal-copy__effective">
-          Effective date: [Not yet effective]
+          Effective date: October 12, 2026
         </p>
+        <p>These Terms of Service are effective as of October 12, 2026.</p>
         {terms.map((section) => (
           <section key={section.title}>
             <h2>{section.title}</h2>

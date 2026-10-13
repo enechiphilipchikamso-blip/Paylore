@@ -219,6 +219,194 @@ export function sealReserveKey(
 
 type EncryptedReserve = SealedReserve;
 
+export type SealedGasTank = {
+  address: string;
+  encryptedPrivateKey: string;
+  privateKeyNonce: string;
+  privateKeyAuthTag: string;
+  encryptedDataKey: string;
+  dataKeyNonce: string;
+  dataKeyAuthTag: string;
+  encryptedBackup: string;
+  backupNonce: string;
+  backupAuthTag: string;
+};
+
+function deriveGasTankKey(
+  envelopeKey: Buffer,
+  workspaceId: string,
+  purpose: string
+): Buffer {
+  return Buffer.from(
+    hkdfSync(
+      "sha256",
+      envelopeKey,
+      Buffer.from(workspaceId, "utf8"),
+      Buffer.from(`paylore:gas-tank:v1:${purpose}`, "utf8"),
+      32
+    )
+  );
+}
+
+export function sealGasTankKey(
+  workspaceId: string,
+  address: string,
+  privateKey: Uint8Array,
+  encodedEnvelopeKey: string
+): SealedGasTank {
+  if (deriveAddress(privateKey) !== address) {
+    throw new Error("Gas Tank public address does not match its keypair.");
+  }
+
+  const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
+  const dataKey = randomBytes(32);
+  const sealedSecret = encrypt(
+    privateKey,
+    dataKey,
+    `gas-tank:${workspaceId}:private-key`
+  );
+  const wrappedKey = deriveGasTankKey(envelopeKey, workspaceId, "data-key");
+  const backupKey = deriveGasTankKey(envelopeKey, workspaceId, "backup");
+  try {
+    const sealedDataKey = encrypt(
+      dataKey,
+      wrappedKey,
+      `gas-tank:${workspaceId}:data-key`
+    );
+    const backupPayload = Buffer.from(
+      JSON.stringify({
+        workspaceId,
+        address,
+        privateKey: Buffer.from(privateKey).toString("base64")
+      }),
+      "utf8"
+    );
+    const sealedBackup = encrypt(
+      backupPayload,
+      backupKey,
+      `gas-tank:${workspaceId}:backup`
+    );
+    backupPayload.fill(0);
+    return {
+      address,
+      encryptedPrivateKey: sealedSecret.ciphertext,
+      privateKeyNonce: sealedSecret.nonce,
+      privateKeyAuthTag: sealedSecret.authTag,
+      encryptedDataKey: sealedDataKey.ciphertext,
+      dataKeyNonce: sealedDataKey.nonce,
+      dataKeyAuthTag: sealedDataKey.authTag,
+      encryptedBackup: sealedBackup.ciphertext,
+      backupNonce: sealedBackup.nonce,
+      backupAuthTag: sealedBackup.authTag
+    };
+  } finally {
+    envelopeKey.fill(0);
+    wrappedKey.fill(0);
+    backupKey.fill(0);
+    dataKey.fill(0);
+  }
+}
+
+export function openGasTankKey(
+  workspaceId: string,
+  sealed: SealedGasTank,
+  encodedEnvelopeKey: string
+): Buffer {
+  const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
+  const wrappedKey = deriveGasTankKey(envelopeKey, workspaceId, "data-key");
+  let dataKey: Buffer | undefined;
+  let privateKey: Buffer | undefined;
+  try {
+    dataKey = decrypt(
+      {
+        ciphertext: sealed.encryptedDataKey,
+        nonce: sealed.dataKeyNonce,
+        authTag: sealed.dataKeyAuthTag
+      },
+      wrappedKey,
+      `gas-tank:${workspaceId}:data-key`
+    );
+    if (dataKey.length !== 32) {
+      throw new Error("The Gas Tank data key is invalid.");
+    }
+    privateKey = decrypt(
+      {
+        ciphertext: sealed.encryptedPrivateKey,
+        nonce: sealed.privateKeyNonce,
+        authTag: sealed.privateKeyAuthTag
+      },
+      dataKey,
+      `gas-tank:${workspaceId}:private-key`
+    );
+    if (deriveAddress(privateKey) !== sealed.address) {
+      throw new Error("The Gas Tank key failed integrity verification.");
+    }
+    return privateKey;
+  } catch (error) {
+    privateKey?.fill(0);
+    throw error;
+  } finally {
+    envelopeKey.fill(0);
+    wrappedKey.fill(0);
+    dataKey?.fill(0);
+  }
+}
+
+export function restoreGasTankFromBackup(
+  workspaceId: string,
+  sealed: SealedGasTank,
+  encodedEnvelopeKey: string
+): SealedGasTank {
+  const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
+  const backupKey = deriveGasTankKey(envelopeKey, workspaceId, "backup");
+  let backup: Buffer | undefined;
+  let privateKey: Buffer | undefined;
+  try {
+    backup = decrypt(
+      {
+        ciphertext: sealed.encryptedBackup,
+        nonce: sealed.backupNonce,
+        authTag: sealed.backupAuthTag
+      },
+      backupKey,
+      `gas-tank:${workspaceId}:backup`
+    );
+    const payload: unknown = JSON.parse(backup.toString("utf8"));
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      !("workspaceId" in payload) ||
+      !("address" in payload) ||
+      !("privateKey" in payload) ||
+      payload.workspaceId !== workspaceId ||
+      payload.address !== sealed.address ||
+      typeof payload.privateKey !== "string"
+    ) {
+      throw new Error("The Gas Tank backup does not match this workspace.");
+    }
+    privateKey = Buffer.from(payload.privateKey, "base64");
+    if (deriveAddress(privateKey) !== sealed.address) {
+      throw new Error("The Gas Tank backup failed validation.");
+    }
+    return sealGasTankKey(
+      workspaceId,
+      sealed.address,
+      privateKey,
+      encodedEnvelopeKey
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("The Gas Tank recovery backup is invalid.");
+    }
+    throw error;
+  } finally {
+    envelopeKey.fill(0);
+    backupKey.fill(0);
+    backup?.fill(0);
+    privateKey?.fill(0);
+  }
+}
+
 export function openReserveKey(
   workspaceId: string,
   sealed: EncryptedReserve,

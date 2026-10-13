@@ -90,6 +90,15 @@ export async function POST(
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
+    if (
+      error instanceof Error &&
+      error.message === "WORKSPACE_DELETION_PENDING"
+    ) {
+      return NextResponse.json(
+        { error: "workspace_deletion_pending" },
+        { status: 409 }
+      );
+    }
     console.error(JSON.stringify({ event: "workspace_reserve_initialization_failed" }));
     return NextResponse.json({ error: "reserve_initialization_failed" }, { status: 503 });
   }

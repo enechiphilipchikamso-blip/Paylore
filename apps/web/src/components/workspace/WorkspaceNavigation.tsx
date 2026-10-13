@@ -3,15 +3,18 @@ import {
   WORKSPACE_ROLE_LABELS,
   type WorkspaceRole
 } from "../../server/authorization-policy";
+import { WorkspaceRetentionBanner } from "./WorkspaceRetentionBanner";
 
 export function WorkspaceNavigation({
   workspaceId,
   workspaceName,
-  role
+  role,
+  showRetentionBanner = true
 }: {
   workspaceId: string;
   workspaceName: string;
   role: WorkspaceRole;
+  showRetentionBanner?: boolean;
 }) {
   const base = `/workspace/${workspaceId}`;
 
@@ -24,11 +27,18 @@ export function WorkspaceNavigation({
       </div>
       <nav aria-label="Workspace navigation" className="workspace-app-nav">
         <Link href={base}>Home</Link>
+        {role === "contributor" ? (
+          <Link href={`${base}/compensation`}>Your compensation</Link>
+        ) : null}
         {role !== "contributor" ? (
           <>
             <Link href={`${base}/billing`}>Billing</Link>
             <Link href={`${base}/contributors`}>Contributors</Link>
             <Link href={`${base}/contributors/invitations`}>Invitations</Link>
+            <Link href={`${base}/payroll`}>Payroll</Link>
+            <Link href={`${base}/ledger`}>Ledger</Link>
+            <Link href={`${base}/notifications`}>Notifications</Link>
+            <Link href={`${base}/gas-tank`}>Gas Tank</Link>
             <Link href={`${base}/settings`}>Settings</Link>
             {role === "organization_admin" ? (
               <Link href={`${base}/settings/reserve`}>Reserve</Link>
@@ -36,6 +46,9 @@ export function WorkspaceNavigation({
           </>
         ) : null}
       </nav>
+      {showRetentionBanner ? (
+        <WorkspaceRetentionBanner workspaceId={workspaceId} />
+      ) : null}
     </header>
   );
 }

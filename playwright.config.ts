@@ -21,7 +21,7 @@ export default defineConfig({
     video: "on"
   },
   webServer: {
-    command: "PORT=3100 pnpm dev",
+    command: "PORT=3100 pnpm --filter @paylore/web start",
     url: "http://localhost:3100",
     reuseExistingServer: false,
     timeout: 120000

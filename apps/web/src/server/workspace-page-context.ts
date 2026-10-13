@@ -7,7 +7,8 @@ import { getSessionState } from "./session";
 
 export async function getWorkspacePageContext(
   workspaceId: string,
-  returnPath = `/workspace/${workspaceId}`
+  returnPath = `/workspace/${workspaceId}`,
+  options: { recordActivity?: boolean } = {}
 ) {
   const session = await getSessionState();
   if (session.status !== "authenticated") {
@@ -26,7 +27,8 @@ export async function getWorkspacePageContext(
   const workspace = await getWorkspaceForUser(
     db,
     session.session.userId,
-    workspaceId
+    workspaceId,
+    options
   );
   if (!workspace) notFound();
 
