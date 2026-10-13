@@ -1,0 +1,57 @@
+export const WORKSPACE_RETENTION_NOTICE_DAYS = [
+  30,
+  90,
+  180,
+  270,
+  330
+] as const;
+
+export const MANUAL_WORKSPACE_DELETION_DELAY_MS = 72 * 60 * 60 * 1000;
+export const WORKSPACE_RETENTION_ELIGIBILITY_DAYS = 365;
+export const CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS =
+  WORKSPACE_RETENTION_ELIGIBILITY_DAYS * 24 * 60 * 60 * 1000;
+
+export function scheduleWorkspaceDeletion(now: Date): Date {
+  return new Date(now.getTime() + MANUAL_WORKSPACE_DELETION_DELAY_MS);
+}
+
+export function hasReachedInactivityThreshold(
+  lastActivityAt: Date,
+  days: number,
+  now: Date
+): boolean {
+  return (
+    now.getTime() - lastActivityAt.getTime() >=
+    days * 24 * 60 * 60 * 1000
+  );
+}
+
+export function isWorkspaceRetentionEligible(input: {
+  inactiveDays: number;
+  subscriptionStatus: string | null;
+  gasTankConfigured: boolean;
+  reserveConfigured: boolean;
+  outstandingObligations: boolean;
+}): boolean {
+  return (
+    input.inactiveDays >= WORKSPACE_RETENTION_ELIGIBILITY_DAYS &&
+    (input.subscriptionStatus === "inactive" ||
+      input.subscriptionStatus === "archived") &&
+    !input.gasTankConfigured &&
+    !input.reserveConfigured &&
+    !input.outstandingObligations
+  );
+}
+
+export function isContributorAssociationCleanupEligible(input: {
+  workspaceClosedAt: Date | null;
+  outstandingObligations: boolean;
+  now: Date;
+}): boolean {
+  return Boolean(
+    input.workspaceClosedAt &&
+      !input.outstandingObligations &&
+      input.now.getTime() - input.workspaceClosedAt.getTime() >=
+        CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS
+  );
+}

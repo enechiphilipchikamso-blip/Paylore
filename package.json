@@ -10,16 +10,20 @@
   "scripts": {
     "dev": "pnpm --filter @paylore/web dev",
     "lint": "pnpm --filter @paylore/web lint",
-    "typecheck": "pnpm --filter @paylore/web typecheck && pnpm --filter @paylore/database typecheck",
+    "typecheck": "pnpm --filter @paylore/web typecheck && pnpm --filter @paylore/database typecheck && tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @paylore/web test",
     "test:e2e": "playwright test",
     "build": "pnpm --filter @paylore/web build",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "anchor:build": "anchor build"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "24.19.0",
+    "drizzle-kit": "0.31.11",
     "typescript": "6.0.3"
   }
 }

@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/typescript-node:24-bookworm
+FROM mcr.microsoft.com/devcontainers/typescript-node:24-trixie
 
 USER root
 

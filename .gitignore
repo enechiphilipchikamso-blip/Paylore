@@ -59,7 +59,7 @@ lib-cov
 target/
 .anchor/
 test-ledger/
-ledger/
+/ledger/
 
 # Secrets / keys
 target/deploy/*.json
@@ -103,3 +103,10 @@ vite.config.ts.timestamp-*
 .fusebox/
 .dynamodb/
 .firebase/
+
+# Local dependency compatibility notes
+/DEPENDENCY-COMPATIBILITY.md
+
+# Generated repository snapshot
+/project-snapshot.md
+/repomix.config.json
