@@ -82,6 +82,51 @@ export function ContributorDirectory({
     }
   }
 
+  async function requestOffboarding(record: ContributorRecord) {
+    if (
+      busyId ||
+      !window.confirm(
+        `Request that ${record.displayName} review leaving this workspace? This does not remove membership or transfer ownership of the contributor's confidential account.`
+      )
+    ) return;
+    setBusyId(record.id);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${workspaceId}/contributors/${record.id}/offboarding`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            confirmation: "Request contributor review"
+          })
+        }
+      );
+      if (!response.ok) {
+        setNotice({
+          state: "error",
+          text: response.status === 403
+            ? "You are not authorized to request this contributor action."
+            : "The offboarding request could not be recorded. The contributor's access has not been changed."
+        });
+        return;
+      }
+      setNotice({
+        state: "success",
+        text: "Offboarding review requested. The contributor's workspace access remains active until they confirm departure."
+      });
+      router.refresh();
+    } catch {
+      setNotice({
+        state: "error",
+        text: "The offboarding request could not be verified. Refresh the contributor directory before retrying."
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="contributor-directory">
       <div className="workspace-dashboard__section-heading">
@@ -149,30 +194,46 @@ export function ContributorDirectory({
                   <td>{record.onboardingStatus}</td>
                   {canManage ? (
                     <td>
-                      <label className="visually-hidden" htmlFor={`lifecycle-${record.id}`}>
-                        Update {record.displayName} lifecycle
-                      </label>
-                      <select
-                        disabled={busyId === record.id}
-                        id={`lifecycle-${record.id}`}
-                        onChange={(event) =>
-                          void updateLifecycle(
-                            record,
-                            event.target.value as ContributorRecord["lifecycle"]
-                          )
-                        }
-                        value={record.lifecycle}
-                      >
-                        <option value="invited">Invited</option>
-                        <option value="active">Active</option>
-                        <option value="left">Left</option>
-                      </select>
-                      {busyId === record.id ? (
-                        <span className="loading-indicator" role="status">
-                          <span className="loading-indicator__icon" aria-hidden="true" />
-                          Saving…
-                        </span>
-                      ) : null}
+                      {record.lifecycle === "left" ? (
+                        <span>Offboarding completed</span>
+                      ) : (
+                        <>
+                          <label className="visually-hidden" htmlFor={`lifecycle-${record.id}`}>
+                            Update {record.displayName} lifecycle
+                          </label>
+                          <select
+                            disabled={busyId === record.id}
+                            id={`lifecycle-${record.id}`}
+                            onChange={(event) =>
+                              void updateLifecycle(
+                                record,
+                                event.target.value as "invited" | "active"
+                              )
+                            }
+                            value={record.lifecycle}
+                          >
+                            <option value="invited">Invited</option>
+                            <option value="active">Active</option>
+                          </select>
+                          {busyId === record.id ? (
+                            <span className="loading-indicator" role="status">
+                              <span className="loading-indicator__icon" aria-hidden="true" />
+                              Saving…
+                            </span>
+                          ) : null}
+                          {record.role === "contributor" &&
+                          record.lifecycle === "active" ? (
+                            <button
+                              className="button button--secondary"
+                              disabled={busyId !== null}
+                              onClick={() => void requestOffboarding(record)}
+                              type="button"
+                            >
+                              Request offboarding review
+                            </button>
+                          ) : null}
+                        </>
+                      )}
                     </td>
                   ) : null}
                 </tr>

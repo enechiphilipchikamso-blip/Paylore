@@ -305,3 +305,31 @@ test("site menu marks the current page with a blended accent line", async ({
       .getByRole("link", { name: "Pricing" })
   ).not.toHaveAttribute("aria-current", "page");
 });
+
+test("legal pages show the approved Terms date and unapproved Privacy draft status", async ({
+  page
+}) => {
+  await page.goto("/terms");
+  await expect(
+    page.getByText("Effective date: October 12, 2026", { exact: true })
+  ).toBeVisible();
+  await expect(
+    page.locator(".legal-copy").getByText(
+      "These Terms of Service are effective as of October 12, 2026.",
+      { exact: true }
+    )
+  ).toBeVisible();
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+    "content",
+    "These Terms of Service are effective as of October 12, 2026."
+  );
+
+  await page.goto("/privacy");
+  const draftNotice =
+    "Privacy policy draft — not approved for production publication.";
+  await expect(page.getByRole("note")).toHaveText(draftNotice);
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+    "content",
+    new RegExp("^Privacy policy draft")
+  );
+});

@@ -43,7 +43,10 @@ function normalizeHeader(value: string): keyof ContributorImportRow | null {
   return COLUMN_ALIASES[value.trim().toLowerCase().replace(/\s+/g, "")] ?? null;
 }
 
-function parseCsv(text: string): string[][] {
+function parseCsv(
+  text: string,
+  rowLimitMessage: string
+): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -77,7 +80,7 @@ function parseCsv(text: string): string[][] {
       if (row.some((cell) => cell.length > 0)) {
         rows.push(row);
         if (rows.length > MAX_IMPORT_ROWS + 1) {
-          throw new Error("The file exceeds the 500 contributor row limit.");
+          throw new Error(rowLimitMessage);
         }
       }
       row = [];
@@ -94,7 +97,7 @@ function parseCsv(text: string): string[][] {
     rows.push(row);
   }
   if (rows.length > MAX_IMPORT_ROWS + 1) {
-    throw new Error("The file exceeds the 500 contributor row limit.");
+    throw new Error(rowLimitMessage);
   }
   return rows;
 }
@@ -123,7 +126,10 @@ function readCell(value: ExcelJS.CellValue): string {
   throw new Error("The XLSX file contains a non-text cell.");
 }
 
-async function parseXlsx(bytes: Uint8Array): Promise<string[][]> {
+async function parseXlsx(
+  bytes: Uint8Array,
+  rowLimitMessage: string
+): Promise<string[][]> {
   const workbook = new ExcelJS.Workbook();
   const workbookBytes = new Uint8Array(bytes.byteLength);
   workbookBytes.set(bytes);
@@ -133,7 +139,7 @@ async function parseXlsx(bytes: Uint8Array): Promise<string[][]> {
     throw new Error("The XLSX file does not contain a worksheet.");
   }
   if (sheet.rowCount > MAX_IMPORT_ROWS + 1) {
-    throw new Error("The file exceeds the 500 contributor row limit.");
+    throw new Error(rowLimitMessage);
   }
   const rows: string[][] = [];
   sheet.eachRow({ includeEmpty: false }, (row) => {
@@ -247,23 +253,40 @@ function rowsFromMatrix(
   };
 }
 
+export async function readSpreadsheetMatrix(
+  filename: string,
+  bytes: Buffer,
+  rowLabel: string
+): Promise<string[][]> {
+  if (bytes.length === 0 || bytes.length > MAX_IMPORT_BYTES) {
+    throw new Error("The file must be between 1 byte and 5 MB.");
+  }
+  const rowLimitMessage = `The file exceeds the 500 ${rowLabel} row limit.`;
+  const extension = filename.toLowerCase().split(".").pop();
+  let matrix: string[][];
+  if (extension === "csv") {
+    matrix = parseCsv(
+      bytes.toString("utf8").replace(/^\uFEFF/, ""),
+      rowLimitMessage
+    );
+  } else if (extension === "xlsx") {
+    matrix = await parseXlsx(bytes, rowLimitMessage);
+  } else {
+    throw new Error("Unsupported file format.");
+  }
+  if (matrix.some((row) => row.length > MAX_IMPORT_COLUMNS)) {
+    throw new Error("The file has too many columns.");
+  }
+  return matrix;
+}
+
 export async function previewContributorFile(
   filename: string,
   bytes: Buffer,
   existingWallets: ReadonlySet<string>
 ): Promise<ContributorImportResult> {
-  if (bytes.length === 0 || bytes.length > MAX_IMPORT_BYTES) {
-    throw new Error("The file must be between 1 byte and 5 MB.");
-  }
-  const extension = filename.toLowerCase().split(".").pop();
-  if (extension === "csv") {
-    return rowsFromMatrix(
-      parseCsv(bytes.toString("utf8").replace(/^\uFEFF/, "")),
-      existingWallets
-    );
-  }
-  if (extension === "xlsx") {
-    return rowsFromMatrix(await parseXlsx(bytes), existingWallets);
-  }
-  throw new Error("Unsupported file format.");
+  return rowsFromMatrix(
+    await readSpreadsheetMatrix(filename, bytes, "contributor"),
+    existingWallets
+  );
 }

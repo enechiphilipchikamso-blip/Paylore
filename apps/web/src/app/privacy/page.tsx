@@ -50,10 +50,12 @@ const sections = [
 
 const intro =
   "Paylore is designed to process the information required to provide wallet authentication, workspace access, subscriptions, contributor onboarding, and payroll operations while keeping compensation amounts confidential within the payroll system.";
+const draftStatus =
+  "Privacy policy draft — not approved for production publication.";
 
 export const metadata = createPublicMetadata({
   title: "Privacy at Paylore",
-  description: intro,
+  description: `${draftStatus} ${intro}`,
   path: "/privacy"
 });
 
@@ -62,9 +64,12 @@ export default function PrivacyPage() {
     <PublicPage
       eyebrow="PRIVACY"
       title="Privacy at Paylore"
-      description={intro}
+      description={`${draftStatus} ${intro}`}
     >
       <article className="surface-card prose legal-copy">
+        <p className="legal-copy__draft" role="note">
+          {draftStatus}
+        </p>
         {sections.map((section) => (
           <section key={section.title}>
             <h2>{section.title}</h2>

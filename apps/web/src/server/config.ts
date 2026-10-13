@@ -1,4 +1,26 @@
 import { z } from "zod";
+import { address } from "@solana/kit";
+import { getTokenWrapProgramId } from "./solana/token-wrap-program";
+
+const envelopeKeySchema = z.string().refine((value) => {
+  const bytes = Buffer.from(value, "base64");
+  return bytes.length === 32 && bytes.toString("base64") === value;
+}, "Envelope keys must be base64-encoded 32-byte values.");
+
+const optionalSolanaAddressSchema = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === ""
+      ? undefined
+      : value,
+  z.string().refine((value) => {
+    try {
+      address(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Must be a valid Solana address.").optional()
+);
 
 const envSchema = z.object({
   NODE_ENV: z
@@ -50,29 +72,42 @@ const payloreConfigSchema = z.object({
   PAYLORE_RPC_SECONDARY_API_KEY: z
     .string()
     .optional(),
-  PAYLORE_SUBSCRIPTION_RECIPIENT: z
-    .string()
-    .optional(),
-  PAYLORE_SUBSCRIPTION_USDC_MINT: z
-    .string()
-    .optional(),
-  PAYLORE_WRAPPED_USDC_MINT: z
-    .string()
-    .optional(),
-  PAYLORE_PAYROLL_PROGRAM_ID: z
-    .string()
-    .optional(),
+  PAYLORE_SUBSCRIPTION_RECIPIENT: optionalSolanaAddressSchema,
+  PAYLORE_SUBSCRIPTION_USDC_MINT: optionalSolanaAddressSchema,
+  PAYLORE_WRAPPED_USDC_MINT: optionalSolanaAddressSchema,
+  PAYLORE_PAYROLL_PROGRAM_ID: optionalSolanaAddressSchema,
   PAYLORE_RESERVE_ENVELOPE_KEY: z
     .string()
     .optional(),
+  PAYLORE_GAS_TANK_ENVELOPE_KEY: z
+    .preprocess(
+      (value) => value === "" ? undefined : value,
+      envelopeKeySchema.optional()
+    ),
   PAYLORE_HELIUS_WEBHOOK_SECRET: z
     .string()
+    .optional(),
+  PAYLORE_QUICKNODE_WEBHOOK_SECRET: z
+    .string()
     .optional()
+}).superRefine((config, context) => {
+  if (
+    config.PAYLORE_RESERVE_ENVELOPE_KEY &&
+    config.PAYLORE_GAS_TANK_ENVELOPE_KEY &&
+    config.PAYLORE_RESERVE_ENVELOPE_KEY ===
+      config.PAYLORE_GAS_TANK_ENVELOPE_KEY
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["PAYLORE_GAS_TANK_ENVELOPE_KEY"],
+      message: "The Gas Tank envelope key must be separate from the reserve key."
+    });
+  }
 });
 
-export type PayloreConfig = z.infer<
-  typeof payloreConfigSchema
->;
+export type PayloreConfig = z.infer<typeof payloreConfigSchema> & {
+  TOKEN_WRAP_PROGRAM_ID: ReturnType<typeof getTokenWrapProgramId>;
+};
 
 export class ConfigurationError extends Error {
   constructor() {
@@ -115,7 +150,10 @@ export function parsePayloreConfig(
     throw new ConfigurationError();
   }
 
-  return result.data;
+  return {
+    ...result.data,
+    TOKEN_WRAP_PROGRAM_ID: getTokenWrapProgramId(result.data.PAYLORE_NETWORK)
+  };
 }
 
 export function loadPayloreConfig(): PayloreConfig {

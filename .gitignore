@@ -59,7 +59,7 @@ lib-cov
 target/
 .anchor/
 test-ledger/
-ledger/
+/ledger/
 
 # Secrets / keys
 target/deploy/*.json

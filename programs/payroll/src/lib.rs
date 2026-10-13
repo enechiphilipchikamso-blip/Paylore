@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("A9G24bGQp9ospDBaXux1xqYBoQHYgQXtVSTFoVTjxo9k");
+declare_id!("4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93");
 
 pub const MAX_ID_LENGTH: usize = 64;
 
@@ -11,32 +11,38 @@ pub mod paylore_payroll {
     pub fn initialize_workspace(
         ctx: Context<InitializeWorkspace>,
         workspace_id: String,
+        workspace_seed: [u8; 32],
     ) -> Result<()> {
         validate_identifier(&workspace_id)?;
         let workspace = &mut ctx.accounts.workspace;
         workspace.authority = ctx.accounts.authority.key();
         workspace.workspace_id = workspace_id;
+        workspace.workspace_seed = workspace_seed;
         workspace.bump = ctx.bumps.workspace;
         Ok(())
     }
 
     pub fn create_claim(
         ctx: Context<CreateClaim>,
-        claim_id: String,
+        claim_id: [u8; 32],
+        allocation_commitment: [u8; 32],
     ) -> Result<()> {
-        validate_identifier(&claim_id)?;
         let claim = &mut ctx.accounts.claim;
         claim.workspace = ctx.accounts.workspace.key();
         claim.contributor = ctx.accounts.contributor.key();
         claim.claim_id = claim_id;
-        claim.claimed = false;
+        claim.allocation_commitment = allocation_commitment;
+        claim.status = ClaimStatus::Unclaimed;
         claim.bump = ctx.bumps.claim;
         Ok(())
     }
 
     pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
-        require!(!ctx.accounts.claim.claimed, PayrollError::AlreadyClaimed);
-        ctx.accounts.claim.claimed = true;
+        require!(
+            ctx.accounts.claim.status == ClaimStatus::Unclaimed,
+            PayrollError::InvalidClaimTransition
+        );
+        ctx.accounts.claim.status = ClaimStatus::Claimed;
         Ok(())
     }
 }
@@ -50,7 +56,7 @@ fn validate_identifier(value: &str) -> Result<()> {
 }
 
 #[derive(Accounts)]
-#[instruction(workspace_id: String)]
+#[instruction(workspace_id: String, workspace_seed: [u8; 32])]
 pub struct InitializeWorkspace<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -58,7 +64,11 @@ pub struct InitializeWorkspace<'info> {
         init,
         payer = authority,
         space = WorkspaceState::SPACE,
-        seeds = [b"workspace", authority.key().as_ref(), workspace_id.as_bytes()],
+        seeds = [
+            b"workspace",
+            authority.key().as_ref(),
+            workspace_seed.as_ref()
+        ],
         bump
     )]
     pub workspace: Account<'info, WorkspaceState>,
@@ -66,7 +76,7 @@ pub struct InitializeWorkspace<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(claim_id: String)]
+#[instruction(claim_id: [u8; 32], allocation_commitment: [u8; 32])]
 pub struct CreateClaim<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -77,7 +87,7 @@ pub struct CreateClaim<'info> {
         seeds = [
             b"workspace",
             authority.key().as_ref(),
-            workspace.workspace_id.as_bytes()
+            workspace.workspace_seed.as_ref()
         ],
         bump = workspace.bump
     )]
@@ -90,7 +100,7 @@ pub struct CreateClaim<'info> {
             b"claim",
             workspace.key().as_ref(),
             contributor.key().as_ref(),
-            claim_id.as_bytes()
+            claim_id.as_ref()
         ],
         bump
     )]
@@ -106,7 +116,7 @@ pub struct MarkClaimed<'info> {
             b"claim",
             claim.workspace.as_ref(),
             contributor.key().as_ref(),
-            claim.claim_id.as_bytes()
+            claim.claim_id.as_ref()
         ],
         bump = claim.bump,
         has_one = contributor
@@ -118,24 +128,32 @@ pub struct MarkClaimed<'info> {
 pub struct WorkspaceState {
     pub authority: Pubkey,
     pub workspace_id: String,
+    pub workspace_seed: [u8; 32],
     pub bump: u8,
 }
 
 impl WorkspaceState {
-    pub const SPACE: usize = 8 + 32 + 4 + MAX_ID_LENGTH + 1;
+    pub const SPACE: usize = 8 + 32 + 4 + MAX_ID_LENGTH + 32 + 1;
 }
 
 #[account]
 pub struct ClaimState {
     pub workspace: Pubkey,
     pub contributor: Pubkey,
-    pub claim_id: String,
-    pub claimed: bool,
+    pub claim_id: [u8; 32],
+    pub allocation_commitment: [u8; 32],
+    pub status: ClaimStatus,
     pub bump: u8,
 }
 
 impl ClaimState {
-    pub const SPACE: usize = 8 + 32 + 32 + 4 + MAX_ID_LENGTH + 1 + 1;
+    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 1 + 1;
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimStatus {
+    Unclaimed,
+    Claimed,
 }
 
 #[error_code]
@@ -143,7 +161,7 @@ pub enum PayrollError {
     #[msg("The identifier must contain 1 to 64 bytes.")]
     InvalidIdentifier,
     #[msg("This contributor claim has already been completed.")]
-    AlreadyClaimed,
+    InvalidClaimTransition,
 }
 
 #[cfg(test)]
@@ -154,16 +172,29 @@ mod tests {
     fn workspace_pda_is_scoped_to_authority_and_workspace_id() {
         let authority = Pubkey::new_unique();
         let other_authority = Pubkey::new_unique();
+        let workspace_seed = [3; 32];
         let (first, _) = Pubkey::find_program_address(
-            &[b"workspace", authority.as_ref(), b"organization-a"],
+            &[
+                b"workspace",
+                authority.as_ref(),
+                &workspace_seed,
+            ],
             &crate::ID,
         );
         let (same, _) = Pubkey::find_program_address(
-            &[b"workspace", authority.as_ref(), b"organization-a"],
+            &[
+                b"workspace",
+                authority.as_ref(),
+                &workspace_seed,
+            ],
             &crate::ID,
         );
         let (other, _) = Pubkey::find_program_address(
-            &[b"workspace", other_authority.as_ref(), b"organization-a"],
+            &[
+                b"workspace",
+                other_authority.as_ref(),
+                &workspace_seed,
+            ],
             &crate::ID,
         );
 
@@ -175,12 +206,14 @@ mod tests {
     fn claim_pda_is_scoped_to_workspace_contributor_and_claim_id() {
         let workspace = Pubkey::new_unique();
         let contributor = Pubkey::new_unique();
+        let claim_id = [7; 32];
         let (first, _) = Pubkey::find_program_address(
-            &[b"claim", workspace.as_ref(), contributor.as_ref(), b"claim-1"],
+            &[b"claim", workspace.as_ref(), contributor.as_ref(), &claim_id],
             &crate::ID,
         );
+        let other_id = [8; 32];
         let (other_claim, _) = Pubkey::find_program_address(
-            &[b"claim", workspace.as_ref(), contributor.as_ref(), b"claim-2"],
+            &[b"claim", workspace.as_ref(), contributor.as_ref(), &other_id],
             &crate::ID,
         );
 

@@ -22,6 +22,7 @@ import {
   listWorkspaceMemberships
 } from "@paylore/database";
 import { WorkspaceActivation } from "../../../components/workspace/WorkspaceActivation";
+import { WorkspaceRetentionBanner } from "../../../components/workspace/WorkspaceRetentionBanner";
 import { loadPayloreConfig } from "../../../server/config";
 import { isValidSolanaAddress } from "../../../server/security";
 
@@ -192,6 +193,14 @@ export default async function WorkspacePage({
           </div>
         </details>
       </nav>
+
+      <WorkspaceRetentionBanner workspaceId={workspaceId} />
+
+      {workspace.role === "contributor" ? (
+        <nav className="workspace-main-nav" aria-label="Workspace features">
+          <Link href={`/workspace/${workspaceId}/compensation`}>Your compensation</Link>
+        </nav>
+      ) : null}
 
       {workspace.role !== "contributor" ? (
         <nav className="workspace-main-nav" aria-label="Workspace features">

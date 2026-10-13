@@ -56,6 +56,13 @@ export default async function WorkspaceSettingsPage({
           <p>Manage this workspace’s confidential payroll reserve.</p>
           <Link href={`/workspace/${workspaceId}/settings/reserve`}>Manage confidential reserve</Link>
         </article>
+        {context.workspace.role === "organization_admin" ? (
+          <article className="card">
+            <h3>Data retention</h3>
+            <p>Review workspace retention and request safe application-data deletion.</p>
+            <Link href={`/workspace/${workspaceId}/settings/deletion`}>Review data retention</Link>
+          </article>
+        ) : null}
         <article className="card">
           <h3>Security</h3>
           <p>

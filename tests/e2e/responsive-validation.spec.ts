@@ -21,7 +21,6 @@ async function movePointerTo(page: import("@playwright/test").Page, locator: Loc
   }
 
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(350);
 }
 
 test("public page remains usable at target responsive viewport sizes", async ({
@@ -197,8 +196,7 @@ test("public page remains usable at target responsive viewport sizes", async ({
       const hud = document.querySelector("#playwright-visual-status");
       if (hud) hud.textContent = `PLAYWRIGHT • ${text} • ALL CHECKS PASS`;
     }, status);
-
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(400);
+    await page.evaluate(() => window.scrollTo(0, 0));
   }
 });

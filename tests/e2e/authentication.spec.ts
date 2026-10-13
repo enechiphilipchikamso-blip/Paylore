@@ -368,6 +368,35 @@ test.describe(
     );
 
     test(
+      "workspace deletion status and finalization require an authenticated session",
+      async ({ request }) => {
+        const workspaceId = "00000000-0000-4000-8000-000000000001";
+        const getResponse = await request.get(
+          `/api/workspaces/${workspaceId}/retention`
+        );
+        expect(getResponse.status()).toBe(401);
+
+        const postResponse = await request.post(
+          `/api/workspaces/${workspaceId}/retention`,
+          {
+            headers: {
+              origin: "http://localhost:3100",
+              "content-type": "application/json"
+            },
+            data: {
+              action: "finalize",
+              confirmation: "DELETE WORKSPACE DATA"
+            }
+          }
+        );
+        expect(postResponse.status()).toBe(401);
+        await expect(postResponse.json()).resolves.toMatchObject({
+          error: "authentication_required"
+        });
+      }
+    );
+
+    test(
       "state-changing auth endpoints reject cross-origin requests",
       async ({ request }) => {
         const response =

@@ -10,7 +10,7 @@ import { assertSameOrigin, RequestSecurityError } from "../../../../../../server
 import { getDatabase } from "../../../../../../server/db";
 
 const lifecycleSchema = z.object({
-  lifecycle: z.enum(["invited", "active", "left"])
+  lifecycle: z.enum(["invited", "active"])
 });
 
 export const runtime = "nodejs";

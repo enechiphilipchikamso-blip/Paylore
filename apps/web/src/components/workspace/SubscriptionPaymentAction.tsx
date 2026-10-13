@@ -1,135 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import {
-  SolanaSignAndSendTransaction,
-  type SolanaSignAndSendTransactionInput,
-  type SolanaSignAndSendTransactionMethod
-} from "@solana/wallet-standard-features";
 import { useRouter } from "next/navigation";
 import {
   createSubscriptionPaymentTransaction,
   subscriptionPaymentSignature
 } from "./subscription-payment-transaction";
+import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { isWalletCancellation } from "../auth/walletErrors";
-
-type WalletAccount = SolanaSignAndSendTransactionInput["account"];
-
-type RegisteredWallet = {
-  name: string;
-  features: Record<string, unknown>;
-  accounts: readonly {
-    address: string;
-    publicKey: ArrayLike<number>;
-    chains: readonly string[];
-    features: readonly string[];
-  }[];
-};
-
-type WalletRegistry = {
-  get(): readonly RegisteredWallet[];
-};
-
-type SignAndSendFeature = {
-  supportedTransactionVersions: readonly (number | "legacy")[];
-  signAndSendTransaction: SolanaSignAndSendTransactionMethod;
-};
-
-function isSignAndSendFeature(
-  value: unknown
-): value is SignAndSendFeature {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      "signAndSendTransaction" in value &&
-      typeof value.signAndSendTransaction === "function" &&
-      "supportedTransactionVersions" in value &&
-      Array.isArray(value.supportedTransactionVersions)
-  );
-}
-
-function normalizedName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function matchesSupportedWallet(name: string): boolean {
-  return [
-    "phantom",
-    "phantomwallet",
-    "solflare",
-    "solflarewallet",
-    "backpack",
-    "backpackwallet",
-    "jupiter",
-    "jupiterwallet",
-    "jupiterwalletextension"
-  ].includes(normalizedName(name));
-}
-
-async function findAuthenticatedWallet(
-  walletAddress: string
-): Promise<{
-  account: WalletAccount;
-  signAndSendTransaction: SolanaSignAndSendTransactionMethod;
-}> {
-  const { getWallets } = await import("@wallet-standard/app");
-  const registry = getWallets() as WalletRegistry;
-  const wallet = registry.get().find((registeredWallet) => {
-    if (!matchesSupportedWallet(registeredWallet.name)) {
-      return false;
-    }
-    return registeredWallet.accounts.some(
-      (account) =>
-        account.address === walletAddress &&
-        account.chains.includes("solana:devnet")
-    );
-  });
-
-  if (!wallet) {
-    throw new Error(
-      "Reconnect the wallet you used to sign in, then try again."
-    );
-  }
-
-  const feature = wallet.features[SolanaSignAndSendTransaction];
-  if (
-    !isSignAndSendFeature(feature) ||
-    !feature.supportedTransactionVersions.includes(0)
-  ) {
-    throw new Error(
-      "This wallet does not support a Devnet transaction for workspace activation."
-    );
-  }
-
-  const registeredAccount = wallet.accounts.find(
-    (account) =>
-      account.address === walletAddress &&
-      account.chains.includes("solana:devnet")
-  );
-  if (!registeredAccount) {
-    throw new Error(
-      "Reconnect the wallet you used to sign in, then try again."
-    );
-  }
-
-  const account: WalletAccount = {
-    ...registeredAccount,
-    publicKey: Uint8Array.from(registeredAccount.publicKey),
-    chains: registeredAccount.chains.filter(
-      (chain): chain is WalletAccount["chains"][number] =>
-        chain === "solana:devnet"
-    ),
-    features: registeredAccount.features.filter(
-      (feature): feature is WalletAccount["features"][number] =>
-        feature.includes(":")
-    )
-  };
-
-  return {
-    account,
-    signAndSendTransaction: feature.signAndSendTransaction
-  };
-}
 
 export function SubscriptionPaymentAction({
   workspaceId,
