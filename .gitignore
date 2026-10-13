@@ -110,3 +110,6 @@ vite.config.ts.timestamp-*
 # Generated repository snapshot
 /project-snapshot.md
 /repomix.config.json
+# Netlify build output (generated during builds; may contain environment values)
+apps/*/.netlify/
+packages/*/.netlify/
