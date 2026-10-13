@@ -13,18 +13,28 @@
   },
   "dependencies": {
     "@paylore/database": "workspace:*",
+    "@solana-program/token-2022": "0.19.0",
+    "@solana/kit": "8.4.0",
+    "@solana/wallet-standard-features": "1.5.0",
+    "@solana/wallet-standard-util": "1.1.4",
+    "@solana/zk-sdk": "0.5.3",
+    "@wallet-standard/app": "1.1.0",
+    "exceljs": "^4.4.0",
     "next": "16.3.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "server-only": "0.0.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@eslint/compat": "2.1.1",
     "@types/node": "24.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "eslint": "10.10.0",
-    "eslint-config-next": "16.3.6",
+    "eslint": "10.12.0",
+    "eslint-config-next": "16.3.8",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
     "vitest": "5.0.2"
   }
 }
