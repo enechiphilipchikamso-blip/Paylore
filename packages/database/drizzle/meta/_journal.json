@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791145075081,
+      "tag": "0000_batch03_identity_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791552405144,
+      "tag": "0001_stale_gorilla_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791861926478,
+      "tag": "0002_bind_08_09_10_11_12_13_14_15_final_qa",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791863203072,
+      "tag": "0003_payroll_manager_confirmation",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791865518166,
+      "tag": "0004_workspace_deletion_audit",
+      "breakpoints": true
+    }
+  ]
+}
