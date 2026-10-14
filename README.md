@@ -1,70 +1,47 @@
+> [!WARNING]
+> **Development Branch Notice**
+>
+> This is the `dev-main` branch. It is a development branch and may be unstable.
+>
+> - To review the project code, go to the stable [`main`](../../tree/main) branch.
+> - Some changes here may not be in `main` because they are still on Devnet.
+
+---
+
 # Paylore
 
-Paylore is a private on-chain payroll platform for crypto-native organizations.
+Paylore is a private on-chain payroll platform for crypto-native organizations. It is designed to keep compensation amounts confidential within the confidential payroll system while preserving clear organization controls, contributor ownership, and organization-scoped records.
 
-Included:
+## Product
 
-- pnpm workspace
-- Next.js / React / TypeScript web foundation
-- Node.js 24
-- Rust / Anchor / Solana CLI tooling
-- GitHub Codespaces
-- Solana Devnet configuration
-- minimal application boot
-- safe backend health endpoint
-- PostgreSQL / Supabase connectivity baseline
-- GitHub Actions CI
-- Playwright smoke testing
-- lint / typecheck / test / build quality gates
-- repository hygiene
-- Netlify deployment skeleton
+Paylore is built around a focused payroll model:
 
-## Versions
+- confidential USDC compensation on Solana;
+- durable wallet-based identity and secure application sessions;
+- multiple independently scoped workspaces per user;
+- organization, finance/auditor, and contributor roles;
+- organization-controlled pre-claim recovery and contributor-controlled post-claim ownership;
+- company-sponsored supported network fees;
+- organization-scoped payroll, recovery, operations, and billing records;
+- responsive, installable web experience with accessible public and authenticated surfaces.
 
-| Component | Version |
-|---|---|
-| Node.js | 24.21.0 |
-| pnpm | 10.34.5 |
-| Next.js | 16.3.6 |
-| React | 19.3.0 |
-| React DOM | 19.3.0 |
-| TypeScript | 6.0.3 |
-| ESLint | 10.10.0 |
-| eslint-config-next | 16.3.6 |
-| Zod | 4.6.5 |
-| Drizzle ORM | 0.45.3 |
-| Postgres.js | 3.4.9 |
-| Vitest | 5.0.2 |
-| Playwright | 1.63.0 |
-| Rust | 1.89.0 |
-| Anchor CLI | 1.2.0 |
-| Solana CLI | 4.1.2 |
+The current authentication scope supports Phantom, Solflare, Backpack, and Jupiter Wallet Extension through desktop browser wallet connection. Mobile web presentation is supported, but mobile QR/remote wallet connection is not part of the current product scope.
 
-## Repository Structure
+## Repository
 
-```text
-paylore/
-├── .devcontainer/
-├── .github/
-│   └── workflows/
-├── apps/
-│   └── web/
-│       └── src/
-│           ├── app/
-│           └── server/
-├── packages/
-│   └── database/
-│       └── src/
-├── programs/
-│   └── payroll/
-├── tests/
-│   └── e2e/
-├── .env.example
-├── Anchor.toml
-├── Cargo.toml
-├── netlify.toml
-├── package.json
-├── pnpm-workspace.yaml
-├── playwright.config.ts
-├── rust-toolchain.toml
-└── tsconfig.base.json
+The repository is a pnpm workspace with:
+
+- `apps/web/` — Next.js application, public portal, authenticated entry, workspace UI, and server routes.
+- `packages/database/` — PostgreSQL/Supabase database boundary using Drizzle ORM and Postgres.js.
+- `programs/payroll/` — Anchor/Solana program boundary.
+- `.devcontainer/` — reproducible Codespaces development environment.
+- `.github/workflows/ci.yml` — repository quality gates and Anchor build.
+
+## Local development
+
+Use Node.js 24.21.0 and pnpm 10.34.5.
+
+Install dependencies:
+
+```bash
+pnpm install --frozen-lockfile

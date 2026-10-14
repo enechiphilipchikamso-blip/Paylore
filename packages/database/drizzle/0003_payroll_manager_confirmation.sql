@@ -1,0 +1,1 @@
+ALTER TABLE "payroll_runs" ADD COLUMN "manager_confirmed_at" timestamp with time zone;
