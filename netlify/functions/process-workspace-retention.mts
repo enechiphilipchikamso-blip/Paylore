@@ -6,7 +6,7 @@ import {
   hasReachedInactivityThreshold,
   listDueWorkspaceRetentionNotifications,
   WORKSPACE_RETENTION_NOTICE_DAYS
-} from "../../packages/database";
+} from "../../packages/database/src/index";
 import { parseConfig } from "../../apps/web/src/server/config";
 
 export const config = {
