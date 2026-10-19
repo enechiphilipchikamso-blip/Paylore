@@ -23,7 +23,7 @@ export default function manifest(): MetadataRoute.Manifest {
       },
       {
         src: "/icons/paylore-180x180.png",
-        sizes: "512x512",
+        sizes: "180x180",
         type: "image/png",
       },
       {
