@@ -110,19 +110,48 @@ export type PayloreConfig = z.infer<typeof payloreConfigSchema> & {
 };
 
 export class ConfigurationError extends Error {
-  constructor() {
-    super("Server configuration is invalid.");
+  readonly invalidKeys: string[];
+
+  constructor(invalidKeys: string[] = []) {
+    // Only variable names are reported, never their values.
+    super(
+      invalidKeys.length > 0
+        ? `Server configuration is invalid: ${invalidKeys.join(", ")}.`
+        : "Server configuration is invalid."
+    );
     this.name = "ConfigurationError";
+    this.invalidKeys = invalidKeys;
   }
+}
+
+function invalidKeysOf(error: z.ZodError): string[] {
+  return [
+    ...new Set(
+      error.issues.map((issue) => String(issue.path[0] ?? "unknown"))
+    )
+  ];
+}
+
+// Strip surrounding whitespace and accidental wrapping quotes that are easy
+// to introduce when pasting values into the Netlify UI.
+function normalizeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(env)) {
+    normalized[key] =
+      typeof value === "string"
+        ? value.trim().replace(/^(["'])(.*)\1$/, "$2").trim()
+        : value;
+  }
+  return normalized as NodeJS.ProcessEnv;
 }
 
 export function parseConfig(
   env: NodeJS.ProcessEnv
 ): AppConfig {
-  const result = envSchema.safeParse(env);
+  const result = envSchema.safeParse(normalizeEnv(env));
 
   if (!result.success) {
-    throw new ConfigurationError();
+    throw new ConfigurationError(invalidKeysOf(result.error));
   }
 
   return result.data;
@@ -135,6 +164,7 @@ export function loadConfig(): AppConfig {
 export function parsePayloreConfig(
   env: NodeJS.ProcessEnv
 ): PayloreConfig {
+  env = normalizeEnv(env);
   const result =
     payloreConfigSchema.safeParse({
       ...env,
@@ -147,7 +177,7 @@ export function parsePayloreConfig(
     });
 
   if (!result.success) {
-    throw new ConfigurationError();
+    throw new ConfigurationError(invalidKeysOf(result.error));
   }
 
   return {
