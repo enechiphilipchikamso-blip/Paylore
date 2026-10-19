@@ -1,14 +1,3 @@
-> [!WARNING]
-> **Development Branch Notice**
->
-> This is the `dev-main` branch. It is a development branch and may be unstable.
->
-> - To review the project code, go to the stable [`main`](../../tree/main) branch.
-> - Some changes here may not be in `main` because they are still on Devnet.
-
----
-
-
 # Paylore
 
 Paylore is a private on-chain payroll platform for crypto-native organizations. It is designed to keep compensation amounts confidential within the confidential payroll system while preserving clear organization controls, contributor ownership, and organization-scoped records.
