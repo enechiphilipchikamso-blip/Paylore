@@ -29,13 +29,13 @@
   --shadow-md: 0 18px 48px rgba(16, 32, 51, 0.12);
 
   --font-family-primary:
-    var(--font-geist-sans), sans-serif;
+    var(--font-geist-sans);
   --font-family-mono:
-    var(--font-geist-mono), monospace;
+    var(--font-geist-mono);
 
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
-  --font-size-md: 0.9375rem;
+  --font-size-md: 1rem;
   --font-size-lg: 1rem;
   --font-size-xl: 1.125rem;
   --font-size-2xl: clamp(1.5rem, 2.1vw, 1.875rem);
@@ -2047,10 +2047,10 @@ ul {
 }
 
 .workspace-dashboard__section-heading {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: var(--space-4);
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding-block: var(--space-2);
 }
 
 .workspace-dashboard__section-heading h2 {
@@ -2065,6 +2065,21 @@ ul {
 
 .workspace-dashboard .workspace-grid {
   grid-template-columns: 1fr;
+}
+
+.workspace-role-group {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspace-role-group > h3 {
+  margin: 0;
+  text-align: center;
+}
+
+.workspace-role-group .workspace-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .workspace-card h3 {

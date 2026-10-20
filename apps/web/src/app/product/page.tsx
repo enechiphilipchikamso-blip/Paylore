@@ -54,8 +54,8 @@ export default function ProductPage() {
           </p>
           <h2>Solana foundation</h2>
           <p>
-            Paylore uses provider-neutral Solana integration with Helius as the
-            primary RPC/webhook provider and QuickNode as the secondary
+            Paylore uses provider-neutral Solana integration with Helius for
+            webhook delivery and primary RPC, and QuickNode as a secondary RPC
             provider, together with official Token Wrap, Token-2022, and the
             Paylore Payroll Program foundation.
           </p>

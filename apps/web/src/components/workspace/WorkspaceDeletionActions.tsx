@@ -12,6 +12,7 @@ type DeletionBlockers = {
   gasTank: "not_configured" | "funds_remain" | "closure_unverified";
   reserve: boolean;
   outstandingPayroll: boolean;
+  confidentialAccounts: boolean;
 };
 
 type DeletionResponse = {
@@ -39,6 +40,8 @@ const errorMessages: Record<string, string> = {
     "The Gas Tank has no verified closure/refund path. Deletion is blocked to protect workspace funds.",
   reserve_closure_unverified:
     "The confidential Reserve still exists and has no verified closure path. Deletion is blocked.",
+  confidential_accounts_unclosed:
+    "Contributor confidential accounts remain open. Each account must be closed by its contributor before workspace records can be deleted.",
   outstanding_payroll_obligations:
     "Outstanding payroll obligations remain. Resolve or settle them before deleting application data.",
   waiting_period:
@@ -181,6 +184,7 @@ export function WorkspaceDeletionActions({
     data?.blockers &&
     (data.blockers.outstandingPayroll ||
       data.blockers.reserve ||
+      data.blockers.confidentialAccounts ||
       data.blockers.gasTank !== "not_configured")
   );
   const canFinalize = periodElapsed && !hasBlockers;
@@ -207,7 +211,9 @@ export function WorkspaceDeletionActions({
                   : periodElapsed
                     ? data.blockers.outstandingPayroll
                       ? "Deletion blocked by outstanding obligations."
-                      : "Gas Tank or confidential Reserve requires attention before deletion."
+                      : data.blockers.confidentialAccounts
+                        ? "Contributor confidential accounts must be closed by their owners before deletion."
+                        : "Gas Tank or confidential Reserve requires attention before deletion."
                     : `Time remaining: ${formatRemaining(scheduledAt, now)}`}
               </p>
             </>
@@ -234,6 +240,11 @@ export function WorkspaceDeletionActions({
             {data.blockers.reserve
               ? "Confidential Reserve closure is not verified."
               : "No confidential Reserve is configured."}
+          </li>
+          <li>
+            {data.blockers.confidentialAccounts
+              ? "Contributor confidential accounts remain open; each must be closed by its owner before deletion."
+              : "No open contributor confidential accounts were found."}
           </li>
         </ul>
       ) : null}

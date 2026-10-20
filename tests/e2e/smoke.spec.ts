@@ -192,13 +192,13 @@ test.describe("public experience", () => {
 
     await page.goto("/");
 
-    await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute(
       "href",
       "/icons/favicon.svg"
     );
     await expect(
       page.locator('link[rel="apple-touch-icon"]')
-    ).toHaveAttribute("href", "/icons/favicon-180x180.png");
+    ).toHaveAttribute("href", "/icons/paylore-180x180.png");
   });
 
   test("robots and sitemap contain public routes only", async ({ page }) => {

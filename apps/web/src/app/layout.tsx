@@ -61,8 +61,19 @@ export const metadata: Metadata = {
     "Solana payroll"
   ],
   icons: {
-    icon: "/icons/favicon.svg",
-    apple: "/icons/favicon-180x180.png"
+    icon: [
+      { url: "/icons/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/paylore-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/paylore-512x512.png", sizes: "512x512", type: "image/png" }
+    ],
+    apple: [
+      { url: "/icons/paylore-180x180.png", sizes: "180x180", type: "image/png" }
+    ]
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Paylore",
+    statusBarStyle: "default"
   },
   openGraph: {
     type: "website",

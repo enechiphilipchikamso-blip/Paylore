@@ -5,6 +5,7 @@ import {
 } from "../../packages/database/src/index";
 import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/config";
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
+import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
 
 export const config = {
   schedule: "* * * * *"
@@ -15,7 +16,7 @@ type FinalizedTransaction = {
   meta: { err: unknown } | null;
 } | null;
 
-function configuredRpcProviders() {
+function configuredRpc() {
   const config = parsePayloreConfig(process.env);
   const providers = [{
     name: config.PAYLORE_RPC_PRIMARY_PROVIDER,
@@ -32,13 +33,17 @@ function configuredRpcProviders() {
       apiKey: config.PAYLORE_RPC_SECONDARY_API_KEY
     });
   }
-  return providers;
+  return {
+    providers,
+    payrollProgramId: config.PAYLORE_PAYROLL_PROGRAM_ID
+  };
 }
 
 async function reconcileEvent(
   db: ReturnType<typeof createDatabase>["db"],
   event: Awaited<ReturnType<typeof claimDueSolanaWebhookEvents>>[number],
-  providers: ReturnType<typeof configuredRpcProviders>,
+  providers: ReturnType<typeof configuredRpc>["providers"],
+  payrollProgramId: string | undefined,
   now: Date
 ) {
   const deadLetter = event.attempts >= 8;
@@ -105,6 +110,20 @@ async function reconcileEvent(
     });
     return "failed";
   }
+  if (!payrollProgramId) {
+    await retry("payroll_program_not_configured");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  if (!transactionInvokesProgram(transaction, payrollProgramId)) {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "dead_letter",
+      errorCode: "canonical_program_not_invoked",
+      processedAt: now,
+      now
+    });
+    return "dead_letter";
+  }
 
   await updateSolanaWebhookEventState(db, {
     id: event.id,
@@ -118,7 +137,7 @@ async function reconcileEvent(
 
 export default async function processSolanaWebhooks() {
   const appConfig = parseConfig(process.env);
-  const providers = configuredRpcProviders();
+  const { providers, payrollProgramId } = configuredRpc();
   const { db, client } = createDatabase(appConfig.DATABASE_URL);
   try {
     const events = await claimDueSolanaWebhookEvents(db, {
@@ -127,7 +146,7 @@ export default async function processSolanaWebhooks() {
     });
     const results = await Promise.allSettled(
       events.map((event) =>
-        reconcileEvent(db, event, providers, new Date())
+        reconcileEvent(db, event, providers, payrollProgramId, new Date())
       )
     );
     const failures = results.filter((result) => result.status === "rejected");

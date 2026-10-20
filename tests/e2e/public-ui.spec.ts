@@ -39,6 +39,9 @@ test("Geist Sans is used for the UI and Geist Mono aligns financial values", asy
   page
 }) => {
   await page.goto("/pricing");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
 
   const fonts = await page.evaluate(() => {
     const sans = getComputedStyle(document.body).fontFamily;
@@ -65,18 +68,26 @@ test("Geist Sans is used for the UI and Geist Mono aligns financial values", asy
         .trim(),
       amountNumericVariant: mono.fontVariantNumeric,
       amountNumericFeatures: mono.fontFeatureSettings,
-      fontsLoaded: document.fonts.check(`14px ${sans}`) &&
-        document.fonts.check(`14px ${mono.fontFamily}`),
+      fontsLoaded: document.fonts.check("14px Geist") &&
+        document.fonts.check('14px "Geist Mono"'),
+      fontFaces: [...document.fonts].map(({ family, status }) => ({
+        family,
+        status
+      })),
       codeFont,
       employeeIdFont
     };
   });
 
-  expect(fonts.sans).toContain(fonts.declaredSans);
-  expect(fonts.amountFont).toContain(fonts.declaredMono);
-  expect(fonts.codeFont).toContain(fonts.declaredMono);
-  expect(fonts.employeeIdFont).toContain(fonts.declaredMono);
-  expect(fonts.fontsLoaded).toBe(true);
+  const families = (value: string) =>
+    value
+      .split(",")
+      .map((family) => family.trim().replaceAll('"', ""));
+  expect(families(fonts.sans)).toEqual(families(fonts.declaredSans));
+  expect(families(fonts.amountFont)).toEqual(families(fonts.declaredMono));
+  expect(families(fonts.codeFont)).toEqual(families(fonts.declaredMono));
+  expect(families(fonts.employeeIdFont)).toEqual(families(fonts.declaredMono));
+  expect(fonts.fontsLoaded, JSON.stringify(fonts.fontFaces)).toBe(true);
   expect(fonts.amountNumericVariant).toContain("tabular-nums");
   expect(fonts.amountNumericFeatures).toContain("tnum");
 });
@@ -306,7 +317,7 @@ test("site menu marks the current page with a blended accent line", async ({
   ).not.toHaveAttribute("aria-current", "page");
 });
 
-test("legal pages show the approved Terms date and unapproved Privacy draft status", async ({
+test("legal pages show the approved effective date", async ({
   page
 }) => {
   await page.goto("/terms");
@@ -325,11 +336,17 @@ test("legal pages show the approved Terms date and unapproved Privacy draft stat
   );
 
   await page.goto("/privacy");
-  const draftNotice =
-    "Privacy policy draft — not approved for production publication.";
-  await expect(page.getByRole("note")).toHaveText(draftNotice);
+  await expect(
+    page.getByText("Effective date: October 12, 2026", { exact: false })
+  ).toBeVisible();
+  await expect(
+    page.locator(".legal-copy").getByText(
+      "The Paylore Privacy Policy is effective as of October 12, 2026.",
+      { exact: true }
+    )
+  ).toBeVisible();
   await expect(page.locator('meta[name="description"]')).toHaveAttribute(
     "content",
-    new RegExp("^Privacy policy draft")
+    new RegExp("^The Paylore Privacy Policy is effective")
   );
 });
