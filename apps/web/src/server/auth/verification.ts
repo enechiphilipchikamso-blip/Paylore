@@ -1,4 +1,8 @@
 import {
+  createPublicKey,
+  verify as verifyEd25519
+} from "node:crypto";
+import {
   address,
   getAddressEncoder
 } from "@solana/kit";
@@ -15,6 +19,7 @@ import {
 } from "./protocol";
 
 export type WalletProof = {
+  authMethod: "siws" | "message";
   walletAddress: string;
   account: {
     address: string;
@@ -65,6 +70,7 @@ export async function verifyWalletProof(
   input: {
     challengeInput: SolanaSignInInput;
     expectedAuthUrl: string;
+    expectedMessage: string;
   },
   proof: WalletProof
 ): Promise<boolean> {
@@ -106,7 +112,12 @@ export async function verifyWalletProof(
     ) ||
     !proof.account.features.every(
       isWalletIdentifier
-    )
+    ) ||
+    !proof.account.chains.includes(DEVNET_CHAIN_ID) ||
+    (proof.authMethod === "siws" &&
+      !proof.account.features.includes("solana:signIn")) ||
+    (proof.authMethod === "message" &&
+      !proof.account.features.includes("solana:signMessage"))
   ) {
     return false;
   }
@@ -146,6 +157,34 @@ export async function verifyWalletProof(
       return false;
     }
 
+    const signedMessage = base64ToBytes(proof.signedMessage);
+    const signature = base64ToBytes(proof.signature);
+    if (proof.authMethod === "message") {
+      const expectedMessage = Buffer.from(input.expectedMessage, "utf8");
+      if (
+        signature.length !== 64 ||
+        !Buffer.from(signedMessage).equals(expectedMessage)
+      ) {
+        return false;
+      }
+
+      const ed25519SpkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+      const publicKey = createPublicKey({
+        key: Buffer.concat([
+          ed25519SpkiPrefix,
+          Buffer.from(base64ToBytes(proof.account.publicKey))
+        ]),
+        format: "der",
+        type: "spki"
+      });
+      return verifyEd25519(
+        null,
+        expectedMessage,
+        publicKey,
+        Buffer.from(signature)
+      );
+    }
+
     const output: SolanaSignInOutput = {
       account: {
         address:
@@ -159,14 +198,8 @@ export async function verifyWalletProof(
         features:
           proof.account.features
       },
-      signedMessage:
-        base64ToBytes(
-          proof.signedMessage
-        ),
-      signature:
-        base64ToBytes(
-          proof.signature
-        )
+      signedMessage,
+      signature
     };
 
     return Boolean(

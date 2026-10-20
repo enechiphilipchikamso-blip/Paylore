@@ -407,6 +407,67 @@ export function restoreGasTankFromBackup(
   }
 }
 
+export function rewrapGasTankKey(
+  workspaceId: string,
+  sealed: SealedGasTank,
+  currentEnvelopeKey: string,
+  nextEnvelopeKey: string
+): SealedGasTank {
+  const privateKey = openGasTankKey(
+    workspaceId,
+    sealed,
+    currentEnvelopeKey
+  );
+  let verifiedBackupKey: Buffer | undefined;
+  let nextKey: Buffer | undefined;
+  let nextBackupKey: Buffer | undefined;
+  try {
+    const restoredBackup = restoreGasTankFromBackup(
+      workspaceId,
+      sealed,
+      currentEnvelopeKey
+    );
+    verifiedBackupKey = openGasTankKey(
+      workspaceId,
+      restoredBackup,
+      currentEnvelopeKey
+    );
+    if (!privateKey.equals(verifiedBackupKey)) {
+      throw new Error("The Gas Tank key and recovery backup do not match.");
+    }
+
+    const rewrapped = sealGasTankKey(
+      workspaceId,
+      sealed.address,
+      privateKey,
+      nextEnvelopeKey
+    );
+    nextKey = openGasTankKey(workspaceId, rewrapped, nextEnvelopeKey);
+    const restoredNextBackup = restoreGasTankFromBackup(
+      workspaceId,
+      rewrapped,
+      nextEnvelopeKey
+    );
+    nextBackupKey = openGasTankKey(
+      workspaceId,
+      restoredNextBackup,
+      nextEnvelopeKey
+    );
+    if (
+      !privateKey.equals(nextKey) ||
+      !privateKey.equals(nextBackupKey)
+    ) {
+      throw new Error("The rewrapped Gas Tank key failed verification.");
+    }
+    return rewrapped;
+  } finally {
+    privateKey.fill(0);
+    verifiedBackupKey?.fill(0);
+    nextKey?.fill(0);
+    nextBackupKey?.fill(0);
+  }
+}
+
 export function openReserveKey(
   workspaceId: string,
   sealed: EncryptedReserve,
@@ -497,5 +558,66 @@ export function restoreReserveFromBackup(
     privateKey.fill(0);
     backup.fill(0);
     envelopeKey.fill(0);
+  }
+}
+
+export function rewrapReserveKey(
+  workspaceId: string,
+  sealed: SealedReserve,
+  currentEnvelopeKey: string,
+  nextEnvelopeKey: string
+): SealedReserve {
+  const privateKey = openReserveKey(
+    workspaceId,
+    sealed,
+    currentEnvelopeKey
+  );
+  let verifiedBackupKey: Buffer | undefined;
+  let nextKey: Buffer | undefined;
+  let nextBackupKey: Buffer | undefined;
+  try {
+    const restoredBackup = restoreReserveFromBackup(
+      workspaceId,
+      sealed,
+      currentEnvelopeKey
+    );
+    verifiedBackupKey = openReserveKey(
+      workspaceId,
+      restoredBackup,
+      currentEnvelopeKey
+    );
+    if (!privateKey.equals(verifiedBackupKey)) {
+      throw new Error("The reserve key and recovery backup do not match.");
+    }
+
+    const rewrapped = sealReserveKey(
+      workspaceId,
+      sealed.address,
+      privateKey,
+      nextEnvelopeKey
+    );
+    nextKey = openReserveKey(workspaceId, rewrapped, nextEnvelopeKey);
+    const restoredNextBackup = restoreReserveFromBackup(
+      workspaceId,
+      rewrapped,
+      nextEnvelopeKey
+    );
+    nextBackupKey = openReserveKey(
+      workspaceId,
+      restoredNextBackup,
+      nextEnvelopeKey
+    );
+    if (
+      !privateKey.equals(nextKey) ||
+      !privateKey.equals(nextBackupKey)
+    ) {
+      throw new Error("The rewrapped reserve key failed verification.");
+    }
+    return rewrapped;
+  } finally {
+    privateKey.fill(0);
+    verifiedBackupKey?.fill(0);
+    nextKey?.fill(0);
+    nextBackupKey?.fill(0);
   }
 }

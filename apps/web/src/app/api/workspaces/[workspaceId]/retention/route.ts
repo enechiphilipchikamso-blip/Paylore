@@ -86,7 +86,8 @@ export async function GET(
       subscriptionStatus: subscription?.status ?? null,
       gasTankConfigured: blockers.gasTank !== "not_configured",
       reserveConfigured: blockers.reserve,
-      outstandingObligations: blockers.outstandingPayroll
+      outstandingObligations:
+        blockers.outstandingPayroll || blockers.confidentialAccounts
     });
     return NextResponse.json(
       {

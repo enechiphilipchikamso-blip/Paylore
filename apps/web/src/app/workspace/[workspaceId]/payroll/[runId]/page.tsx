@@ -3,11 +3,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getWorkspacePayrollRun } from "@paylore/database";
 import { PayrollRunActions } from "../../../../../components/workspace/PayrollRunActions";
+import { PayrollClaimCommitAction } from "../../../../../components/workspace/PayrollClaimCommitAction";
 import {
   WorkspaceLegalFooter,
   WorkspaceNavigation
 } from "../../../../../components/workspace/WorkspaceNavigation";
 import { getWorkspacePageContext } from "../../../../../server/workspace-page-context";
+import { loadPayloreConfig } from "../../../../../server/config";
 
 export const metadata: Metadata = {
   title: "Payroll run details",
@@ -43,6 +45,11 @@ export default async function PayrollRunDetailPage({
     runId
   );
   if (!payrollRun) notFound();
+  const payrollProgramId =
+    loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID ?? null;
+  const canCommit =
+    context.workspace.role === "organization_admin" &&
+    ["commit_pending", "submitting"].includes(payrollRun.run.status);
 
   return (
     <main className="protected-wrap workspace-page">
@@ -57,7 +64,11 @@ export default async function PayrollRunDetailPage({
         <p>
           {payrollRun.run.status === "commit_pending"
             ? "Manager confirmation is recorded. No on-chain commitment has been submitted."
-            : `Current status: ${payrollRun.run.status}`}
+            : payrollRun.run.status === "committed"
+              ? "All Claim PDAs are finalized. Contributor settlement remains a separate step."
+              : payrollRun.run.status === "submitting"
+                ? "Some Claim PDAs are finalized. Retry submission to finish the remaining allocations."
+                : `Current status: ${payrollRun.run.status}`}
         </p>
       </header>
       <section className="surface-card">
@@ -82,6 +93,18 @@ export default async function PayrollRunDetailPage({
         </dl>
       </section>
       <section className="surface-card" aria-label="Payroll run actions">
+        <PayrollClaimCommitAction
+          workspaceId={workspaceId}
+          runId={payrollRun.run.id}
+          walletAddress={context.session.walletAddress}
+          programId={payrollProgramId}
+          allocationCommitment={payrollRun.run.allocationCommitment}
+          claims={payrollRun.allocations.map((allocation) => ({
+            claimId: allocation.claimId,
+            contributorAddress: allocation.contributorWalletAddress
+          }))}
+          canCommit={canCommit}
+        />
         <PayrollRunActions
           workspaceId={workspaceId}
           runId={payrollRun.run.id}

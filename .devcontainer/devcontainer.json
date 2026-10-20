@@ -5,11 +5,15 @@
     "context": ".."
   },
   "remoteUser": "node",
-  "forwardPorts": [3000],
+  "forwardPorts": [3000, 54112],
   "portsAttributes": {
     "3000": {
       "label": "Paylore web",
       "onAutoForward": "openBrowser"
+    },
+    "54112": {
+      "label": "CodeGPT extension service",
+      "visibility": "private"
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",

@@ -29,6 +29,28 @@ export default class MergeVideoReporter implements Reporter {
       return;
     }
 
+    const ffmpegVersion = spawnSync("ffmpeg", ["-version"], {
+      encoding: "utf8"
+    });
+    if (
+      ffmpegVersion.error &&
+      "code" in ffmpegVersion.error &&
+      ffmpegVersion.error.code === "ENOENT"
+    ) {
+      console.warn(
+        "Skipping combined Playwright video; install ffmpeg to enable video merging."
+      );
+      return;
+    }
+    if (ffmpegVersion.error) {
+      throw ffmpegVersion.error;
+    }
+    if (ffmpegVersion.status !== 0) {
+      throw new Error(
+        ffmpegVersion.stderr || `ffmpeg exited with ${ffmpegVersion.status}`
+      );
+    }
+
     const missingVideos = [...this.testIds].filter(
       (testId) => !this.videosByTestId.has(testId)
     );

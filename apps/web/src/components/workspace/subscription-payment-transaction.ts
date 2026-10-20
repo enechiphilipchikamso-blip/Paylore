@@ -12,13 +12,14 @@ import {
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash
 } from "@solana/kit";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 
-const TOKEN_PROGRAM_ADDRESS =
-  address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ADDRESS =
   address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const SYSTEM_PROGRAM_ADDRESS =
   address("11111111111111111111111111111111");
+const MEMO_PROGRAM_ADDRESS =
+  address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const BASE_UNITS = 49_000_000n;
 const USDC_DECIMALS = 6;
 
@@ -26,6 +27,7 @@ export type SubscriptionPaymentTransactionInput = {
   payer: string;
   recipient: string;
   mint: string;
+  workspaceId: string;
   blockhash: string;
   lastValidBlockHeight: number;
 };
@@ -39,7 +41,7 @@ async function deriveAssociatedTokenAddress(
     programAddress: ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
     seeds: [
       encoder.encode(owner),
-      encoder.encode(TOKEN_PROGRAM_ADDRESS),
+      encoder.encode(TOKEN_2022_PROGRAM_ADDRESS),
       encoder.encode(mint)
     ]
   });
@@ -50,6 +52,7 @@ export async function createSubscriptionPaymentTransaction({
   payer: payerText,
   recipient: recipientText,
   mint: mintText,
+  workspaceId,
   blockhash: blockhashText,
   lastValidBlockHeight
 }: SubscriptionPaymentTransactionInput): Promise<Uint8Array> {
@@ -68,7 +71,7 @@ export async function createSubscriptionPaymentTransaction({
       { address: recipient, role: AccountRole.READONLY },
       { address: mint, role: AccountRole.READONLY },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
-      { address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY }
+      { address: TOKEN_2022_PROGRAM_ADDRESS, role: AccountRole.READONLY }
     ],
     data: new Uint8Array([1])
   } as const;
@@ -81,7 +84,7 @@ export async function createSubscriptionPaymentTransaction({
   transferData[9] = USDC_DECIMALS;
 
   const transfer = {
-    programAddress: TOKEN_PROGRAM_ADDRESS,
+    programAddress: TOKEN_2022_PROGRAM_ADDRESS,
     accounts: [
       { address: source, role: AccountRole.WRITABLE },
       { address: mint, role: AccountRole.READONLY },
@@ -91,8 +94,16 @@ export async function createSubscriptionPaymentTransaction({
     data: transferData
   } as const;
 
+  const memo = {
+    programAddress: MEMO_PROGRAM_ADDRESS,
+    accounts: [],
+    data: new TextEncoder().encode(
+      `Paylore workspace activation | 49 USDC | recipient ${recipient.toString()} | workspace ${workspaceId}`
+    )
+  } as const;
+
   const message = appendTransactionMessageInstructions(
-    [createDestinationAccount, transfer],
+    [createDestinationAccount, transfer, memo],
     setTransactionMessageLifetimeUsingBlockhash(
       {
         blockhash: recentBlockhash,

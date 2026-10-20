@@ -8,8 +8,10 @@ import {
 import { useRouter } from "next/navigation";
 import type {
   SolanaSignInInput,
-  SolanaSignInOutput
+  SolanaSignInOutput,
+  SolanaSignMessageMethod
 } from "@solana/wallet-standard-features";
+import { SolanaSignMessage } from "@solana/wallet-standard-features";
 import {
   isWalletCancellation
 } from "./walletErrors";
@@ -60,12 +62,8 @@ type StandardWallet = {
     readonly StandardAccount[];
 };
 
-type StandardAccount = {
-  address: string;
-  publicKey: ArrayLike<number>;
-  chains: readonly string[];
-  features: readonly string[];
-};
+type StandardAccount =
+  SolanaSignInOutput["account"];
 
 type WalletRegistry = {
   get():
@@ -93,6 +91,10 @@ type StandardSignInFeature = {
   >;
 };
 
+type StandardSignMessageFeature = {
+  signMessage: SolanaSignMessageMethod;
+};
+
 type StandardDisconnectFeature = {
   disconnect():
     | void
@@ -114,6 +116,7 @@ type ChallengeResponse = {
 };
 
 type VerifyPayload = {
+  authMethod: "siws" | "message";
   nonce: string;
   walletAddress: string;
   publicKey: string;
@@ -242,6 +245,22 @@ function signInFeatureFor(
   return wallet.features[
     "solana:signIn"
   ] as StandardSignInFeature;
+}
+
+function signMessageFeatureFor(
+  wallet: StandardWallet
+): StandardSignMessageFeature | null {
+  const feature = wallet.features[SolanaSignMessage];
+  if (
+    !feature ||
+    typeof feature !== "object" ||
+    !("signMessage" in feature) ||
+    typeof feature.signMessage !== "function"
+  ) {
+    return null;
+  }
+
+  return feature as StandardSignMessageFeature;
 }
 
 function disconnectFeatureFor(
@@ -597,10 +616,12 @@ export function WalletAuthPanel({
       signInFeatureFor(
         selectedWallet
       );
+    const signMessageFeature =
+      signMessageFeatureFor(selectedWallet);
 
-    if (!signInFeature) {
+    if (!signInFeature && !signMessageFeature) {
       setError(
-        "This wallet does not provide the required sign-in capability."
+        "This wallet cannot sign the Paylore authentication request. Connect a supported wallet that can sign in or sign a message."
       );
       return;
     }
@@ -644,25 +665,56 @@ export function WalletAuthPanel({
         );
       }
 
-      const [output] =
-        await signInFeature.signIn(
-          challengeBody.input
-        );
+      let authMethod: VerifyPayload["authMethod"];
+      let signedAccount: StandardAccount;
+      let signedMessage: Uint8Array;
+      let signature: Uint8Array;
 
-      if (
-        !output?.account ||
-        typeof output.account.address !==
-          "string"
-      ) {
+      if (signInFeature) {
+        const [output] = await signInFeature.signIn(challengeBody.input);
+        if (
+          !output?.account ||
+          typeof output.account.address !== "string"
+        ) {
+          throw new Error(
+            "The wallet returned an incomplete sign-in response. Reconnect your wallet and try again."
+          );
+        }
+        authMethod = "siws";
+        signedAccount = output.account;
+        signedMessage = output.signedMessage;
+        signature = output.signature;
+      } else if (signMessageFeature) {
+        const messageBytes = new TextEncoder().encode(challengeBody.message);
+        const [output] = await signMessageFeature.signMessage({
+          account,
+          message: messageBytes
+        });
+        if (
+          !output ||
+          output.signature.length !== 64 ||
+          (output.signatureType !== undefined &&
+            output.signatureType !== "ed25519") ||
+          output.signedMessage.length !== messageBytes.length ||
+          !output.signedMessage.every(
+            (byte, index) => byte === messageBytes[index]
+          )
+        ) {
+          throw new Error(
+            "The wallet did not sign the exact Paylore authentication message. Try signing in again."
+          );
+        }
+        authMethod = "message";
+        signedAccount = account;
+        signedMessage = output.signedMessage;
+        signature = output.signature;
+      } else {
         throw new Error(
-          "The wallet returned an incomplete sign-in response. Reconnect your wallet and try again."
+          "This wallet cannot sign the Paylore authentication request."
         );
       }
 
-      if (
-        output.account.address !==
-        account.address
-      ) {
+      if (signedAccount.address !== account.address) {
         setSelectedWallet(
           null
         );
@@ -676,28 +728,25 @@ export function WalletAuthPanel({
 
       const verifyPayload:
         VerifyPayload = {
+        authMethod,
         nonce:
           challengeBody.nonce,
         walletAddress:
           account.address,
         publicKey:
           bytesToBase64(
-            output.account.publicKey
+            signedAccount.publicKey
           ),
         chains: [
-          ...output.account.chains
+          ...signedAccount.chains
         ],
         features: [
-          ...output.account.features
+          ...signedAccount.features
         ],
         signedMessage:
-          bytesToBase64(
-            output.signedMessage
-          ),
+          bytesToBase64(signedMessage),
         signature:
-          bytesToBase64(
-            output.signature
-          )
+          bytesToBase64(signature)
       };
 
       const verifyResponse =
@@ -754,7 +803,9 @@ export function WalletAuthPanel({
 
         <p>
           Choose a supported wallet, review the Paylore authentication
-          request, and sign only after confirming the message.
+          request, and sign only after confirming the message. If a wallet
+          does not support sign-in requests, Paylore can verify its signature
+          on the exact server-issued message instead.
         </p>
       </div>
 

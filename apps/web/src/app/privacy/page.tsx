@@ -1,5 +1,6 @@
 import { PublicPage } from "../../components/public/PublicPage";
 import { createPublicMetadata } from "../site";
+import { POLICY_EFFECTIVE_DATE } from "../legal-policy";
 
 const sections = [
   {
@@ -50,25 +51,27 @@ const sections = [
 
 const intro =
   "Paylore is designed to process the information required to provide wallet authentication, workspace access, subscriptions, contributor onboarding, and payroll operations while keeping compensation amounts confidential within the payroll system.";
-const draftStatus =
-  "Privacy policy draft — not approved for production publication.";
-
 export const metadata = createPublicMetadata({
   title: "Privacy at Paylore",
-  description: `${draftStatus} ${intro}`,
+  description: `The Paylore Privacy Policy is effective as of ${POLICY_EFFECTIVE_DATE}. ${intro}`,
   path: "/privacy"
 });
+
+export const dynamic = "force-dynamic";
 
 export default function PrivacyPage() {
   return (
     <PublicPage
       eyebrow="PRIVACY"
       title="Privacy at Paylore"
-      description={`${draftStatus} ${intro}`}
+      description={`The Paylore Privacy Policy is effective as of ${POLICY_EFFECTIVE_DATE}. ${intro}`}
     >
       <article className="surface-card prose legal-copy">
-        <p className="legal-copy__draft" role="note">
-          {draftStatus}
+        <p className="legal-copy__effective">
+          Effective date: {POLICY_EFFECTIVE_DATE}
+        </p>
+        <p>
+          The Paylore Privacy Policy is effective as of {POLICY_EFFECTIVE_DATE}.
         </p>
         {sections.map((section) => (
           <section key={section.title}>

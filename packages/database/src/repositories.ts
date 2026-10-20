@@ -6,6 +6,7 @@ import {
   gte,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lte,
   lt,
@@ -2685,42 +2686,55 @@ export async function getWorkspaceDeletionBlockers(
   db: Database,
   workspaceId: string
 ) {
-  const [gasTanks, reserves, allocations, runs] = await Promise.all([
-    db
-      .select({ balanceLamports: workspaceGasTanks.balanceLamports })
-      .from(workspaceGasTanks)
-      .where(eq(workspaceGasTanks.workspaceId, workspaceId))
-      .limit(1),
-    db
-      .select({ workspaceId: workspaceReserves.workspaceId })
-      .from(workspaceReserves)
-      .where(eq(workspaceReserves.workspaceId, workspaceId))
-      .limit(1),
-    db
-      .select({ id: payrollAllocations.id })
-      .from(payrollAllocations)
-      .where(
-        and(
-          eq(payrollAllocations.workspaceId, workspaceId),
-          notInArray(payrollAllocations.status, [
-            "claimed",
-            "recovered",
-            "cancelled"
-          ])
+  const [gasTanks, reserves, allocations, runs, confidentialAccounts] =
+    await Promise.all([
+      db
+        .select({ balanceLamports: workspaceGasTanks.balanceLamports })
+        .from(workspaceGasTanks)
+        .where(eq(workspaceGasTanks.workspaceId, workspaceId))
+        .limit(1),
+      db
+        .select({ workspaceId: workspaceReserves.workspaceId })
+        .from(workspaceReserves)
+        .where(eq(workspaceReserves.workspaceId, workspaceId))
+        .limit(1),
+      db
+        .select({ id: payrollAllocations.id })
+        .from(payrollAllocations)
+        .where(
+          and(
+            eq(payrollAllocations.workspaceId, workspaceId),
+            notInArray(payrollAllocations.status, [
+              "claimed",
+              "recovered",
+              "cancelled"
+            ])
+          )
         )
-      )
-      .limit(1),
-    db
-      .select({ id: payrollRuns.id })
-      .from(payrollRuns)
-      .where(
-        and(
-          eq(payrollRuns.workspaceId, workspaceId),
-          notInArray(payrollRuns.status, ["complete", "cancelled"])
+        .limit(1),
+      db
+        .select({ id: payrollRuns.id })
+        .from(payrollRuns)
+        .where(
+          and(
+            eq(payrollRuns.workspaceId, workspaceId),
+            notInArray(payrollRuns.status, ["complete", "cancelled"])
+          )
         )
-      )
-      .limit(1)
-  ]);
+        .limit(1),
+      db
+        .select({
+          contributorId: contributorConfidentialAccounts.contributorId
+        })
+        .from(contributorConfidentialAccounts)
+        .where(
+          and(
+            eq(contributorConfidentialAccounts.workspaceId, workspaceId),
+            notInArray(contributorConfidentialAccounts.status, ["closed"])
+          )
+        )
+        .limit(1)
+    ]);
   const gasTankBalanceLamports = gasTanks[0]?.balanceLamports ?? null;
   return {
     gasTank:
@@ -2730,7 +2744,8 @@ export async function getWorkspaceDeletionBlockers(
           ? "funds_remain" as const
           : "closure_unverified" as const,
     reserve: reserves.length > 0,
-    outstandingPayroll: allocations.length > 0 || runs.length > 0
+    outstandingPayroll: allocations.length > 0 || runs.length > 0,
+    confidentialAccounts: confidentialAccounts.length > 0
   };
 }
 
@@ -3229,6 +3244,21 @@ export async function permanentlyDeleteEligibleWorkspace(
       return { status };
     }
 
+    const openConfidentialAccounts = await tx
+      .select({ contributorId: contributorConfidentialAccounts.contributorId })
+      .from(contributorConfidentialAccounts)
+      .where(
+        and(
+          eq(contributorConfidentialAccounts.workspaceId, input.workspaceId),
+          notInArray(contributorConfidentialAccounts.status, ["closed"])
+        )
+      )
+      .limit(1);
+    if (openConfidentialAccounts[0]) {
+      await recordOutcome("blocked", "confidential_accounts_unclosed");
+      return { status: "confidential_accounts_unclosed" as const };
+    }
+
     const reserveRows = await tx
       .select({ workspaceId: workspaceReserves.workspaceId })
       .from(workspaceReserves)
@@ -3324,8 +3354,30 @@ export async function getWorkspacePayrollRun(
   if (!rows[0]) return null;
 
   const allocations = await db
-    .select()
+    .select({
+      id: payrollAllocations.id,
+      workspaceId: payrollAllocations.workspaceId,
+      payrollRunId: payrollAllocations.payrollRunId,
+      contributorId: payrollAllocations.contributorId,
+      contributorWalletAddress: contributors.identityWalletAddress,
+      amountBaseUnits: payrollAllocations.amountBaseUnits,
+      claimId: payrollAllocations.claimId,
+      claimAddress: payrollAllocations.claimAddress,
+      status: payrollAllocations.status,
+      transactionSignature: payrollAllocations.transactionSignature,
+      claimedAt: payrollAllocations.claimedAt,
+      recoveredAt: payrollAllocations.recoveredAt,
+      createdAt: payrollAllocations.createdAt,
+      updatedAt: payrollAllocations.updatedAt
+    })
     .from(payrollAllocations)
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
     .where(
       and(
         eq(payrollAllocations.workspaceId, workspaceId),
@@ -3334,6 +3386,504 @@ export async function getWorkspacePayrollRun(
     )
     .orderBy(asc(payrollAllocations.createdAt));
   return { run: rows[0], allocations };
+}
+
+export async function listContributorPayrollAllocations(
+  db: Database,
+  workspaceId: string,
+  contributorId: string
+) {
+  return db
+    .select({
+      id: payrollAllocations.id,
+      runId: payrollRuns.id,
+      runCreatedAt: payrollRuns.createdAt,
+      runStatus: payrollRuns.status,
+      amountBaseUnits: payrollAllocations.amountBaseUnits,
+      status: payrollAllocations.status,
+      claimAddress: payrollAllocations.claimAddress,
+      transactionSignature: payrollAllocations.transactionSignature,
+      claimedAt: payrollAllocations.claimedAt,
+      recoveredAt: payrollAllocations.recoveredAt
+    })
+    .from(payrollAllocations)
+    .innerJoin(
+      payrollRuns,
+      and(
+        eq(payrollRuns.id, payrollAllocations.payrollRunId),
+        eq(payrollRuns.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .where(
+      and(
+        eq(payrollAllocations.workspaceId, workspaceId),
+        eq(payrollAllocations.contributorId, contributorId),
+        inArray(payrollRuns.status, ["committed", "complete"])
+      )
+    )
+    .orderBy(desc(payrollRuns.createdAt), desc(payrollAllocations.createdAt))
+    .limit(100);
+}
+
+export async function getWorkspacePayrollRecoveryQueue(
+  db: Database,
+  workspaceId: string
+) {
+  return db
+    .select({
+      id: payrollAllocations.id,
+      runId: payrollAllocations.payrollRunId,
+      contributorId: payrollAllocations.contributorId,
+      contributorWalletAddress: contributors.identityWalletAddress,
+      amountBaseUnits: payrollAllocations.amountBaseUnits,
+      claimId: payrollAllocations.claimId,
+      claimAddress: payrollAllocations.claimAddress,
+      status: payrollAllocations.status,
+      runCreatedAt: payrollRuns.createdAt
+    })
+    .from(payrollAllocations)
+    .innerJoin(
+      payrollRuns,
+      and(
+        eq(payrollRuns.id, payrollAllocations.payrollRunId),
+        eq(payrollRuns.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .where(
+      and(
+        eq(payrollAllocations.workspaceId, workspaceId),
+        eq(payrollAllocations.status, "unclaimed"),
+        isNotNull(payrollAllocations.claimAddress)
+      )
+    )
+    .orderBy(asc(payrollRuns.createdAt), asc(payrollAllocations.createdAt));
+}
+
+export async function recordPayrollClaimSubmission(
+  db: Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    signature: string;
+    claims: Array<{
+      claimId: string;
+      claimAddress: string;
+    }>;
+    now?: Date;
+  }
+) {
+  if (input.claims.length === 0) {
+    throw new Error("At least one verified payroll claim is required.");
+  }
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const runRows = await tx
+      .select({
+        id: payrollRuns.id,
+        status: payrollRuns.status,
+        allocationCommitment: payrollRuns.allocationCommitment
+      })
+      .from(payrollRuns)
+      .where(
+        and(
+          eq(payrollRuns.workspaceId, input.workspaceId),
+          eq(payrollRuns.id, input.runId)
+        )
+      )
+      .for("update")
+      .limit(1);
+    const run = runRows[0];
+    if (!run || !run.allocationCommitment) {
+      return { status: "not_found" as const };
+    }
+    if (
+      run.status !== "commit_pending" &&
+      run.status !== "submitting" &&
+      run.status !== "committed"
+    ) {
+      return { status: "invalid_state" as const };
+    }
+
+    const claimIds = input.claims.map((claim) => claim.claimId);
+    if (new Set(claimIds).size !== claimIds.length) {
+      return { status: "invalid_claims" as const };
+    }
+    const rows = await tx
+      .select()
+      .from(payrollAllocations)
+      .where(
+        and(
+          eq(payrollAllocations.workspaceId, input.workspaceId),
+          eq(payrollAllocations.payrollRunId, input.runId),
+          inArray(payrollAllocations.claimId, claimIds)
+        )
+      )
+      .for("update");
+    if (rows.length !== input.claims.length) {
+      return { status: "invalid_claims" as const };
+    }
+
+    const byClaimId = new Map(input.claims.map((claim) => [claim.claimId, claim]));
+    for (const allocation of rows) {
+      const submitted = byClaimId.get(allocation.claimId);
+      if (!submitted) {
+        return { status: "invalid_claims" as const };
+      }
+      if (
+        allocation.claimAddress !== null &&
+        allocation.claimAddress !== submitted.claimAddress
+      ) {
+        return { status: "claim_conflict" as const };
+      }
+      if (
+        allocation.status !== "draft" &&
+        allocation.status !== "unclaimed"
+      ) {
+        return { status: "claim_conflict" as const };
+      }
+    }
+
+    await tx
+      .update(payrollAllocations)
+      .set({
+        status: "unclaimed",
+        transactionSignature: input.signature,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(payrollAllocations.workspaceId, input.workspaceId),
+          eq(payrollAllocations.payrollRunId, input.runId),
+          inArray(payrollAllocations.claimId, claimIds)
+        )
+      );
+
+    for (const claim of input.claims) {
+      const allocation = rows.find((row) => row.claimId === claim.claimId);
+      if (!allocation || allocation.claimAddress !== null) continue;
+      await tx
+        .update(payrollAllocations)
+        .set({
+          claimAddress: claim.claimAddress,
+          status: "unclaimed",
+          transactionSignature: input.signature,
+          updatedAt: now
+        })
+        .where(
+          and(
+            eq(payrollAllocations.id, allocation.id),
+            isNull(payrollAllocations.claimAddress)
+          )
+        );
+    }
+
+    const allAllocations = await tx
+      .select({
+        claimAddress: payrollAllocations.claimAddress
+      })
+      .from(payrollAllocations)
+      .where(
+        and(
+          eq(payrollAllocations.workspaceId, input.workspaceId),
+          eq(payrollAllocations.payrollRunId, input.runId)
+        )
+      );
+    const complete = allAllocations.every(
+      (allocation) => allocation.claimAddress !== null
+    );
+    await tx
+      .update(payrollRuns)
+      .set({
+        status: complete ? "committed" : "submitting",
+        submissionSignature: input.signature,
+        finalizedAt: complete ? now : null,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(payrollRuns.workspaceId, input.workspaceId),
+          eq(payrollRuns.id, input.runId)
+        )
+      );
+
+    await tx
+      .insert(workspaceLedgerEntries)
+      .values({
+        workspaceId: input.workspaceId,
+        idempotencyKey: `payroll-claim-commit:${input.runId}:${input.signature}`,
+        category: "payroll",
+        entryType: "claim_commitment",
+        status: "finalized",
+        referenceType: "payroll_run",
+        referenceId: input.runId,
+        transactionSignature: input.signature,
+        metadata: {
+          claimIds,
+          allocationCommitment: run.allocationCommitment
+        },
+        createdAt: now
+      })
+      .onConflictDoNothing({
+        target: [
+          workspaceLedgerEntries.workspaceId,
+          workspaceLedgerEntries.idempotencyKey
+        ]
+      });
+
+    const financeMembers = await tx
+      .select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships)
+      .where(
+        and(
+          eq(workspaceMemberships.workspaceId, input.workspaceId),
+          or(
+            eq(workspaceMemberships.role, "organization_admin"),
+            eq(workspaceMemberships.role, "finance_auditor")
+          )
+        )
+      );
+    await tx
+      .insert(workspaceNotifications)
+      .values(
+        financeMembers.map((member) => ({
+          workspaceId: input.workspaceId,
+          recipientKey: member.userId,
+          eventKey: `payroll-claim-commit:${input.runId}:${input.signature}`,
+          category: "Payroll & Claims",
+          title: complete
+            ? "Payroll claim commitments finalized"
+            : "Payroll claim commitments are being submitted",
+          body: complete
+            ? "All Claim PDAs for this payroll run are finalized on Devnet. Contributor settlement remains a separate step."
+            : "A batch of Claim PDAs is finalized on Devnet. Additional payroll allocations still require submission.",
+          destination: `/workspace/${input.workspaceId}/payroll/${input.runId}`,
+          createdAt: now
+        }))
+      )
+      .onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+
+    return {
+      status: complete ? ("committed" as const) : ("submitting" as const),
+      submittedCount: rows.length,
+      totalCount: allAllocations.length
+    };
+  });
+}
+
+export async function recordPayrollRecovery(
+  db: Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    actorUserId: string;
+    reason: string;
+    reasonNote: string | null;
+    signature: string;
+    claimAddress: string;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const allocationRows = await tx
+      .select({
+        id: payrollAllocations.id,
+        contributorId: payrollAllocations.contributorId,
+        contributorWalletAddress: contributors.identityWalletAddress,
+        amountBaseUnits: payrollAllocations.amountBaseUnits,
+        claimId: payrollAllocations.claimId,
+        claimAddress: payrollAllocations.claimAddress,
+        status: payrollAllocations.status,
+        transactionSignature: payrollAllocations.transactionSignature
+      })
+      .from(payrollAllocations)
+      .innerJoin(
+        contributors,
+        and(
+          eq(contributors.id, payrollAllocations.contributorId),
+          eq(contributors.workspaceId, payrollAllocations.workspaceId)
+        )
+      )
+      .where(
+        and(
+          eq(payrollAllocations.id, input.allocationId),
+          eq(payrollAllocations.workspaceId, input.workspaceId),
+          eq(payrollAllocations.payrollRunId, input.runId)
+        )
+      )
+      .for("update")
+      .limit(1);
+    const allocation = allocationRows[0];
+    if (!allocation) return { status: "not_found" as const };
+
+    const existingRows = await tx
+      .select()
+      .from(payrollRecoveries)
+      .where(eq(payrollRecoveries.allocationId, input.allocationId))
+      .limit(1);
+    const existing = existingRows[0];
+    if (existing) {
+      if (
+        allocation.status === "recovered" &&
+        existing.status === "confirmed" &&
+        existing.transactionSignature === input.signature &&
+        existing.reason === input.reason &&
+        existing.reasonNote === input.reasonNote
+      ) {
+        return { status: "duplicate" as const };
+      }
+      return { status: "conflict" as const };
+    }
+    if (
+      allocation.status !== "unclaimed" ||
+      allocation.claimAddress !== input.claimAddress
+    ) {
+      return { status: "conflict" as const };
+    }
+
+    const recoveryRows = await tx
+      .insert(payrollRecoveries)
+      .values({
+        workspaceId: input.workspaceId,
+        allocationId: input.allocationId,
+        actorUserId: input.actorUserId,
+        reason: input.reason,
+        reasonNote: input.reasonNote,
+        status: "confirmed",
+        transactionSignature: input.signature,
+        createdAt: now,
+        confirmedAt: now
+      })
+      .onConflictDoNothing({
+        target: payrollRecoveries.allocationId
+      })
+      .returning({ id: payrollRecoveries.id });
+    if (!recoveryRows[0]) return { status: "conflict" as const };
+
+    const updated = await tx
+      .update(payrollAllocations)
+      .set({
+        status: "recovered",
+        recoveredAt: now,
+        transactionSignature: input.signature,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(payrollAllocations.id, input.allocationId),
+          eq(payrollAllocations.workspaceId, input.workspaceId),
+          eq(payrollAllocations.status, "unclaimed"),
+          eq(payrollAllocations.claimAddress, input.claimAddress)
+        )
+      )
+      .returning({ id: payrollAllocations.id });
+    if (!updated[0]) {
+      throw new Error("The payroll allocation changed during recovery reconciliation.");
+    }
+
+    await tx
+      .insert(workspaceLedgerEntries)
+      .values({
+        workspaceId: input.workspaceId,
+        idempotencyKey: `payroll-recovery:${input.allocationId}`,
+        category: "recovery",
+        entryType: "claim_entitlement_cancelled",
+        status: "finalized",
+        referenceType: "payroll_allocation",
+        referenceId: input.allocationId,
+        transactionSignature: input.signature,
+        metadata: {
+          runId: input.runId,
+          claimId: allocation.claimId,
+          reason: input.reason,
+          cancelledEntitlementBaseUnits: allocation.amountBaseUnits,
+          valueTransferred: false
+        },
+        createdAt: now
+      })
+      .onConflictDoNothing({
+        target: [
+          workspaceLedgerEntries.workspaceId,
+          workspaceLedgerEntries.idempotencyKey
+        ]
+      });
+
+    const contributorUsers = await tx
+      .select({ userId: walletIdentities.userId })
+      .from(walletIdentities)
+      .where(eq(walletIdentities.address, allocation.contributorWalletAddress));
+    await tx
+      .insert(workspaceNotifications)
+      .values(
+        contributorUsers.map((contributor) => ({
+          workspaceId: input.workspaceId,
+          recipientKey: contributor.userId,
+          eventKey: `payroll-recovery:${input.allocationId}`,
+          category: "Recovery & Offboarding",
+          title: "A payroll allocation was recovered",
+          body: "An unclaimed payroll entitlement was marked recovered on Devnet. Contact the workspace administrator if you believe this was made in error.",
+          destination: `/workspace/${input.workspaceId}/compensation`,
+          createdAt: now
+        }))
+      )
+      .onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+
+    const financeMembers = await tx
+      .select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships)
+      .where(
+        and(
+          eq(workspaceMemberships.workspaceId, input.workspaceId),
+          or(
+            eq(workspaceMemberships.role, "organization_admin"),
+            eq(workspaceMemberships.role, "finance_auditor")
+          )
+        )
+      );
+    await tx
+      .insert(workspaceNotifications)
+      .values(
+        financeMembers.map((member) => ({
+          workspaceId: input.workspaceId,
+          recipientKey: member.userId,
+          eventKey: `payroll-recovery:${input.allocationId}`,
+          category: "Recovery & Offboarding",
+          title: "Payroll recovery finalized",
+          body: "An unclaimed Claim PDA transitioned to RECOVERED. This ledger entry records the entitlement state, not a public USDC transfer.",
+          destination: `/workspace/${input.workspaceId}/ledger`,
+          createdAt: now
+        }))
+      )
+      .onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+
+    return { status: "recovered" as const };
+  });
 }
 
 export async function createPayrollDraft(
