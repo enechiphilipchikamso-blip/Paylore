@@ -48,9 +48,11 @@ export default async function WorkspaceReservePage({
         <p className="eyebrow">Settings</p>
         <h2>Confidential payroll reserve</h2>
         <p>
-          This workspace uses a dedicated confidential reserve for unclaimed
-          payroll. Reserve private-key material is protected on the server and
-          is never delivered to the browser.
+          This workspace has a dedicated reserve signing address. Its private
+          key is protected on the server and never delivered to the browser.
+          Key custody alone does not create or fund an on-chain confidential
+          reserve; payroll settlement remains unavailable until that flow is
+          implemented and verified.
         </p>
       </header>
       <section className="surface-card">

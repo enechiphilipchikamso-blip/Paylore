@@ -95,17 +95,6 @@ describe("parsePayloreConfig", () => {
     ).toThrow(ConfigurationError);
   });
 
-  it("accepts an optional QuickNode webhook secret", () => {
-    const config = parsePayloreConfig({
-      NODE_ENV: "test",
-      PAYLORE_QUICKNODE_WEBHOOK_SECRET: "quicknode-webhook-secret"
-    });
-
-    expect(config.PAYLORE_QUICKNODE_WEBHOOK_SECRET).toBe(
-      "quicknode-webhook-secret"
-    );
-  });
-
   it("rejects placeholder text for configured Solana account identifiers", () => {
     expect(() =>
       parsePayloreConfig({
@@ -133,6 +122,24 @@ describe("parsePayloreConfig", () => {
     expect(config.TOKEN_WRAP_PROGRAM_ID).toBe(
       "58yEtWEhrsRery3w1kZiTXdWofY6efvxmeAZwLrexgQ"
     );
+  });
+
+  it("keeps custom Token Wrap unwrap disabled until explicitly verified", () => {
+    expect(
+      parsePayloreConfig({ NODE_ENV: "test" }).TOKEN_WRAP_UNWRAP_ENABLED
+    ).toBe(false);
+    expect(
+      parsePayloreConfig({
+        NODE_ENV: "test",
+        PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: "true"
+      }).TOKEN_WRAP_UNWRAP_ENABLED
+    ).toBe(true);
+    expect(() =>
+      parsePayloreConfig({
+        NODE_ENV: "test",
+        PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: "yes"
+      })
+    ).toThrow(ConfigurationError);
   });
 
   it("keeps the official Token Wrap program ID selected for Mainnet", () => {

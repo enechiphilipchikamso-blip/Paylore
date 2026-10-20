@@ -26,6 +26,7 @@ import {
 } from "../../../../server/security";
 
 const verifySchema = z.object({
+  authMethod: z.enum(["siws", "message"]),
   nonce: z
     .string()
     .regex(/^[a-f0-9]{64}$/),
@@ -140,9 +141,11 @@ export async function POST(
           expectedAuthUrl: new URL(
             "/auth",
             getRequestOrigin(request)
-          ).toString()
+          ).toString(),
+          expectedMessage: challenge.message
         },
         {
+          authMethod: parsed.data.authMethod,
           walletAddress: parsed.data.walletAddress,
           account: {
             address: parsed.data.walletAddress,

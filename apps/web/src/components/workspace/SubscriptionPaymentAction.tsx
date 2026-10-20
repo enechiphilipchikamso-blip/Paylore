@@ -92,7 +92,7 @@ export function SubscriptionPaymentAction({
       if (!prepareResponse.ok) {
         throw new Error(
           prepareResponse.status === 503
-            ? "Devnet payment setup is incomplete. Check the approved subscription recipient and USDC mint configuration."
+            ? "Payment setup is incomplete. Check the approved subscription recipient and USDC mint configuration."
             : "Workspace activation could not be prepared. Please try again."
         );
       }
@@ -110,7 +110,10 @@ export function SubscriptionPaymentAction({
         );
       }
 
-      const transaction = await createSubscriptionPaymentTransaction(prepared);
+      const transaction = await createSubscriptionPaymentTransaction({
+        ...prepared,
+        workspaceId
+      });
       const wallet = await findAuthenticatedWallet(walletAddress);
       walletSubmissionStarted = true;
       const [sent] = await wallet.signAndSendTransaction({
@@ -151,7 +154,7 @@ export function SubscriptionPaymentAction({
       } else if (walletSubmissionStarted) {
         setSubmissionUncertain(true);
         setPartial(
-          "The wallet did not confirm whether it sent the payment. Check your wallet activity before trying again to avoid a duplicate payment."
+          "The wallet did not return a transaction confirmation. Check your wallet activity before trying again to avoid a duplicate payment."
         );
       } else {
         setError(message);

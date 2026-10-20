@@ -309,7 +309,7 @@ export function GasTankActions({
               <h3>Fund Gas Tank</h3>
               <p>
                 Funding is manual. Paylore does not automatically refill this balance.
-                Only SOL is accepted for network fees on Devnet.
+                Only SOL is accepted for network fees.
               </p>
               <label className="form-field">
                 <span>Amount in SOL</span>

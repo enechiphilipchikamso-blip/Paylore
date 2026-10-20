@@ -77,6 +77,7 @@ describe(
     } as const;
 
     const proof = {
+      authMethod: "siws" as const,
       walletAddress,
       account: {
         address: walletAddress,
@@ -97,8 +98,10 @@ describe(
       return verifyWalletProof(
         {
           challengeInput,
-          expectedAuthUrl:
-            "https://paylore.example/auth"
+          expectedAuthUrl: "https://paylore.example/auth",
+          expectedMessage: createSignInMessage(
+            challengeInput
+          ).toString()
         },
         {
           ...proof,
@@ -170,7 +173,8 @@ describe(
             privateKey
           );
         const proof = {
-          walletAddress: address,
+            authMethod: "siws" as const,
+            walletAddress: address,
           account: {
             address,
             publicKey:
@@ -193,16 +197,16 @@ describe(
             {
               challengeInput:
                 challenge.input,
-              expectedAuthUrl:
-                "https://paylore.example/auth"
+              expectedAuthUrl: "https://paylore.example/auth",
+              expectedMessage: challenge.message
             },
             proof
           )
         ).resolves.toBe(true);
 
         const verificationInput = {
-          expectedAuthUrl:
-            "https://paylore.example/auth"
+          expectedAuthUrl: "https://paylore.example/auth",
+          expectedMessage: challenge.message
         };
 
         const tamperedSignature =
@@ -270,5 +274,59 @@ describe(
         }
       }
     );
+
+    it("accepts an exact raw-message signature for wallets without SIWS", async () => {
+      const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+      const rawPublicKey = new Uint8Array(
+        publicKey
+          .export({ format: "der", type: "spki" })
+          .subarray(-32)
+      );
+      const address = encodeBase58(rawPublicKey);
+      const issuedAt = new Date();
+      const challenge = buildChallenge({
+        walletAddress: address,
+        nonce: "d".repeat(64),
+        issuedAt,
+        expirationTime: new Date(issuedAt.getTime() + 5 * 60 * 1000),
+        requestUrl: "https://paylore.example/api/auth/challenge"
+      });
+      const signedMessage = Buffer.from(challenge.message, "utf8");
+      const signature = sign(null, signedMessage, privateKey);
+      const proof = {
+        authMethod: "message" as const,
+        walletAddress: address,
+        account: {
+          address,
+          publicKey: Buffer.from(rawPublicKey).toString("base64"),
+          chains: ["solana:devnet"],
+          features: ["solana:signMessage"]
+        },
+        signedMessage: signedMessage.toString("base64"),
+        signature: signature.toString("base64")
+      };
+
+      await expect(
+        verifyWalletProof(
+          {
+            challengeInput: challenge.input,
+            expectedAuthUrl: "https://paylore.example/auth",
+            expectedMessage: challenge.message
+          },
+          proof
+        )
+      ).resolves.toBe(true);
+
+      await expect(
+        verifyWalletProof(
+          {
+            challengeInput: challenge.input,
+            expectedAuthUrl: "https://paylore.example/auth",
+            expectedMessage: `${challenge.message} altered`
+          },
+          proof
+        )
+      ).resolves.toBe(false);
+    });
   }
 );

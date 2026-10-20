@@ -7,6 +7,7 @@ import {
   getEmptyConfidentialTransferAccountInstructionPlan,
   getConfidentialWithdrawInstructionPlan
 } from "@solana-program/token-2022/confidential";
+import { buildWrappedUsdcUnwrapPlan } from "./token-wrap-transaction";
 import {
   TOKEN_2022_PROGRAM_ADDRESS,
   fetchMint,
@@ -27,6 +28,7 @@ import {
   createTransactionMessage,
   createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner,
+  fetchEncodedAccount,
   getBase58Decoder,
   getBase64EncodedWireTransaction,
   isSome,
@@ -147,7 +149,7 @@ async function waitForFinality(
       .send();
     const status = result.value[0];
     if (status?.err) {
-      throw new Error("The confidential-account transaction failed on Devnet.");
+      throw new Error("The confidential-account transaction failed on Solana.");
     }
     if (status?.confirmationStatus === "finalized") return;
     await new Promise((resolve) => window.setTimeout(resolve, 1_000));
@@ -393,4 +395,84 @@ export async function withdrawConfidentialBalance(
     keys.elgamalKeypair.secretKey.fill(0);
     keys.aeKey.fill(0);
   }
+}
+
+export async function unwrapWrappedUsdcToCircleUsdc(
+  wallet: Wallet,
+  wrappedMintAddress: string,
+  unwrappedMintAddress: string,
+  tokenWrapProgramAddress: string,
+  amountBaseUnits: bigint
+): Promise<{ signature: string; recipientTokenAccount: string }> {
+  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const owner = address(wallet.account.address);
+  const built = await buildWrappedUsdcUnwrapPlan({
+    ownerAddress: owner,
+    wrappedMintAddress,
+    unwrappedMintAddress,
+    tokenWrapProgramAddress,
+    amount: amountBaseUnits
+  });
+  const { data: source } = await fetchToken(
+    rpc,
+    address(built.sourceTokenAccount)
+  );
+  if (
+    source.owner !== owner ||
+    source.mint !== address(wrappedMintAddress)
+  ) {
+    throw new Error(
+      "The public wrapped-USDC token account does not belong to this wallet."
+    );
+  }
+  if (source.amount < amountBaseUnits) {
+    throw new Error(
+      "The public wrapped-USDC balance is lower than the requested unwrap amount."
+    );
+  }
+  const destinationBeforeInfo = await fetchEncodedAccount(
+    rpc,
+    address(built.destinationTokenAccount)
+  );
+  const destinationBefore = destinationBeforeInfo.exists
+    ? (await fetchToken(rpc, address(built.destinationTokenAccount))).data
+        .amount
+    : 0n;
+
+  const signatures = await executePlan(wallet, built.plan);
+  const signature = signatures.at(-1);
+  if (!signature) {
+    throw new Error("The Token Wrap transaction did not return a signature.");
+  }
+  let destination = source;
+  let sourceAfter = source;
+  try {
+    destination = (await fetchToken(
+      rpc,
+      address(built.destinationTokenAccount)
+    )).data;
+    sourceAfter = (await fetchToken(
+      rpc,
+      address(built.sourceTokenAccount)
+    )).data;
+  } catch (error) {
+    throw new Error(
+      `The Token Wrap transaction finalized, but post-transaction balances could not be reconciled. Do not submit a duplicate unwrap. Transaction: ${signature}`,
+      { cause: error }
+    );
+  }
+  if (
+    destination.owner !== owner ||
+    destination.mint !== address(unwrappedMintAddress) ||
+    source.amount - sourceAfter.amount !== amountBaseUnits ||
+    destination.amount - destinationBefore !== amountBaseUnits
+  ) {
+    throw new Error(
+      `The unwrap finalized, but the exact wrapped-token debit and Circle-USDC credit could not be reconciled. Do not submit a duplicate unwrap. Transaction: ${signature}`
+    );
+  }
+  return {
+    signature,
+    recipientTokenAccount: built.destinationTokenAccount
+  };
 }

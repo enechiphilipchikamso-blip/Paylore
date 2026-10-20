@@ -110,7 +110,7 @@ export async function findAuthenticatedWallet(walletAddress: string): Promise<{
     !feature.supportedTransactionVersions.includes(0)
   ) {
     throw new Error(
-      "This wallet does not support a Devnet transaction for this operation."
+      "This wallet does not support a transaction on the selected Solana network."
     );
   }
   const registeredAccount = wallet.accounts.find(

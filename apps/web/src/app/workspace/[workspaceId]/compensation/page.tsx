@@ -4,7 +4,8 @@ import {
   findWorkspaceContributorByWallet,
   getContributorConfidentialAccount,
   getContributorOffboardingStatus,
-  hasOpenContributorPayrollAllocations
+  hasOpenContributorPayrollAllocations,
+  listContributorPayrollAllocations
 } from "@paylore/database";
 import { ContributorCompensation } from "../../../../components/workspace/ContributorCompensation";
 import {
@@ -38,7 +39,7 @@ export default async function ContributorCompensationPage({
     context.session.walletAddress
   );
   if (!contributor || contributor.lifecycle === "left") notFound();
-  const [account, hasOpenAllocations, offboarding] = await Promise.all([
+  const [account, hasOpenAllocations, offboarding, allocations] = await Promise.all([
     getContributorConfidentialAccount(
       context.db,
       workspaceId,
@@ -50,6 +51,11 @@ export default async function ContributorCompensationPage({
       contributor.id
     ),
     getContributorOffboardingStatus(
+      context.db,
+      workspaceId,
+      contributor.id
+    ),
+    listContributorPayrollAllocations(
       context.db,
       workspaceId,
       contributor.id
@@ -72,12 +78,26 @@ export default async function ContributorCompensationPage({
         workspaceId={workspaceId}
         walletAddress={context.session.walletAddress}
         mint={config.PAYLORE_WRAPPED_USDC_MINT ?? null}
+        circleMint={config.PAYLORE_SUBSCRIPTION_USDC_MINT ?? null}
+        tokenWrapProgramId={config.TOKEN_WRAP_PROGRAM_ID}
+        tokenWrapUnwrapEnabled={config.TOKEN_WRAP_UNWRAP_ENABLED}
         account={account ? {
           tokenAccountAddress: account.tokenAccountAddress,
           status: account.status,
           setupTransactionSignature: account.setupTransactionSignature,
           closeTransactionSignature: account.closeTransactionSignature
         } : null}
+        allocations={allocations.map((allocation) => ({
+          id: allocation.id,
+          runId: allocation.runId,
+          runCreatedAt: allocation.runCreatedAt.toISOString(),
+          amountBaseUnits: allocation.amountBaseUnits,
+          status: allocation.status,
+          claimAddress: allocation.claimAddress,
+          transactionSignature: allocation.transactionSignature,
+          claimedAt: allocation.claimedAt?.toISOString() ?? null,
+          recoveredAt: allocation.recoveredAt?.toISOString() ?? null
+        }))}
         hasOpenAllocations={hasOpenAllocations}
         offboardingRequested={offboarding?.status === "requested"}
       />

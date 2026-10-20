@@ -68,6 +68,7 @@ id.json
 *.pem
 *.key
 *private-key*
+/.paylore-envelope-rotation.json
 
 
 # Runtime data

@@ -61,12 +61,12 @@ export function WorkspaceActivation({
               {workspaceName} is locked
             </h1>
             <p>
-              Create the workspace now and activate it with a one-time wallet
-              payment. Creating a workspace does not activate billing.
+              The workspace has now been created. Activate it with a one-time
+              wallet payment.
             </p>
             <div className="workspace-lock__plan">
               <strong className="financial-value">$49 / month</strong>
-              <span>USDC on Solana Devnet</span>
+              <span>USDC on Solana</span>
               <span>Manual renewal · no automatic charges</span>
             </div>
             {role === "organization_admin" ? (
@@ -85,7 +85,7 @@ export function WorkspaceActivation({
                 {!paymentConfigured ? (
                   <div className="state-callout" data-state="partial" role="status">
                     <span className="state-callout__signal" aria-hidden="true" />
-                    <p>Payment setup is incomplete. The approved subscription recipient and Devnet USDC mint must be configured before activation.</p>
+                    <p>Payment setup is incomplete. The approved subscription recipient and USDC mint must be configured before activation.</p>
                   </div>
                 ) : null}
               </>
