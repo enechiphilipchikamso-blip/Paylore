@@ -317,13 +317,16 @@ test("site menu marks the current page with a blended accent line", async ({
   ).not.toHaveAttribute("aria-current", "page");
 });
 
-test("legal pages show the approved effective date", async ({
+test("legal pages show the approved effective date and automatic last-updated date", async ({
   page
 }) => {
+  const dateLine =
+    /^Effective Date: October 12, 2026 \| Last Updated: [A-Z][a-z]+ \d{1,2}, \d{4}$/;
+
   await page.goto("/terms");
   await expect(
-    page.getByText("Effective date: October 12, 2026", { exact: true })
-  ).toBeVisible();
+    page.locator(".legal-copy__effective")
+  ).toHaveText(dateLine);
   await expect(
     page.locator(".legal-copy").getByText(
       "These Terms of Service are effective as of October 12, 2026.",
@@ -337,8 +340,8 @@ test("legal pages show the approved effective date", async ({
 
   await page.goto("/privacy");
   await expect(
-    page.getByText("Effective date: October 12, 2026", { exact: false })
-  ).toBeVisible();
+    page.locator(".legal-copy__effective")
+  ).toHaveText(dateLine);
   await expect(
     page.locator(".legal-copy").getByText(
       "The Paylore Privacy Policy is effective as of October 12, 2026.",

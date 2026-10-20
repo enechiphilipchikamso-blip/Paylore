@@ -1,6 +1,9 @@
 import { PublicPage } from "../../components/public/PublicPage";
 import { createPublicMetadata } from "../site";
-import { POLICY_EFFECTIVE_DATE } from "../legal-policy";
+import {
+  getPolicyLastUpdatedDate,
+  POLICY_EFFECTIVE_DATE
+} from "../legal-policy";
 
 const terms = [
   {
@@ -79,6 +82,8 @@ export const metadata = createPublicMetadata({
 export const dynamic = "force-dynamic";
 
 export default function TermsPage() {
+  const lastUpdatedDate = getPolicyLastUpdatedDate();
+
   return (
     <PublicPage
       eyebrow="TERMS"
@@ -87,7 +92,8 @@ export default function TermsPage() {
     >
       <article className="surface-card prose legal-copy">
         <p className="legal-copy__effective">
-          Effective date: {POLICY_EFFECTIVE_DATE}
+          Effective Date: {POLICY_EFFECTIVE_DATE} | Last Updated:{" "}
+          {lastUpdatedDate}
         </p>
         <p>
           These Terms of Service are effective as of {POLICY_EFFECTIVE_DATE}.
