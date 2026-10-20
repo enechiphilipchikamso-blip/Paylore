@@ -76,6 +76,16 @@ export default async function AppGatewayPage() {
   const finance = memberships.filter(
     (membership) => membership.role === "finance_auditor"
   );
+  const sortByWorkspaceName = <
+    T extends { workspaceName: string; workspaceId: string }
+  >(items: T[]) =>
+    [...items].sort((left, right) =>
+      left.workspaceName.localeCompare(
+        right.workspaceName,
+        undefined,
+        { sensitivity: "base", numeric: true }
+      ) || left.workspaceId.localeCompare(right.workspaceId)
+    );
 
   return (
     <div className="protected-wrap">
@@ -99,67 +109,67 @@ export default async function AppGatewayPage() {
         </p>
       </header>
 
-      <div className="workspace-dashboard">
-        <section
-          className="workspace-dashboard__list"
-          aria-labelledby="workspace-list-heading"
-        >
-          <div className="workspace-dashboard__section-heading">
-            <div>
+      <div className="workspace-memberships">
+        <div className="workspace-dashboard">
+          <section
+            className="workspace-dashboard__list"
+            aria-labelledby="workspace-list-heading"
+          >
+            <div className="workspace-dashboard__section-heading">
               <h2 id="workspace-list-heading">Your workspace memberships</h2>
             </div>
-          </div>
 
-          {memberships.length === 0 ? (
-            <div className="workspace-empty-state">
-              <h3>No workspace membership yet</h3>
-              <p>Create a workspace to begin.</p>
-            </div>
-          ) : null}
-          {[
-            { title: "Workspaces as Administrator", items: administrators },
-            { title: "Workspaces as Contributor", items: contributors },
-            { title: "Workspaces as Finance/Auditor", items: finance }
-          ].map((group) => group.items.length > 0 ? (
-            <section className="workspace-role-group" key={group.title}>
-              <h3>{group.title}</h3>
-              <div className="workspace-grid">
-                {group.items.map((membership) => (
-                  <article className="workspace-card" key={membership.workspaceId}>
-                    <div>
-                      <h4>{membership.workspaceName}</h4>
-                      <span className="workspace-card__role">
-                        {WORKSPACE_ROLE_LABELS[membership.role]}
-                      </span>
-                    </div>
-                    <OpenWorkspaceLink workspaceId={membership.workspaceId} />
-                  </article>
-                ))}
+            {memberships.length === 0 ? (
+              <div className="workspace-empty-state">
+                <h3>No workspace membership yet</h3>
+                <p>Create a workspace to begin.</p>
               </div>
-            </section>
-          ) : null)}
-        </section>
+            ) : null}
+            {[
+              { title: "Workspaces as Administrator", items: administrators },
+              { title: "Workspaces as Contributor", items: contributors },
+              { title: "Workspaces as Finance/Auditor", items: finance }
+            ].map((group) => group.items.length > 0 ? (
+              <section className="workspace-role-group" key={group.title}>
+                <h3>{group.title}</h3>
+                <div className="workspace-grid">
+                  {sortByWorkspaceName(group.items).map((membership) => (
+                    <article className="workspace-card" key={membership.workspaceId}>
+                      <div>
+                        <h4>{membership.workspaceName}</h4>
+                        <span className="workspace-card__role">
+                          {WORKSPACE_ROLE_LABELS[membership.role]}
+                        </span>
+                      </div>
+                      <OpenWorkspaceLink workspaceId={membership.workspaceId} />
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null)}
+          </section>
 
-        <section
-          className="invite-state workspace-create-card"
-          id="create-workspace"
-          aria-labelledby="create-workspace-heading"
-        >
-          <div>
-            <p className="eyebrow">
-              Add a workspace
-            </p>
-            <h2 id="create-workspace-heading">
-              Create a workspace
-            </h2>
-            <p>
-              Set up another workspace for a separate team or
-              organization.
-            </p>
-          </div>
+          <section
+            className="invite-state workspace-create-card"
+            id="create-workspace"
+            aria-labelledby="create-workspace-heading"
+          >
+            <div>
+              <p className="eyebrow">
+                Add a workspace
+              </p>
+              <h2 id="create-workspace-heading">
+                Create a workspace
+              </h2>
+              <p>
+                Set up another workspace for a separate team or
+                organization.
+              </p>
+            </div>
 
-          <CreateWorkspaceForm />
-        </section>
+            <CreateWorkspaceForm />
+          </section>
+        </div>
       </div>
 
       <div className="protected-actions workspace-dashboard__footer">

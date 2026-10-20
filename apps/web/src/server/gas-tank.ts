@@ -234,13 +234,18 @@ export async function verifyWorkspaceGasTankFunding(
     body: "A finalized manual funding transaction was recorded for this workspace Gas Tank.",
     destination: `/workspace/${input.workspaceId}/gas-tank`
   });
-  await updateWorkspaceGasTankBalance(
+  const refreshedGasTank = await getWorkspaceGasTankSnapshot(
     db,
-    input.workspaceId,
-    gasTank.balanceLamports
+    input.workspaceId
   );
+  if (!refreshedGasTank) {
+    throw new Error(
+      "The finalized Gas Tank funding was recorded, but the current balance could not be reconciled."
+    );
+  }
   return {
     status: "finalized" as const,
-    duplicate: !ledger.created
+    duplicate: !ledger.created,
+    balanceLamports: refreshedGasTank.balanceLamports
   };
 }

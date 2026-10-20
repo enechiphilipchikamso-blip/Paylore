@@ -141,7 +141,12 @@ export function CreateWorkspaceForm() {
         disabled={submitting}
       >
         {submitting
-          ? "Creating workspace…"
+          ? (
+            <span className="loading-indicator">
+              <span className="loading-indicator__icon" aria-hidden="true" />
+              Creating workspace…
+            </span>
+          )
           : "Create workspace"}
       </button>
 

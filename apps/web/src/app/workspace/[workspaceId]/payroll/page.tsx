@@ -36,11 +36,13 @@ function payrollStatus(status: string) {
     case "commit_pending":
       return "Confirmed; on-chain commitment pending";
     case "submitting":
-      return "Submitting to Devnet";
+      return "Submitting to Solana";
     case "confirming":
       return "Waiting for finality";
     case "complete":
       return "Complete";
+    case "committed":
+      return "Claim PDAs finalized; settlement pending";
     case "partial_failure":
       return "Partially completed; reconciliation required";
     case "cancelled":

@@ -107,20 +107,22 @@ export function BillingActions({
         <div className="billing-payment-form">
           <h2>{status === "archived" ? "Renew workspace" : "Activate workspace"}</h2>
           <p>
-            Approve a one-time payment of exactly 49 USDC on Devnet using the
-            wallet you authenticated with. Future renewals require a separate
-            payment; Paylore does not pull funds automatically.
+            Review a one-time payment of exactly 49 USDC to the Paylore
+            recipient address using the wallet you authenticated with. Future
+            renewals require a separate payment; Paylore does not pull funds
+            automatically.
           </p>
           {paymentRecipient && paymentMint ? (
             <dl className="billing-payment-target">
-              <div><dt>Network</dt><dd>Solana Devnet</dd></div>
+              <div><dt>Network</dt><dd>Solana</dd></div>
+              <div><dt>Amount</dt><dd>49 USDC</dd></div>
               <div><dt>Recipient</dt><dd><code>{paymentRecipient}</code></dd></div>
               <div><dt>USDC mint</dt><dd><code>{paymentMint}</code></dd></div>
             </dl>
           ) : (
             <div className="state-callout" data-state="partial" role="status">
               <span className="state-callout__signal" aria-hidden="true" />
-              <p>Payment setup is incomplete. The subscription recipient and approved Devnet USDC mint must be configured before payment can be submitted.</p>
+              <p>Payment setup is incomplete. The subscription recipient and approved USDC mint must be configured before payment can be submitted.</p>
             </div>
           )}
           <SubscriptionPaymentAction

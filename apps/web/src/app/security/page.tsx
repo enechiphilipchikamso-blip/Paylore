@@ -48,8 +48,9 @@ export default function SecurityPage() {
         </p>
         <h2>Provider security</h2>
         <p>
-          Paylore uses Helius as its primary RPC/webhook provider and QuickNode
-          as its secondary provider. Provider credentials remain server-side.
+          Paylore uses Helius for webhook delivery and primary RPC. QuickNode
+          is retained only as a secondary RPC provider. Provider credentials
+          remain server-side.
         </p>
         <h2>Blockchain boundary</h2>
         <p>

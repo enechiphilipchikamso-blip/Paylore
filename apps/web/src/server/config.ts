@@ -76,6 +76,9 @@ const payloreConfigSchema = z.object({
   PAYLORE_SUBSCRIPTION_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_WRAPPED_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_PAYROLL_PROGRAM_ID: optionalSolanaAddressSchema,
+  PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: z
+    .enum(["true", "false"])
+    .default("false"),
   PAYLORE_RESERVE_ENVELOPE_KEY: z
     .string()
     .optional(),
@@ -85,9 +88,6 @@ const payloreConfigSchema = z.object({
       envelopeKeySchema.optional()
     ),
   PAYLORE_HELIUS_WEBHOOK_SECRET: z
-    .string()
-    .optional(),
-  PAYLORE_QUICKNODE_WEBHOOK_SECRET: z
     .string()
     .optional()
 }).superRefine((config, context) => {
@@ -107,6 +107,7 @@ const payloreConfigSchema = z.object({
 
 export type PayloreConfig = z.infer<typeof payloreConfigSchema> & {
   TOKEN_WRAP_PROGRAM_ID: ReturnType<typeof getTokenWrapProgramId>;
+  TOKEN_WRAP_UNWRAP_ENABLED: boolean;
 };
 
 export class ConfigurationError extends Error {
@@ -182,7 +183,9 @@ export function parsePayloreConfig(
 
   return {
     ...result.data,
-    TOKEN_WRAP_PROGRAM_ID: getTokenWrapProgramId(result.data.PAYLORE_NETWORK)
+    TOKEN_WRAP_PROGRAM_ID: getTokenWrapProgramId(result.data.PAYLORE_NETWORK),
+    TOKEN_WRAP_UNWRAP_ENABLED:
+      result.data.PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED === "true"
   };
 }
 

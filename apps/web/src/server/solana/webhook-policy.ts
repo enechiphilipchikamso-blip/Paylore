@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 const eventSchema = z.object({
@@ -8,7 +7,7 @@ const eventSchema = z.object({
 });
 
 export type NormalizedWebhookEvent = {
-  provider: "helius" | "quicknode";
+  provider: "helius";
   providerEventId: string;
   transactionSignature: string;
   transactionSlot: string | null;
@@ -20,36 +19,7 @@ export type NormalizedWebhookEvent = {
   };
 };
 
-export function verifyQuickNodeWebhookHmac(input: {
-  secret: string;
-  nonce: string;
-  timestamp: string;
-  payload: string;
-  signature: string;
-}): boolean {
-  if (
-    !input.secret ||
-    !input.nonce ||
-    !input.timestamp ||
-    !/^[a-f0-9]{64}$/i.test(input.signature)
-  ) {
-    return false;
-  }
-
-  const expected = createHmac("sha256", Buffer.from(input.secret, "utf8"))
-    .update(`${input.nonce}${input.timestamp}${input.payload}`, "utf8")
-    .digest();
-  const provided = Buffer.from(input.signature, "hex");
-  return (
-    provided.length === expected.length &&
-    timingSafeEqual(expected, provided)
-  );
-}
-
-function normalizeEvents(
-  payload: unknown,
-  provider: NormalizedWebhookEvent["provider"]
-): NormalizedWebhookEvent[] | null {
+function normalizeEvents(payload: unknown): NormalizedWebhookEvent[] | null {
   const parsed = z.array(eventSchema).min(1).max(100).safeParse(payload);
   if (!parsed.success) return null;
 
@@ -57,7 +27,7 @@ function normalizeEvents(
   for (const event of parsed.data) {
     if (uniqueEvents.has(event.signature)) continue;
     uniqueEvents.set(event.signature, {
-      provider,
+      provider: "helius",
       providerEventId: event.signature,
       transactionSignature: event.signature,
       transactionSlot: event.slot === undefined ? null : String(event.slot),
@@ -76,14 +46,5 @@ export function normalizeHeliusWebhookPayload(
   payload: unknown
 ): NormalizedWebhookEvent[] | null {
   if (!Array.isArray(payload)) return null;
-  return normalizeEvents(payload, "helius");
-}
-
-export function normalizeQuickNodeWebhookPayload(
-  payload: unknown
-): NormalizedWebhookEvent[] | null {
-  return normalizeEvents(
-    Array.isArray(payload) ? payload : [payload],
-    "quicknode"
-  );
+  return normalizeEvents(payload);
 }

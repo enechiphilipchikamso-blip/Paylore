@@ -133,6 +133,27 @@ export async function verifyConfidentialAccountSetup(
       "The finalized transaction does not configure this wallet's confidential Token-2022 account."
     );
   }
+  const accountInfo = await readSolanaRpc<{
+    value: {
+      owner?: unknown;
+      data?: unknown;
+    } | null;
+  }>("getAccountInfo", [
+    tokenAccount,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  if (
+    !accountInfo.value ||
+    accountInfo.value.owner !== TOKEN_2022_PROGRAM_ADDRESS ||
+    !Array.isArray(accountInfo.value.data) ||
+    typeof accountInfo.value.data[0] !== "string" ||
+    accountInfo.value.data[0].length === 0 ||
+    accountInfo.value.data[1] !== "base64"
+  ) {
+    throw new Error(
+      "The finalized confidential-account setup could not be reconciled to an existing Token-2022 account."
+    );
+  }
   return tokenAccount;
 }
 
@@ -164,6 +185,17 @@ export async function verifyConfidentialAccountClose(
   if (!hasCloseInstruction) {
     throw new Error(
       "The finalized transaction does not close this wallet's confidential Token-2022 account to its owner."
+    );
+  }
+  const accountInfo = await readSolanaRpc<{
+    value: unknown | null;
+  }>("getAccountInfo", [
+    tokenAccount,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  if (accountInfo.value !== null) {
+    throw new Error(
+      "The confidential Token-2022 account still exists after the close transaction finalized."
     );
   }
   return tokenAccount;

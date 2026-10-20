@@ -1,5 +1,9 @@
 import { PublicPage } from "../../components/public/PublicPage";
 import { createPublicMetadata } from "../site";
+import {
+  getPolicyLastUpdatedDate,
+  POLICY_EFFECTIVE_DATE
+} from "../legal-policy";
 
 const terms = [
   {
@@ -71,22 +75,29 @@ const terms = [
 export const metadata = createPublicMetadata({
   title: "Terms of Service",
   description:
-    "These Terms of Service are effective as of October 12, 2026.",
+    `These Terms of Service are effective as of ${POLICY_EFFECTIVE_DATE}.`,
   path: "/terms"
 });
 
+export const dynamic = "force-dynamic";
+
 export default function TermsPage() {
+  const lastUpdatedDate = getPolicyLastUpdatedDate();
+
   return (
     <PublicPage
       eyebrow="TERMS"
       title="Terms of Service"
-      description="These Terms of Service are effective as of October 12, 2026."
+      description={`These Terms of Service are effective as of ${POLICY_EFFECTIVE_DATE}.`}
     >
       <article className="surface-card prose legal-copy">
         <p className="legal-copy__effective">
-          Effective date: October 12, 2026
+          Effective Date: {POLICY_EFFECTIVE_DATE} | Last Updated:{" "}
+          {lastUpdatedDate}
         </p>
-        <p>These Terms of Service are effective as of October 12, 2026.</p>
+        <p>
+          These Terms of Service are effective as of {POLICY_EFFECTIVE_DATE}.
+        </p>
         {terms.map((section) => (
           <section key={section.title}>
             <h2>{section.title}</h2>
