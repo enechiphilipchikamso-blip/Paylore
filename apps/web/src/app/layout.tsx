@@ -50,6 +50,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase,
+  manifest: "/manifest.webmanifest",
   title: {
     default: "Paylore | Private on-chain payroll",
     template: "%s | Paylore"
