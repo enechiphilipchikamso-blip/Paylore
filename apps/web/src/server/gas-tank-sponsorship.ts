@@ -176,22 +176,29 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       };
     }));
 
-    const existing = await readSolanaRpc<{ value: Array<unknown | null> }>(
+    const accountAddresses = [workspace, ...derivedClaims.map((claim) => claim.claimAddress)];
+    const existing = await readSolanaRpc<{
+      value: Array<{ owner?: string; data?: unknown } | null>
+    }>(
       "getMultipleAccounts",
-      [derivedClaims.map((claim) => claim.claimAddress), {
+      [accountAddresses, {
         commitment: "finalized",
         encoding: "base64"
       }]
     );
-    if (!Array.isArray(existing.value) || existing.value.length !== derivedClaims.length) {
+    if (!Array.isArray(existing.value) || existing.value.length !== accountAddresses.length) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_state_unavailable");
     }
-    if (existing.value.some((account) => account !== null)) {
+    const existingWorkspace = existing.value[0];
+    if (existingWorkspace && existingWorkspace.owner !== input.programId) {
+      throw new GasTankSponsorshipPolicyError("sponsored_workspace_pda_owner_mismatch");
+    }
+    if (existing.value.slice(1).some((account) => account !== null)) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_already_exists");
     }
 
     const instructionPlan = [
-      initializeInstruction,
+      ...(!existingWorkspace ? [initializeInstruction] : []),
       ...derivedClaims.map((claim) => claim.instruction)
     ];
     assertAllowedPayrollInstructionSet({
@@ -209,6 +216,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       })),
       initializeDiscriminator,
       createClaimDiscriminator,
+      includeWorkspaceInitialization: !existingWorkspace,
       systemProgramAddress: SYSTEM_PROGRAM_ADDRESS
     });
 
