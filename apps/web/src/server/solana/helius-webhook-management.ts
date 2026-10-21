@@ -2,7 +2,7 @@ import "server-only";
 
 export const PAYLORE_HELIUS_WEBHOOK_URL =
   "https://paylore.netlify.app/api/webhooks/helius";
-const WEBHOOKS_API_BASE = "https://api.helius.xyz/v0/webhooks";
+const WEBHOOKS_API_BASE = "https://api-mainnet.helius-rpc.com/v0/webhooks";
 const MAX_MONITORED_ADDRESSES = 100_000;
 const ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -101,13 +101,9 @@ function sameAddressSet(current: unknown, desired: readonly string[]): boolean {
 }
 
 function monitorsAllTransactionTypes(current: unknown): boolean {
-  return (
-    Array.isArray(current) &&
-    (
-      current.length === 0 ||
-      (current.length === 1 && current[0] === "ANY")
-    )
-  );
+  return Array.isArray(current) &&
+    current.length === 1 &&
+    current[0] === "ANY";
 }
 
 function matchesDesiredConfig(
@@ -124,8 +120,8 @@ function matchesDesiredConfig(
 
 /**
  * Read, reconcile, and read back the single existing Helius webhook. Empty
- * transactionTypes means all event types in the current Helius API; the explicit
- * enhancedDevnet type keeps the subscription on Devnet.
+ * The explicit ANY transaction filter and enhancedDevnet type keep the webhook
+ * aligned with the dashboard's all-transactions Devnet configuration.
  */
 export async function reconcileHeliusWebhook(input: {
   managementApiKey: string;
@@ -157,7 +153,7 @@ export async function reconcileHeliusWebhook(input: {
       webhookURL: PAYLORE_HELIUS_WEBHOOK_URL,
       webhookType: "enhancedDevnet",
       accountAddresses: addresses,
-      transactionTypes: [],
+      transactionTypes: ["ANY"],
       authHeader
     };
     if (typeof current.encoding === "string") body.encoding = current.encoding;

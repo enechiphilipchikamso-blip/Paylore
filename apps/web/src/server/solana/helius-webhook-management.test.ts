@@ -16,7 +16,7 @@ const baseWebhook = {
   webhookURL: PAYLORE_HELIUS_WEBHOOK_URL,
   webhookType: "enhancedDevnet",
   accountAddresses: [program, reserve],
-  transactionTypes: [],
+  transactionTypes: ["ANY"],
   authHeader: `Bearer ${secret}`,
   encoding: "jsonParsed",
   txnStatus: "all",
@@ -56,6 +56,7 @@ describe("Helius webhook reconciliation", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1]?.method).toBe("GET");
     expect(String(fetcher.mock.calls[0][0])).toContain("api-key=test-management-api-key");
+    expect(String(fetcher.mock.calls[0][0])).toContain("api-mainnet.helius-rpc.com/v0/webhooks");
   });
 
   it("updates a changed dynamic address set and verifies the provider read-back", async () => {
@@ -83,7 +84,7 @@ describe("Helius webhook reconciliation", () => {
     expect(body.accountAddresses).toEqual([program, reserve]);
     expect(body.webhookURL).toBe(PAYLORE_HELIUS_WEBHOOK_URL);
     expect(body.webhookType).toBe("enhancedDevnet");
-    expect(body.transactionTypes).toEqual([]);
+    expect(body.transactionTypes).toEqual(["ANY"]);
     expect(body.authHeader).toBe(`Bearer ${secret}`);
     expect(body.encoding).toBe("jsonParsed");
     expect(body.txnStatus).toBe("all");
