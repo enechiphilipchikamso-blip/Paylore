@@ -4241,3 +4241,15 @@ export async function cancelPayrollDraft(
     return { status: "cancelled" as const, runId };
   });
 }
+
+export async function getSubscriptionPaymentAttemptBySignature(
+  db: Database,
+  signature: string
+) {
+  const rows = await db
+    .select()
+    .from(subscriptionPaymentAttempts)
+    .where(eq(subscriptionPaymentAttempts.signature, signature))
+    .limit(1);
+  return rows[0] ?? null;
+}
