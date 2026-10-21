@@ -34,23 +34,23 @@ export function SubscriptionPaymentAction({
   const [progress, setProgress] = useState<string | null>(null);
 
   async function verifyPayment(signature: string): Promise<boolean> {
-    const response = await fetch(
-      `/api/workspaces/${workspaceId}/billing`,
-      {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ signature })
-      }
-    );
-    if (!response.ok) {
-      return false;
-    }
+    const endpoint = attemptId
+      ? `/api/workspaces/${workspaceId}/billing/attempt`
+      : `/api/workspaces/${workspaceId}/billing`;
+    const body = attemptId ? { attemptId, signature } : { signature };
+    const response = await fetch(endpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const result = await response.json().catch(() => null) as { status?: string } | null;
+    if (!response.ok || (attemptId && result?.status !== "active")) return false;
     setPendingSignature(null);
+    setSubmissionUncertain(false);
+    setProgress(null);
     onSuccess?.();
-    if (refreshOnSuccess) {
-      router.refresh();
-    }
+    if (refreshOnSuccess) router.refresh();
     return true;
   }
 
@@ -71,6 +71,44 @@ export function SubscriptionPaymentAction({
         "Paylore could not check the transaction yet. Retry verification; do not send another payment."
       );
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reconcileAttempt() {
+    if (!attemptId) {
+      setPartial("This payment attempt has no saved reference. Check wallet activity before starting another payment.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setPartial(null);
+    setProgress("Checking finalized wallet history for the original payment. Do not submit a duplicate.");
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/billing/attempt`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ attemptId })
+      });
+      const result = await response.json().catch(() => null) as { status?: string; error?: string } | null;
+      if (response.ok && result?.status === "active") {
+        setSubmissionUncertain(false);
+        setPendingSignature(null);
+        setPartial(null);
+        onSuccess?.();
+        if (refreshOnSuccess) router.refresh();
+      } else if (response.ok && result?.status === "safe_to_retry") {
+        setSubmissionUncertain(false);
+        setPendingSignature(null);
+        setPartial("The original blockhash expired, and finalized wallet history contains no matching payment. You can safely start a new activation attempt.");
+      } else {
+        setPartial("The original payment is not yet resolved. Do not submit another payment; check status again shortly.");
+      }
+    } catch {
+      setPartial("Paylore could not reconcile the original payment. Do not submit another payment until its status is resolved.");
+    } finally {
+      setProgress(null);
       setBusy(false);
     }
   }
@@ -139,6 +177,7 @@ export function SubscriptionPaymentAction({
       const signature = subscriptionPaymentSignature(sent.signature);
       walletSubmissionStarted = false;
       setPendingSignature(signature);
+      setProgress("Payment submitted. Waiting for finalized verification…");
       let verified = false;
       try {
         verified = await verifyPayment(signature);
@@ -165,7 +204,7 @@ export function SubscriptionPaymentAction({
       } else if (walletSubmissionStarted) {
         setSubmissionUncertain(true);
         setPartial(
-          "The wallet did not return a transaction confirmation. Check your wallet activity before trying again to avoid a duplicate payment."
+          "The wallet did not confirm whether it sent the payment. Check your wallet activity before trying again to avoid a duplicate payment. Paylore will reconcile this attempt before allowing a retry."
         );
       } else {
         setProgress(null);
@@ -206,10 +245,10 @@ export function SubscriptionPaymentAction({
       ) : submissionUncertain ? (
         <button
           className="button button--secondary"
-          onClick={() => void activate()}
+          onClick={() => void reconcileAttempt()}
           type="button"
         >
-          I checked my wallet activity — please try again
+          Check payment status
         </button>
       ) : (
         <button
