@@ -2048,8 +2048,8 @@ ul {
 
 .workspace-dashboard__section-heading {
   display: grid;
-  justify-items: center;
-  text-align: center;
+  justify-items: start;
+  text-align: left;
   padding-block: var(--space-2);
 }
 
