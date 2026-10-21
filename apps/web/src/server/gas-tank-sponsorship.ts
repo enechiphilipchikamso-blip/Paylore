@@ -155,7 +155,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       const claimIdBytes = decodeHex32(claim.claimId);
       const contributor = address(claim.contributorAddress);
       const claimAddress = await deriveClaimAddress(workspace, contributor, claimIdBytes, programId);
-      if (claimAddress !== claim.claimAddress) {
+      if (claim.claimAddress && claimAddress !== claim.claimAddress) {
         throw new GasTankSponsorshipPolicyError("sponsored_claim_address_mismatch");
       }
       return {

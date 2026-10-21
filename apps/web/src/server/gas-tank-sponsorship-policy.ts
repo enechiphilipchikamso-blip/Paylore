@@ -1,6 +1,5 @@
 import {
   AccountRole,
-  type Address
 } from "@solana/kit";
 
 export const MAX_SPONSORED_CLAIMS = 4;
@@ -14,7 +13,7 @@ const TEXT = new TextEncoder();
 export type SponsoredClaimIntent = {
   claimId: string;
   contributorAddress: string;
-  claimAddress: string;
+  claimAddress?: string;
 };
 
 export class GasTankSponsorshipPolicyError extends Error {
@@ -58,14 +57,11 @@ function encodeString(value: string): Uint8Array {
 function expectInstructionAccount(
   actual: unknown,
   expectedAddress: string,
-  expectedSigner: boolean
+  expectedRole: AccountRole
 ): boolean {
   if (!actual || typeof actual !== "object") return false;
   const account = actual as { address?: unknown; role?: unknown };
-  const signer =
-    account.role === AccountRole.WRITABLE_SIGNER ||
-    account.role === AccountRole.READONLY_SIGNER;
-  return account.address === expectedAddress && signer === expectedSigner;
+  return account.address === expectedAddress && account.role === expectedRole;
 }
 
 export function assertSponsoredClaimIntent(input: {
@@ -108,7 +104,8 @@ export function assertSponsoredClaimIntent(input: {
   }
   for (const claim of input.claims) {
     hex32(claim.claimId);
-    if (!claim.contributorAddress || !claim.claimAddress) {
+    if (!claim.contributorAddress ||
+        (claim.claimAddress !== undefined && !claim.claimAddress)) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_mapping_invalid");
     }
   }
@@ -154,9 +151,9 @@ export function assertAllowedPayrollInstructionSet(input: {
         input.workspaceSeed
       )
     ) ||
-    !expectInstructionAccount(init.accounts[0], input.authorityAddress, true) ||
-    !expectInstructionAccount(init.accounts[1], input.workspaceAddress, false) ||
-    !expectInstructionAccount(init.accounts[2], input.systemProgramAddress, false)
+    !expectInstructionAccount(init.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
+    !expectInstructionAccount(init.accounts[1], input.workspaceAddress, AccountRole.WRITABLE) ||
+    !expectInstructionAccount(init.accounts[2], input.systemProgramAddress, AccountRole.READONLY)
   ) {
       throw new GasTankSponsorshipPolicyError("sponsored_initialize_instruction_denied");
     }
@@ -183,11 +180,11 @@ export function assertAllowedPayrollInstructionSet(input: {
           commitment
         )
       ) ||
-      !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, true) ||
-      !expectInstructionAccount(instruction.accounts[1], claim.contributorAddress, false) ||
-      !expectInstructionAccount(instruction.accounts[2], input.workspaceAddress, false) ||
-      !expectInstructionAccount(instruction.accounts[3], claim.claimAddress, false) ||
-      !expectInstructionAccount(instruction.accounts[4], input.systemProgramAddress, false)
+      !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
+      !expectInstructionAccount(instruction.accounts[1], claim.contributorAddress, AccountRole.READONLY) ||
+      !expectInstructionAccount(instruction.accounts[2], input.workspaceAddress, AccountRole.READONLY) ||
+      !expectInstructionAccount(instruction.accounts[3], claim.claimAddress!, AccountRole.WRITABLE) ||
+      !expectInstructionAccount(instruction.accounts[4], input.systemProgramAddress, AccountRole.READONLY)
     ) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_instruction_denied");
     }

@@ -104,7 +104,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         run.run.status !== "commit_pending") {
       return NextResponse.json({ error: "payroll_run_not_confirmed" }, { status: 409 });
     }
-    const claimIds = parsed.data.claimIds.map((id) => id.toLowerCase());
+    const claimIds = parsed.data.claimIds.map((id) => id.toLowerCase()).sort();
     if (new Set(claimIds).size !== claimIds.length) {
       return NextResponse.json({ error: "sponsored_claims_duplicate" }, { status: 400 });
     }
@@ -118,7 +118,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     const claims = selected.map((allocation) => ({
       claimId: allocation!.claimId!,
       contributorAddress: allocation!.contributorWalletAddress!,
-      claimAddress: ""
     }));
     assertSponsoredClaimIntent({
       operation: "payroll_claim_commitment",
@@ -184,7 +183,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           balanceLamports: tank.balanceLamports,
           allocationCommitment: run.run.allocationCommitment!,
           claims: claims.map(({ claimId, contributorAddress }) => ({
-            claimId, contributorAddress, claimAddress: ""
+            claimId, contributorAddress
           })),
           dailyBookedFeesLamports: usage.feeLamports,
           dailyOperationCount: usage.operationCount
