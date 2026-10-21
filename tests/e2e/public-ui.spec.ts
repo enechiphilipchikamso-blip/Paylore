@@ -129,7 +129,9 @@ test("theme preference hydrates cleanly and cycles through all modes", async ({
 }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.addInitScript(() => {
-    localStorage.setItem("paylore-theme", "dark");
+    if (localStorage.getItem("paylore-theme") === null) {
+      localStorage.setItem("paylore-theme", "dark");
+    }
   });
 
   const hydrationErrors: string[] = [];
@@ -178,7 +180,19 @@ test("theme preference hydrates cleanly and cycles through all modes", async ({
   );
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-  await lightToggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.reload();
+
+  const persistedLightToggle = page.getByRole("button", {
+    name: "Theme: light. Activate to switch to dark."
+  });
+  await expect(persistedLightToggle.locator("svg")).toHaveAttribute(
+    "data-theme-icon",
+    "light"
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+  await persistedLightToggle.click();
   const darkToggle = page.getByRole("button", {
     name: "Theme: dark. Activate to switch to system."
   });
