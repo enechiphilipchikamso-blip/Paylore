@@ -101,6 +101,7 @@ export function SubscriptionPaymentAction({
         payer: string;
         recipient: string;
         mint: string;
+        tokenProgram: string;
         blockhash: string;
         lastValidBlockHeight: number;
       } = await prepareResponse.json();
