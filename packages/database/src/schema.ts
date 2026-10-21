@@ -425,6 +425,47 @@ export const subscriptionPayments =
     ]
   );
 
+export const subscriptionPaymentAttempts = pgTable(
+  "subscription_payment_attempts",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    payerWalletAddress: text("payer_wallet_address").notNull(),
+    recipient: text("recipient").notNull(),
+    mint: text("mint").notNull(),
+    amountBaseUnits: text("amount_base_units").notNull(),
+    memo: text("memo").notNull(),
+    blockhash: text("blockhash").notNull(),
+    lastValidBlockHeight: integer("last_valid_block_height").notNull(),
+    status: text("status").notNull().default("prepared"),
+    signature: text("signature"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (table) => [
+    uniqueIndex("subscription_payment_attempts_memo_uq").on(table.memo),
+    uniqueIndex("subscription_payment_attempts_signature_uq").on(table.signature),
+    index("subscription_payment_attempts_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt
+    ),
+    index("subscription_payment_attempts_payer_status_idx").on(
+      table.payerWalletAddress,
+      table.status
+    )
+  ]
+);
+
 export const workspaceMemberships =
   pgTable(
     "workspace_memberships",

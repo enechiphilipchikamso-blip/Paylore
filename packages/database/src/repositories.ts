@@ -39,6 +39,7 @@ import {
   invitationEntryTargets,
   sessions,
   subscriptionPayments,
+  subscriptionPaymentAttempts,
   workspaceGasTanks,
   workspaceLedgerEntries,
   workspaceReserves,
@@ -817,6 +818,118 @@ function addCalendarMonth(value: Date): Date {
   ).getUTCDate();
   next.setUTCDate(Math.min(day, lastDay));
   return next;
+}
+
+export async function createSubscriptionPaymentAttempt(
+  db: Database,
+  input: {
+    id: string;
+    workspaceId: string;
+    userId: string;
+    payerWalletAddress: string;
+    recipient: string;
+    mint: string;
+    amountBaseUnits: string;
+    memo: string;
+    blockhash: string;
+    lastValidBlockHeight: number;
+    expiresAt: Date;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  const rows = await db
+    .insert(subscriptionPaymentAttempts)
+    .values({
+      id: input.id,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      payerWalletAddress: input.payerWalletAddress,
+      recipient: input.recipient,
+      mint: input.mint,
+      amountBaseUnits: input.amountBaseUnits,
+      memo: input.memo,
+      blockhash: input.blockhash,
+      lastValidBlockHeight: input.lastValidBlockHeight,
+      status: "prepared",
+      expiresAt: input.expiresAt,
+      createdAt: now,
+      updatedAt: now
+    })
+    .returning();
+  if (!rows[0]) throw new Error("The subscription payment attempt was not stored.");
+  return rows[0];
+}
+
+export async function getSubscriptionPaymentAttempt(
+  db: Database,
+  attemptId: string
+) {
+  const rows = await db
+    .select()
+    .from(subscriptionPaymentAttempts)
+    .where(eq(subscriptionPaymentAttempts.id, attemptId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function recordSubscriptionPaymentAttemptSignature(
+  db: Database,
+  input: { attemptId: string; signature: string; now?: Date }
+) {
+  const now = input.now ?? new Date();
+  const rows = await db
+    .update(subscriptionPaymentAttempts)
+    .set({
+      status: "submitted",
+      signature: input.signature,
+      updatedAt: now
+    })
+    .where(
+      and(
+        eq(subscriptionPaymentAttempts.id, input.attemptId),
+        or(
+          eq(subscriptionPaymentAttempts.status, "prepared"),
+          and(
+            eq(subscriptionPaymentAttempts.status, "submitted"),
+            eq(subscriptionPaymentAttempts.signature, input.signature)
+          )
+        )
+      )
+    )
+    .returning();
+  if (rows[0]) return rows[0];
+  const existing = await getSubscriptionPaymentAttempt(db, input.attemptId);
+  if (existing?.signature === input.signature) return existing;
+  throw new Error("The subscription payment attempt has a different submitted signature.");
+}
+
+export async function updateSubscriptionPaymentAttemptStatus(
+  db: Database,
+  input: {
+    attemptId: string;
+    status: "confirmed" | "expired" | "failed";
+    signature?: string | null;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  const conditions = [
+    eq(subscriptionPaymentAttempts.id, input.attemptId)
+  ];
+  if (input.signature !== undefined) {
+    conditions.push(
+      input.signature === null
+        ? isNull(subscriptionPaymentAttempts.signature)
+        : eq(subscriptionPaymentAttempts.signature, input.signature)
+    );
+  }
+  const rows = await db
+    .update(subscriptionPaymentAttempts)
+    .set({ status: input.status, updatedAt: now })
+    .where(and(...conditions))
+    .returning();
+  return rows[0] ?? null;
 }
 
 export async function applyVerifiedSubscriptionPayment(
