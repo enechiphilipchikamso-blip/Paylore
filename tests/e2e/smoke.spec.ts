@@ -133,6 +133,37 @@ test.describe("public experience", () => {
     expect(twitterCard).toBe("summary_large_image");
   });
 
+  test("Paylore app identity is discoverable through canonical metadata and the manifest", async ({ page, request }) => {
+    const manifestResponse = await request.get("/manifest.webmanifest");
+    expect(manifestResponse.ok()).toBeTruthy();
+    const manifest = await manifestResponse.json();
+    expect(manifest.name).toBe("Paylore");
+    expect(manifest.short_name).toBe("Paylore");
+    expect(manifest.start_url).toBe("/");
+    expect(manifest.scope).toBe("/");
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.icons).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        src: "/icons/paylore-192x192.png",
+        sizes: "192x192",
+        type: "image/png"
+      }),
+      expect.objectContaining({
+        src: "/icons/paylore-512x512.png",
+        sizes: "512x512",
+        type: "image/png"
+      })
+    ]));
+
+    await page.goto("/");
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+      "href",
+      "/manifest.webmanifest"
+    );
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"][href="/favicon.svg"]')).toHaveCount(1);
+    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", "Paylore");
+  });
+
   test("manifest and icon resources load", async ({ page, request }) => {
     const manifest = await request.get(
       "/manifest.webmanifest"
