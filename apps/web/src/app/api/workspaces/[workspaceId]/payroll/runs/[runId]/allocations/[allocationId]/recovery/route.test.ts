@@ -43,7 +43,11 @@ vi.mock("../../../../../../../../../../server/security", () => ({
 import { POST } from "./route";
 
 const routeContext = {
-  params: Promise.resolve({ workspaceId: "workspace-a" })
+  params: Promise.resolve({
+    workspaceId: "workspace-a",
+    runId: "run-a",
+    allocationId: "allocation-a"
+  })
 };
 
 describe("payroll recovery route", () => {
