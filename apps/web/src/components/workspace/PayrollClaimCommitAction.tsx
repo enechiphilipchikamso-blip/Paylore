@@ -1,13 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { isWalletCancellation } from "../auth/walletErrors";
 import { useState } from "react";
 import { getBase58Decoder } from "@solana/kit";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
-import {
-  buildPayrollClaimTransactions,
-  PAYROLL_CLAIMS_PER_TRANSACTION
-} from "./payroll-program-transaction";
+const PAYROLL_CLAIMS_PER_TRANSACTION = 4;
 import { waitForDevnetFinality } from "./payroll-transaction-finality";
 
 type Claim = {
@@ -35,6 +33,7 @@ export function PayrollClaimCommitAction({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
+  const [sponsorOperationId, setSponsorOperationId] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     state: "success" | "error" | "partial";
     text: string;
@@ -52,7 +51,7 @@ export function PayrollClaimCommitAction({
     }
     if (
       !window.confirm(
-        `Create or verify ${claims.length} Claim PDA entitlements for this payroll run? Your wallet will approve the Devnet transactions and pay applicable network fees and PDA rent. This does not send USDC or represent a completed payroll payout.`
+        `Prepare ${claims.length} Claim PDA entitlements for this payroll run? The workspace Gas Tank will pay the network fee up to the displayed limit. Your wallet must still approve the transaction and pays any Claim PDA rent. This does not send USDC or complete payroll settlement.`
       )
     ) {
       return;
@@ -70,27 +69,83 @@ export function PayrollClaimCommitAction({
           index * PAYROLL_CLAIMS_PER_TRANSACTION,
           (index + 1) * PAYROLL_CLAIMS_PER_TRANSACTION
         );
-        const [batch] = await buildPayrollClaimTransactions({
-          authorityAddress: walletAddress,
-          workspaceId,
-          allocationCommitment,
-          claims: claimBatch,
-          programId,
-          includeWorkspaceInitialization: true
-        });
-        if (!batch) {
-          throw new Error("A payroll claim transaction could not be prepared.");
-        }
-        setProgress(
-          `Approve transaction ${index + 1} of ${batchCount} in your wallet.`
+        const sponsorshipResponse = await fetch(
+          `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "prepare",
+              claimIds: claimBatch.map((claim) => claim.claimId)
+            })
+          }
         );
-        const [result] = await wallet.signAndSendTransaction({
-          account: wallet.account,
-          chain: "solana:devnet",
-          transaction: batch.transaction,
-          options: { commitment: "confirmed" }
-        });
+        const sponsorship = await sponsorshipResponse.json().catch(() => null) as {
+          status?: string;
+          error?: string;
+          operationId?: string;
+          transactionBase64?: string;
+          signature?: string;
+          feeLamports?: string;
+          gasTankAddress?: string;
+          claims?: Array<{ claimId: string; claimAddress: string }>;
+        } | null;
+        if (!sponsorshipResponse.ok || !sponsorship?.transactionBase64 ||
+            !sponsorship.operationId || !sponsorship.signature ||
+            !Array.isArray(sponsorship.claims) ||
+            sponsorship.claims.length !== claimBatch.length) {
+          const reason = sponsorship?.error;
+          if (reason === "gas_tank_insufficient_balance") {
+            throw new Error("The workspace Gas Tank balance is too low to sponsor this transaction. Fund the Gas Tank, then retry the payroll commitment.");
+          }
+          if (reason === "gas_tank_not_initialized") {
+            throw new Error("The workspace Gas Tank has not been initialized. Set it up before requesting sponsored payroll transactions.");
+          }
+          if (reason === "gas_tank_daily_sponsorship_limit") {
+            throw new Error("The workspace Gas Tank sponsorship limit has been reached for the last 24 hours. Try again after the budget window resets.");
+          }
+          if (reason === "gas_tank_operation_already_prepared" || reason === "gas_tank_operation_already_finalized") {
+            throw new Error("An earlier sponsored attempt exists for this payroll batch. Refresh and reconcile that attempt before submitting another transaction.");
+          }
+          throw new Error("The Gas Tank could not prepare a permitted sponsored transaction. No arbitrary transaction was signed.");
+        }
+        setSponsorOperationId(sponsorship.operationId);
+        const transaction = Uint8Array.from(
+          atob(sponsorship.transactionBase64),
+          (character) => character.charCodeAt(0)
+        );
+        setProgress(
+          `Your wallet must approve transaction ${index + 1} of ${batchCount}. The Gas Tank pays a ${sponsorship.feeLamports} lamport network fee; your wallet remains the authority and pays Claim PDA rent.`
+        );
+        let result;
+        try {
+          [result] = await wallet.signAndSendTransaction({
+            account: wallet.account,
+            chain: "solana:devnet",
+            transaction,
+            options: { commitment: "confirmed" }
+          });
+        } catch (error) {
+          if (isWalletCancellation(error)) {
+            await fetch(
+              `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
+              {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ action: "cancel", operationId: sponsorship.operationId })
+              }
+            ).catch(() => undefined);
+            setSponsorOperationId(null);
+            throw new Error("Transaction canceled in your wallet. No sponsored transaction was submitted; you can retry.");
+          }
+          throw error;
+        }
         const transactionSignature = decoder.decode(result.signature);
+        if (transactionSignature !== sponsorship.signature) {
+          throw new Error("The wallet-returned signature does not match the server-prepared sponsored transaction. Do not submit another transaction; reconcile this attempt first.");
+        }
         setProgress(
           `Waiting for transaction ${index + 1} of ${batchCount} to finalize.`
         );
@@ -104,10 +159,8 @@ export function PayrollClaimCommitAction({
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               signature: transactionSignature,
-              claims: batch.claimIds.map((claimId, claimIndex) => ({
-                claimId,
-                claimAddress: batch.claimAddresses[claimIndex]
-              }))
+              sponsorOperationId: sponsorship.operationId,
+              claims: sponsorship.claims
             })
           }
         );
@@ -125,11 +178,15 @@ export function PayrollClaimCommitAction({
         text: "All Claim PDAs are finalized and reconciled. Contributor settlement is a separate step."
       });
       setProgress("");
+      setSponsorOperationId(null);
       router.refresh();
     } catch (error) {
       setMessage({
         state:
-          error instanceof Error && error.message.includes("is not finalized yet")
+          error instanceof Error && (
+            error.message.includes("is not finalized yet") ||
+            error.message.includes("reconcile this attempt")
+          )
             ? "partial"
             : "error",
         text:
@@ -162,6 +219,14 @@ export function PayrollClaimCommitAction({
         <p className="notice">
           Configure the verified Devnet Payroll Program ID before submitting
           payroll claims.
+        </p>
+      ) : null}
+      {canCommit ? (
+        <p className="notice">
+          Sponsored network fees are limited to approved payroll Claim PDA
+          creation. The manager wallet remains the authority and pays account
+          rent.{" "}
+          <a href={`/workspace/${workspaceId}/gas-tank`}>Manage Gas Tank</a>
         </p>
       ) : null}
       {progress ? <p role="status">{progress}</p> : null}

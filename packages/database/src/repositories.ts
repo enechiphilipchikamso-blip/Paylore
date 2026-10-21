@@ -42,6 +42,7 @@ import {
   subscriptionPayments,
   subscriptionPaymentAttempts,
   workspaceGasTanks,
+  gasTankOperations,
   workspaceLedgerEntries,
   workspaceReserves,
   workspaceSubscriptions,
@@ -4564,4 +4565,161 @@ export async function recordVerifiedGasTankFundingEvent(
     }
     return { status: entries[0] ? "recorded" as const : "duplicate" as const };
   });
+}
+
+
+export async function beginGasTankOperationAttempt(
+  db: Database,
+  input: {
+    workspaceId: string;
+    idempotencyKey: string;
+    operationType: string;
+    requestDigest: string;
+    reservedFeeLamports: string;
+  }
+) {
+  const now = new Date();
+  const inserted = await db
+    .insert(gasTankOperations)
+    .values({
+      workspaceId: input.workspaceId,
+      idempotencyKey: input.idempotencyKey,
+      operationType: input.operationType,
+      requestDigest: input.requestDigest,
+      status: "preparing",
+      feeLamports: input.reservedFeeLamports,
+      createdAt: now,
+      updatedAt: now
+    })
+    .onConflictDoNothing({
+      target: [gasTankOperations.workspaceId, gasTankOperations.idempotencyKey]
+    })
+    .returning();
+  if (inserted[0]) return { status: "started" as const, operation: inserted[0] };
+
+  const rows = await db
+    .select()
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.idempotencyKey, input.idempotencyKey)
+    ))
+    .limit(1);
+  const existing = rows[0];
+  if (!existing) return { status: "conflict" as const, operation: null };
+  if (existing.requestDigest !== input.requestDigest) {
+    return { status: "conflict" as const, operation: existing };
+  }
+  if (existing.status !== "cancelled" && existing.status !== "failed") {
+    return { status: existing.status as string, operation: existing };
+  }
+
+  const restarted = await db
+    .update(gasTankOperations)
+    .set({
+      status: "preparing",
+      transactionSignature: null,
+      feeLamports: input.reservedFeeLamports,
+      failureCode: null,
+      updatedAt: now
+    })
+    .where(and(
+      eq(gasTankOperations.id, existing.id),
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      inArray(gasTankOperations.status, ["cancelled", "failed"])
+    ))
+    .returning();
+  return restarted[0]
+    ? { status: "started" as const, operation: restarted[0] }
+    : { status: "conflict" as const, operation: existing };
+}
+
+export async function updateGasTankOperationAttempt(
+  db: Database,
+  input: {
+    workspaceId: string;
+    operationId: string;
+    status: "prepared" | "finalized" | "failed" | "cancelled";
+    transactionSignature?: string | null;
+    feeLamports?: string | null;
+    failureCode?: string | null;
+  }
+): Promise<boolean> {
+  const previousStatuses =
+    input.status === "prepared" || input.status === "failed"
+      ? ["preparing"]
+      : input.status === "cancelled"
+        ? ["preparing", "prepared"]
+        : ["prepared"];
+  const update = await db
+    .update(gasTankOperations)
+    .set({
+      status: input.status,
+      ...(input.transactionSignature !== undefined
+        ? { transactionSignature: input.transactionSignature }
+        : {}),
+      ...(input.feeLamports !== undefined
+        ? { feeLamports: input.feeLamports }
+        : {}),
+      ...(input.failureCode !== undefined
+        ? { failureCode: input.failureCode }
+        : {}),
+      updatedAt: new Date()
+    })
+    .where(and(
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      inArray(gasTankOperations.status, previousStatuses)
+    ))
+    .returning({ id: gasTankOperations.id });
+  if (update[0]) return true;
+
+  const rows = await db
+    .select({
+      status: gasTankOperations.status,
+      transactionSignature: gasTankOperations.transactionSignature
+    })
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.workspaceId, input.workspaceId)
+    ))
+    .limit(1);
+  return Boolean(
+    rows[0] &&
+    rows[0].status === input.status &&
+    (input.transactionSignature === undefined ||
+      rows[0].transactionSignature === input.transactionSignature)
+  );
+}
+
+export async function getWorkspaceGasTankSponsorshipUsage(
+  db: Database,
+  workspaceId: string,
+  since: Date
+) {
+  const rows = await db
+    .select({
+      status: gasTankOperations.status,
+      feeLamports: gasTankOperations.feeLamports
+    })
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.workspaceId, workspaceId),
+      gte(gasTankOperations.createdAt, since)
+    ))
+    .limit(1001);
+  const overflow = rows.length > 1000;
+  let feeLamports = 0n;
+  let operationCount = 0;
+  for (const row of rows) {
+    if (!["preparing", "prepared", "finalized"].includes(row.status)) continue;
+    operationCount += 1;
+    if (row.feeLamports && /^(0|[1-9][0-9]*)$/.test(row.feeLamports)) {
+      feeLamports += BigInt(row.feeLamports);
+    } else if (row.status === "preparing" || row.status === "prepared") {
+      feeLamports += 100_000n;
+    }
+  }
+  return { feeLamports, operationCount, overflow };
 }

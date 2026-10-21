@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import {
   getWorkspaceForUser,
   getWorkspacePayrollRun,
-  recordPayrollClaimSubmission
+  recordPayrollClaimSubmission,
+  updateGasTankOperationAttempt
 } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../server/db";
@@ -80,7 +81,10 @@ export async function POST(request: Request, { params }: RouteContext) {
           claim.claimAddress.length > 64
       ) ||
       new Set(submittedClaims.map((claim) => claim.claimId)).size !==
-        submittedClaims.length
+        submittedClaims.length ||
+      ("sponsorOperationId" in body &&
+        (typeof body.sponsorOperationId !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.sponsorOperationId)))
     ) {
       return NextResponse.json(
         { error: "invalid_claim_submission" },
@@ -137,6 +141,21 @@ export async function POST(request: Request, { params }: RouteContext) {
         { error: "payroll_claim_transaction_not_verified" },
         { status: 409 }
       );
+    }
+
+    if ("sponsorOperationId" in body) {
+      const sponsorUpdated = await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId: body.sponsorOperationId as string,
+        status: "finalized",
+        transactionSignature: body.signature
+      });
+      if (!sponsorUpdated) {
+        return NextResponse.json(
+          { error: "sponsorship_operation_signature_mismatch" },
+          { status: 409 }
+        );
+      }
     }
 
     const result = await recordPayrollClaimSubmission(db, {
