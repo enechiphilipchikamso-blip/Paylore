@@ -35,14 +35,13 @@ function setup(options: {
 describe("dynamic Helius webhook address reconciliation", () => {
   it("updates only the monitored address set and reads back the result", async () => {
     const { db, fetchImpl } = setup();
-    const list = await import("../../packages/database/src/index");
-    const listSpy = vi.spyOn(list, "listHeliusMonitoredAddresses").mockResolvedValue(addresses);
     try {
       const result = await reconcileHeliusWebhookAddresses(db, {
         apiKey: "test-api-key",
         webhookId: "webhook-id",
         expectedWebhookUrl: "https://paylore.netlify.app/api/webhooks/helius",
-        fetchImpl
+        fetchImpl,
+        listAddresses: async () => addresses
       });
       expect(result).toEqual({ status: "updated", addressCount: 2 });
       expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -55,7 +54,7 @@ describe("dynamic Helius webhook address reconciliation", () => {
         authHeader: current.authHeader
       });
     } finally {
-      listSpy.mockRestore();
+      // Keep the test structure symmetrical with external-resource cleanup.
     }
   });
 
@@ -65,7 +64,8 @@ describe("dynamic Helius webhook address reconciliation", () => {
       apiKey: undefined,
       webhookId: undefined,
       expectedWebhookUrl: undefined,
-      fetchImpl: fetchImpl as unknown as typeof fetch
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      listAddresses: async () => addresses
     });
     expect(result).toEqual({ status: "disabled", addressCount: 0 });
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -75,34 +75,32 @@ describe("dynamic Helius webhook address reconciliation", () => {
     const { db, fetchImpl } = setup({
       current: { ...current, webhookURL: "https://attacker.example/webhook" }
     });
-    const list = await import("../../packages/database/src/index");
-    const listSpy = vi.spyOn(list, "listHeliusMonitoredAddresses").mockResolvedValue(addresses);
     try {
       await expect(reconcileHeliusWebhookAddresses(db, {
         apiKey: "test-api-key",
         webhookId: "webhook-id",
         expectedWebhookUrl: "https://paylore.netlify.app/api/webhooks/helius",
-        fetchImpl
+        fetchImpl,
+        listAddresses: async () => addresses
       })).rejects.toThrow("HELIUS_WEBHOOK_CONFIGURATION_MISMATCH");
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally {
-      listSpy.mockRestore();
+      // No network resources are retained by the mocked fetch implementation.
     }
   });
 
   it("fails closed when Helius rejects the update", async () => {
     const { db, fetchImpl } = setup({ putStatus: 503 });
-    const list = await import("../../packages/database/src/index");
-    const listSpy = vi.spyOn(list, "listHeliusMonitoredAddresses").mockResolvedValue(addresses);
     try {
       await expect(reconcileHeliusWebhookAddresses(db, {
         apiKey: "test-api-key",
         webhookId: "webhook-id",
         expectedWebhookUrl: "https://paylore.netlify.app/api/webhooks/helius",
-        fetchImpl
+        fetchImpl,
+        listAddresses: async () => addresses
       })).rejects.toThrow("HELIUS_WEBHOOK_UPDATE_FAILED_503");
     } finally {
-      listSpy.mockRestore();
+      // No network resources are retained by the mocked fetch implementation.
     }
   });
 });
