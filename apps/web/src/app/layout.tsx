@@ -20,14 +20,17 @@ const geistMono = Geist_Mono({
 
 const themeBootstrapScript = `
 (function () {
-  try {
-    var stored = localStorage.getItem("paylore-theme");
-    if (stored === "light" || stored === "dark") {
-      document.documentElement.setAttribute("data-theme", stored);
-    } else if (stored === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    }
-  } catch (_) {}
+  var stored = null;
+  try { stored = localStorage.getItem("paylore-theme"); } catch (_) {}
+  if (stored !== "light" && stored !== "dark" && stored !== "system") {
+    var match = document.cookie.match(/(?:^|;\\s*)paylore-theme=(system|light|dark)(?:;|$)/);
+    stored = match ? match[1] : null;
+  }
+  if (stored === "light" || stored === "dark") {
+    document.documentElement.setAttribute("data-theme", stored);
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
 })();
 `;
 
@@ -62,6 +65,7 @@ export const metadata: Metadata = {
   ],
   icons: {
     icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
       { url: "/icons/favicon.svg", type: "image/svg+xml" },
       { url: "/icons/paylore-192x192.png", sizes: "192x192", type: "image/png" },
       { url: "/icons/paylore-512x512.png", sizes: "512x512", type: "image/png" }
