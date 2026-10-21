@@ -4375,3 +4375,39 @@ export async function recordVerifiedPayrollRecoveryEvent(
     return { status: "recovered" as const };
   });
 }
+
+export async function getPayrollAllocationsForChainReconciliationByClaimIds(
+  db: Database,
+  claimIds: string[]
+) {
+  if (claimIds.length === 0 || new Set(claimIds).size !== claimIds.length) {
+    return [];
+  }
+  return db
+    .select({
+      workspaceId: payrollAllocations.workspaceId,
+      runId: payrollAllocations.payrollRunId,
+      allocationId: payrollAllocations.id,
+      claimId: payrollAllocations.claimId,
+      claimAddress: payrollAllocations.claimAddress,
+      allocationStatus: payrollAllocations.status,
+      contributorWalletAddress: contributors.identityWalletAddress,
+      allocationCommitment: payrollRuns.allocationCommitment
+    })
+    .from(payrollAllocations)
+    .innerJoin(
+      payrollRuns,
+      and(
+        eq(payrollRuns.id, payrollAllocations.payrollRunId),
+        eq(payrollRuns.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .where(inArray(payrollAllocations.claimId, claimIds));
+}
