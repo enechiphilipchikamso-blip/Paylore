@@ -134,7 +134,7 @@ pub mod paylore_payroll {
     }
 }
 
-fn transition_claim_to_claimed(claim: &mut Account<ClaimState>) -> Result<()> {
+fn transition_claim_to_claimed(claim: &mut ClaimState) -> Result<()> {
     require!(
         claim.status == ClaimStatus::Unclaimed,
         PayrollError::InvalidClaimTransition
@@ -143,7 +143,7 @@ fn transition_claim_to_claimed(claim: &mut Account<ClaimState>) -> Result<()> {
     Ok(())
 }
 
-fn transition_claim_to_recovered(claim: &mut Account<ClaimState>) -> Result<()> {
+fn transition_claim_to_recovered(claim: &mut ClaimState) -> Result<()> {
     require!(
         claim.status == ClaimStatus::Unclaimed,
         PayrollError::InvalidClaimTransition
@@ -553,27 +553,27 @@ mod tests {
 
     #[test]
     fn claim_status_transitions_are_one_way_and_reject_replays() {
-        let mut claim = Account::new(ClaimState {
+        let mut claim = ClaimState {
             workspace: Pubkey::new_unique(),
             contributor: Pubkey::new_unique(),
             claim_id: [1; 32],
             allocation_commitment: [2; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
-        });
+        };
         assert!(transition_claim_to_claimed(&mut claim).is_ok());
         assert_eq!(claim.status, ClaimStatus::Claimed);
         assert!(transition_claim_to_recovered(&mut claim).is_err());
         assert!(transition_claim_to_claimed(&mut claim).is_err());
 
-        let mut recoverable = Account::new(ClaimState {
+        let mut recoverable = ClaimState {
             workspace: Pubkey::new_unique(),
             contributor: Pubkey::new_unique(),
             claim_id: [3; 32],
             allocation_commitment: [4; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
-        });
+        };
         assert!(transition_claim_to_recovered(&mut recoverable).is_ok());
         assert_eq!(recoverable.status, ClaimStatus::Recovered);
         assert!(transition_claim_to_claimed(&mut recoverable).is_err());
