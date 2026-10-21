@@ -164,6 +164,25 @@ describe("Gas Tank sponsorship policy", () => {
     })).toThrow("sponsored_claim_instruction_denied");
   });
 
+  it("validates claim-only sponsored batches when the workspace PDA already exists", () => {
+    const built = instructions();
+    const claimOnly = built.values.slice(1);
+    expect(() => assertAllowedPayrollInstructionSet({
+      instructions: claimOnly,
+      programId,
+      authorityAddress: authority,
+      workspaceId,
+      workspaceAddress: workspace,
+      allocationCommitment: commitment,
+      workspaceSeed: built.workspaceSeed,
+      claims: [claim],
+      initializeDiscriminator: built.initDiscriminator,
+      createClaimDiscriminator: built.createDiscriminator,
+      includeWorkspaceInitialization: false,
+      systemProgramAddress: system
+    })).not.toThrow();
+  });
+
   it("denies excessive size, fees, insufficient balance and daily budget exhaustion", () => {
     expect(() => assertSponsoredCost({
       transactionBytes: 1233, feeLamports: 10_000n, balanceLamports: 1_000_000n,
