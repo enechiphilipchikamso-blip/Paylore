@@ -16,6 +16,10 @@ import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/confi
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
 import { isExactSubscriptionPaymentTransaction } from "../../apps/web/src/server/solana/subscription-payment-chain-check";
+import {
+  verifyPayrollClaimTransaction,
+  verifyPayrollRecoveryTransaction
+} from "../../apps/web/src/server/solana/payroll-program-verification";
 
 export const config = {
   schedule: "* * * * *"
@@ -337,6 +341,35 @@ async function reconcileEvent(
       }
       submittedClaims.push({ claimId: claim.claimId, claimAddress: claim.claimAddress });
     }
+    if (!first || !first.allocationCommitment ||
+        claimInstructions.some((claim) =>
+          claim.authorityAddress !== claimInstructions[0].authorityAddress
+        )) {
+      await updateSolanaWebhookEventState(db, {
+        id: event.id,
+        status: "dead_letter",
+        errorCode: "payroll_claim_commitment_or_authority_missing",
+        processedAt: now,
+        now
+      });
+      return "dead_letter";
+    }
+    try {
+      await verifyPayrollClaimTransaction({
+        signature: event.transactionSignature,
+        authorityAddress: claimInstructions[0].authorityAddress,
+        workspaceId: first.workspaceId,
+        allocationCommitment: first.allocationCommitment,
+        claims: claimInstructions.map((claim) => ({
+          claimId: claim.claimId,
+          claimAddress: claim.claimAddress,
+          contributorAddress: claim.contributorAddress
+        }))
+      });
+    } catch {
+      await retry("payroll_claim_chain_state_not_reconciled");
+      return deadLetter ? "dead_letter" : "retry_pending";
+    }
     const result = await recordPayrollClaimSubmission(db, {
       workspaceId: first.workspaceId,
       runId: first.runId,
@@ -362,7 +395,11 @@ async function reconcileEvent(
     .update("global:recover_claim")
     .digest()
     .subarray(0, 8);
-  let claimAddress: string | null = null;
+  let recoveryIntent: {
+    claimAddress: string;
+    authorityAddress: string;
+    reasonCommitment: string;
+  } | null = null;
   for (const instruction of instructions) {
     if (instruction.programId !== payrollProgramId ||
         typeof instruction.data !== "string" ||
@@ -371,20 +408,42 @@ async function reconcileEvent(
     if (!data || data.length !== 40 ||
         !Buffer.from(data.subarray(0, 8)).equals(recoveryDiscriminator) ||
         data.subarray(8).every((byte) => byte === 0)) continue;
-    const candidate = instruction.accounts[3];
-    if (typeof candidate === "string") {
-      claimAddress = candidate;
-      break;
-    }
+    const accounts = instruction.accounts;
+    if (accounts.length !== 4 ||
+        accounts.some((account) => typeof account !== "string")) continue;
+    recoveryIntent = {
+      authorityAddress: accounts[0] as string,
+      claimAddress: accounts[3] as string,
+      reasonCommitment: Buffer.from(data.subarray(8, 40)).toString("hex")
+    };
+    break;
   }
-  if (!claimAddress) {
+  if (!recoveryIntent) {
     await retry("payroll_event_not_supported_for_reconciliation");
     return deadLetter ? "dead_letter" : "retry_pending";
   }
 
-  const allocation = await getPayrollAllocationForChainReconciliation(db, claimAddress);
-  if (!allocation) {
+  const allocation = await getPayrollAllocationForChainReconciliation(
+    db,
+    recoveryIntent.claimAddress
+  );
+  if (!allocation || !allocation.claimId || !allocation.allocationCommitment) {
     await retry("recovery_claim_not_mapped");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  try {
+    await verifyPayrollRecoveryTransaction({
+      signature: event.transactionSignature,
+      authorityAddress: recoveryIntent.authorityAddress,
+      workspaceId: allocation.workspaceId,
+      contributorAddress: allocation.contributorWalletAddress,
+      claimId: allocation.claimId,
+      claimAddress: recoveryIntent.claimAddress,
+      allocationCommitment: allocation.allocationCommitment,
+      recoveryReasonCommitment: recoveryIntent.reasonCommitment
+    });
+  } catch {
+    await retry("recovery_claim_chain_state_not_reconciled");
     return deadLetter ? "dead_letter" : "retry_pending";
   }
   const recovery = await recordVerifiedPayrollRecoveryEvent(db, {
@@ -392,7 +451,7 @@ async function reconcileEvent(
     runId: allocation.runId,
     allocationId: allocation.allocationId,
     signature: event.transactionSignature,
-    claimAddress,
+    claimAddress: recoveryIntent.claimAddress,
     now
   });
   if (recovery.status === "conflict" || recovery.status === "not_found") {
