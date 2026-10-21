@@ -192,7 +192,9 @@ test.describe("public experience", () => {
 
     await page.goto("/");
 
-    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute(
+    await expect(
+      page.locator('link[rel="icon"][type="image/svg+xml"][href="/icons/favicon.svg"]')
+    ).toHaveAttribute(
       "href",
       "/icons/favicon.svg"
     );

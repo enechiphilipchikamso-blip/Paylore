@@ -1,3 +1,5 @@
+---
+
 # Paylore
 
 Paylore is a private on-chain payroll platform for crypto-native organizations. It is designed to keep compensation amounts confidential within the confidential payroll system while preserving clear organization controls, contributor ownership, and organization-scoped records.
