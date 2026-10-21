@@ -56,7 +56,7 @@ describe("Helius webhook reconciliation", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1]?.method).toBe("GET");
     expect(String(fetcher.mock.calls[0][0])).toContain("api-key=test-management-api-key");
-    expect(String(fetcher.mock.calls[0][0])).toContain("api-mainnet.helius-rpc.com/v0/webhooks");
+    expect(String(fetcher.mock.calls[0][0])).toContain("api.helius.xyz/v0/webhooks");
   });
 
   it("updates a changed dynamic address set and verifies the provider read-back", async () => {
