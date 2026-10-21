@@ -79,6 +79,12 @@ describe("isExactSubscriptionPaymentTransaction", () => {
     expect(isExactSubscriptionPaymentTransaction(transaction({ payerSigner: false }), expected)).toBe(false);
   });
 
+  it("rejects non-integer or non-decimal payment expectations", () => {
+    expect(isExactSubscriptionPaymentTransaction(transaction(), { ...expected, amountBaseUnits: "49.0" })).toBe(false);
+    expect(isExactSubscriptionPaymentTransaction(transaction(), { ...expected, amountBaseUnits: "-49000000" })).toBe(false);
+    expect(isExactSubscriptionPaymentTransaction(transaction({ amount: "not-an-integer" }), expected)).toBe(false);
+  });
+
   it("rejects malformed transaction data", () => {
     expect(isExactSubscriptionPaymentTransaction(null, expected)).toBe(false);
     expect(isExactSubscriptionPaymentTransaction({ transaction: {}, meta: null }, expected)).toBe(false);
