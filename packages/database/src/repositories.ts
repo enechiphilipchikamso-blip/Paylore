@@ -4318,6 +4318,7 @@ export async function recordVerifiedPayrollRecoveryEvent(
         id: payrollAllocations.id,
         claimAddress: payrollAllocations.claimAddress,
         status: payrollAllocations.status,
+        transactionSignature: payrollAllocations.transactionSignature,
         claimId: payrollAllocations.claimId
       })
       .from(payrollAllocations)
@@ -4331,7 +4332,8 @@ export async function recordVerifiedPayrollRecoveryEvent(
     const allocation = rows[0];
     if (!allocation) return { status: "not_found" as const };
     if (allocation.status === "recovered" &&
-        allocation.claimAddress === input.claimAddress) {
+        allocation.claimAddress === input.claimAddress &&
+        allocation.transactionSignature === input.signature) {
       return { status: "duplicate" as const };
     }
     if (allocation.status !== "unclaimed" ||
