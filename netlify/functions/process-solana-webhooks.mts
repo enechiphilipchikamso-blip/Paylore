@@ -1,6 +1,7 @@
 import {
   applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
+  createWorkspaceNotificationForFinanceMembers,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
   updateSubscriptionPaymentAttemptStatus,
@@ -105,6 +106,18 @@ async function reconcileEvent(
     return deadLetter ? "dead_letter" : "retry_pending";
   }
   if (transaction.meta.err !== null) {
+    const failedAttempt = await getSubscriptionPaymentAttemptBySignature(
+      db,
+      event.transactionSignature
+    );
+    if (failedAttempt) {
+      await updateSubscriptionPaymentAttemptStatus(db, {
+        attemptId: failedAttempt.id,
+        signature: event.transactionSignature,
+        status: "failed",
+        now
+      });
+    }
     await updateSolanaWebhookEventState(db, {
       id: event.id,
       status: "failed",
@@ -157,6 +170,14 @@ async function reconcileEvent(
       signature: event.transactionSignature,
       status: "confirmed",
       now
+    });
+    await createWorkspaceNotificationForFinanceMembers(db, {
+      workspaceId: paymentAttempt.workspaceId,
+      eventKey: "subscription-payment:" + event.transactionSignature,
+      category: "Workspace & Billing",
+      title: "Subscription payment confirmed",
+      body: "A finalized USDC payment activated or renewed this workspace subscription.",
+      destination: "/workspace/" + paymentAttempt.workspaceId + "/billing"
     });
     await updateSolanaWebhookEventState(db, {
       id: event.id,
