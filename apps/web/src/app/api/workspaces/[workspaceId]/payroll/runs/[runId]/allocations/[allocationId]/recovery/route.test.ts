@@ -74,6 +74,9 @@ describe("payroll recovery route", () => {
   });
 
   it("requires a finalized on-chain recovery before recording it", async () => {
+    mocks.verifyPayrollRecoveryTransaction.mockRejectedValueOnce(
+      new Error("The finalized Claim PDA is not in the expected RECOVERED state.")
+    );
     const response = await POST(
       new Request("https://paylore.test/api/recovery", {
         method: "POST",
