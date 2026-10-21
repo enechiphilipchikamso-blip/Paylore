@@ -124,14 +124,18 @@ export function assertAllowedPayrollInstructionSet(input: {
   workspaceSeed: Uint8Array;
   claims: SponsoredClaimIntent[];
   initializeDiscriminator: Uint8Array;
+  includeWorkspaceInitialization?: boolean;
   createClaimDiscriminator: Uint8Array;
   systemProgramAddress: string;
 }): void {
   const commitment = hex32(input.allocationCommitment);
-  if (input.instructions.length !== input.claims.length + 1) {
+  const includeWorkspaceInitialization = input.includeWorkspaceInitialization ?? true;
+  const expectedInstructionCount = input.claims.length + Number(includeWorkspaceInitialization);
+  if (input.instructions.length !== expectedInstructionCount) {
     throw new GasTankSponsorshipPolicyError("sponsored_instruction_count_invalid");
   }
-  const init = input.instructions[0] as {
+  if (includeWorkspaceInitialization) {
+    const init = input.instructions[0] as {
     programAddress?: unknown;
     accounts?: unknown;
     data?: unknown;
@@ -154,11 +158,13 @@ export function assertAllowedPayrollInstructionSet(input: {
     !expectInstructionAccount(init.accounts[1], input.workspaceAddress, false) ||
     !expectInstructionAccount(init.accounts[2], input.systemProgramAddress, false)
   ) {
-    throw new GasTankSponsorshipPolicyError("sponsored_initialize_instruction_denied");
+      throw new GasTankSponsorshipPolicyError("sponsored_initialize_instruction_denied");
+    }
   }
 
+  const claimInstructionOffset = Number(includeWorkspaceInitialization);
   for (const [index, claim] of input.claims.entries()) {
-    const instruction = input.instructions[index + 1] as {
+    const instruction = input.instructions[index + claimInstructionOffset] as {
       programAddress?: unknown;
       accounts?: unknown;
       data?: unknown;
