@@ -538,7 +538,8 @@ export default async function processSolanaWebhooks() {
         webhookId: process.env.PAYLORE_HELIUS_WEBHOOK_ID,
         expectedWebhookUrl: baseUrl
           ? new URL("/api/webhooks/helius", baseUrl).toString()
-          : undefined
+          : undefined,
+        stableAddresses: [payrollProgramId]
       });
       if (management.status !== "disabled") {
         console.log(JSON.stringify({
