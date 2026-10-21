@@ -20,6 +20,8 @@ const SYSTEM_PROGRAM_ADDRESS =
   address("11111111111111111111111111111111");
 const MEMO_PROGRAM_ADDRESS =
   address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const SPL_TOKEN_PROGRAM_ADDRESS =
+  address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const BASE_UNITS = 49_000_000n;
 const USDC_DECIMALS = 6;
 
@@ -27,6 +29,7 @@ export type SubscriptionPaymentTransactionInput = {
   payer: string;
   recipient: string;
   mint: string;
+  tokenProgram: string;
   workspaceId: string;
   blockhash: string;
   lastValidBlockHeight: number;
@@ -34,14 +37,15 @@ export type SubscriptionPaymentTransactionInput = {
 
 async function deriveAssociatedTokenAddress(
   owner: ReturnType<typeof address>,
-  mint: ReturnType<typeof address>
+  mint: ReturnType<typeof address>,
+  tokenProgram: ReturnType<typeof address>
 ) {
   const encoder = getAddressEncoder();
   const [associatedTokenAddress] = await getProgramDerivedAddress({
     programAddress: ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
     seeds: [
       encoder.encode(owner),
-      encoder.encode(TOKEN_2022_PROGRAM_ADDRESS),
+      encoder.encode(tokenProgram),
       encoder.encode(mint)
     ]
   });
@@ -52,6 +56,7 @@ export async function createSubscriptionPaymentTransaction({
   payer: payerText,
   recipient: recipientText,
   mint: mintText,
+  tokenProgram: tokenProgramText,
   workspaceId,
   blockhash: blockhashText,
   lastValidBlockHeight
@@ -59,9 +64,16 @@ export async function createSubscriptionPaymentTransaction({
   const payer = address(payerText);
   const recipient = address(recipientText);
   const mint = address(mintText);
+  const tokenProgram = address(tokenProgramText);
+  if (
+    tokenProgram !== TOKEN_2022_PROGRAM_ADDRESS &&
+    tokenProgram !== SPL_TOKEN_PROGRAM_ADDRESS
+  ) {
+    throw new Error("The subscription mint uses an unsupported token program.");
+  }
   const recentBlockhash = blockhash(blockhashText);
-  const source = await deriveAssociatedTokenAddress(payer, mint);
-  const destination = await deriveAssociatedTokenAddress(recipient, mint);
+  const source = await deriveAssociatedTokenAddress(payer, mint, tokenProgram);
+  const destination = await deriveAssociatedTokenAddress(recipient, mint, tokenProgram);
 
   const createDestinationAccount = {
     programAddress: ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
@@ -71,7 +83,7 @@ export async function createSubscriptionPaymentTransaction({
       { address: recipient, role: AccountRole.READONLY },
       { address: mint, role: AccountRole.READONLY },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
-      { address: TOKEN_2022_PROGRAM_ADDRESS, role: AccountRole.READONLY }
+      { address: tokenProgram, role: AccountRole.READONLY }
     ],
     data: new Uint8Array([1])
   } as const;
@@ -84,7 +96,7 @@ export async function createSubscriptionPaymentTransaction({
   transferData[9] = USDC_DECIMALS;
 
   const transfer = {
-    programAddress: TOKEN_2022_PROGRAM_ADDRESS,
+    programAddress: tokenProgram,
     accounts: [
       { address: source, role: AccountRole.WRITABLE },
       { address: mint, role: AccountRole.READONLY },
