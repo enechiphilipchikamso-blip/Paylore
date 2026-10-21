@@ -300,20 +300,22 @@ describe("payroll program transaction verification", () => {
     ).rejects.toThrow("does not match this allocation");
   });
 
-  it("accepts only finalized recovery instructions with the expected reason commitment", async () => {
+  it("accepts recovery only when the finalized Claim PDA is RECOVERED for the allocation", async () => {
     const instruction = await recoveryInstruction();
     const claim = await claimInstruction();
-    vi.mocked(readSolanaRpc).mockResolvedValue({
-      slot: 42,
-      transaction: {
-        signatures: [transactionSignature],
-        message: {
-          accountKeys: [{ pubkey: authorityAddress, signer: true }],
-          instructions: [instruction]
-        }
-      },
-      meta: { err: null }
-    });
+    vi.mocked(readSolanaRpc)
+      .mockResolvedValueOnce({
+        slot: 42,
+        transaction: {
+          signatures: [transactionSignature],
+          message: {
+            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            instructions: [instruction]
+          }
+        },
+        meta: { err: null }
+      })
+      .mockResolvedValueOnce(claimStateAccount(claim, { status: 2 }));
 
     await expect(
       verifyPayrollRecoveryTransaction({
@@ -323,25 +325,28 @@ describe("payroll program transaction verification", () => {
         contributorAddress,
         claimId,
         claimAddress: claim.claimAddress,
+        allocationCommitment: commitment,
         recoveryReasonCommitment
       })
     ).resolves.toBeUndefined();
   });
 
-  it("rejects recovery transactions with a different committed reason", async () => {
+  it("rejects a recovery transaction until the finalized Claim PDA is RECOVERED", async () => {
     const instruction = await recoveryInstruction();
     const claim = await claimInstruction();
-    vi.mocked(readSolanaRpc).mockResolvedValue({
-      slot: 42,
-      transaction: {
-        signatures: [transactionSignature],
-        message: {
-          accountKeys: [{ pubkey: authorityAddress, signer: true }],
-          instructions: [instruction]
-        }
-      },
-      meta: { err: null }
-    });
+    vi.mocked(readSolanaRpc)
+      .mockResolvedValueOnce({
+        slot: 42,
+        transaction: {
+          signatures: [transactionSignature],
+          message: {
+            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            instructions: [instruction]
+          }
+        },
+        meta: { err: null }
+      })
+      .mockResolvedValueOnce(claimStateAccount(claim, { status: 0 }));
 
     await expect(
       verifyPayrollRecoveryTransaction({
@@ -351,6 +356,38 @@ describe("payroll program transaction verification", () => {
         contributorAddress,
         claimId,
         claimAddress: claim.claimAddress,
+        allocationCommitment: commitment,
+        recoveryReasonCommitment
+      })
+    ).rejects.toThrow("not in the expected RECOVERED state");
+  });
+
+  it("rejects recovery transactions with a different committed reason", async () => {
+    const instruction = await recoveryInstruction();
+    const claim = await claimInstruction();
+    vi.mocked(readSolanaRpc)
+      .mockResolvedValueOnce({
+        slot: 42,
+        transaction: {
+          signatures: [transactionSignature],
+          message: {
+            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            instructions: [instruction]
+          }
+        },
+        meta: { err: null }
+      })
+      .mockResolvedValueOnce(claimStateAccount(claim, { status: 2 }));
+
+    await expect(
+      verifyPayrollRecoveryTransaction({
+        signature: transactionSignature,
+        authorityAddress,
+        workspaceId,
+        contributorAddress,
+        claimId,
+        claimAddress: claim.claimAddress,
+        allocationCommitment: commitment,
         recoveryReasonCommitment: "ef".repeat(32)
       })
     ).rejects.toThrow("does not perform this Claim PDA recovery");
