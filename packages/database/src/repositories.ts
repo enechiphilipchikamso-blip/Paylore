@@ -4720,11 +4720,9 @@ export async function updateGasTankOperationAttempt(
   }
 ): Promise<boolean> {
   const previousStatuses =
-    input.status === "prepared" || input.status === "failed"
+    input.status === "prepared" || input.status === "failed" || input.status === "cancelled"
       ? ["preparing"]
-      : input.status === "cancelled"
-        ? ["preparing", "prepared"]
-        : ["prepared"];
+      : ["prepared"];
   const update = await db
     .update(gasTankOperations)
     .set({

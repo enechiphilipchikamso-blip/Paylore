@@ -126,7 +126,7 @@ export function PayrollClaimCommitAction({
           });
         } catch (error) {
           if (isWalletCancellation(error)) {
-            await fetch(
+            const cancellation = await fetch(
               `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
               {
                 method: "POST",
@@ -134,8 +134,11 @@ export function PayrollClaimCommitAction({
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({ action: "cancel", operationId: sponsorship.operationId })
               }
-            ).catch(() => undefined);
-            throw new Error("Transaction canceled in your wallet. No sponsored transaction was submitted; you can retry.");
+            ).catch(() => null);
+            if (cancellation?.ok) {
+              throw new Error("Transaction canceled in your wallet. No sponsored transaction was submitted. You can retry this batch.");
+            }
+            throw new Error("Your wallet canceled the request, but Paylore could not safely release the prepared sponsorship attempt. Refresh the payroll run and reconcile this attempt before retrying to avoid duplicate transactions.");
           }
           throw error;
         }

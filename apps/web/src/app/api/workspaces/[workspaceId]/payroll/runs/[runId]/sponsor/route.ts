@@ -101,7 +101,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const run = await getWorkspacePayrollRun(db, workspaceId, runId);
     if (!run) return NextResponse.json({ error: "payroll_run_not_found" }, { status: 404 });
     if (!run.run.managerConfirmedAt || !run.run.allocationCommitment ||
-        run.run.status !== "commit_pending") {
+        !["commit_pending", "submitting"].includes(run.run.status)) {
       return NextResponse.json({ error: "payroll_run_not_confirmed" }, { status: 409 });
     }
     const claimIds = parsed.data.claimIds.map((id) => id.toLowerCase()).sort();

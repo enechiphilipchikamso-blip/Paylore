@@ -133,6 +133,33 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
   });
 
+  it("continues a manager-confirmed payroll run while earlier claim batches are submitting", async () => {
+    mocks.getWorkspacePayrollRun.mockResolvedValue({
+      run: {
+        id: "run-a",
+        status: "submitting",
+        managerConfirmedAt: new Date("2026-10-20T00:00:00Z"),
+        allocationCommitment: commitment
+      },
+      allocations: [{
+        id: "allocation-b",
+        claimId,
+        contributorWalletAddress: "contributor-wallet",
+        status: "draft"
+      }]
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(200);
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("does not report a prepared sponsorship cancellation as released when the server rejects it", async () => {
+    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+    const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_operation_not_cancellable" });
+  });
+
   it("rejects arbitrary serialized bytes or unknown actions", async () => {
     const response = await POST(request({
       action: "sign_transaction",
