@@ -246,15 +246,20 @@ async function reconcileEvent(
   };
   const signatures = transactionBody.transaction?.signatures;
   const accountKeys = transactionBody.transaction?.message?.accountKeys;
-  const authoritySigned = Array.isArray(accountKeys) && accountKeys.some((entry) =>
-    entry && typeof entry === "object" &&
-    "pubkey" in entry && entry.pubkey === event.sourceAddress &&
-    "signer" in entry && entry.signer === true
-  );
+  const signerAddresses = Array.isArray(accountKeys)
+    ? accountKeys.flatMap((entry) =>
+        entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string" &&
+        "signer" in entry && entry.signer === true
+          ? [entry.pubkey]
+          : []
+      )
+    : [];
   const claimInstructions: Array<{
     claimId: string;
     claimAddress: string;
     contributorAddress: string;
+    authorityAddress: string;
     commitment: string;
   }> = [];
   for (const instruction of instructions) {
@@ -270,6 +275,7 @@ async function reconcileEvent(
     claimInstructions.push({
       claimId: Buffer.from(data.subarray(8, 40)).toString("hex"),
       commitment: Buffer.from(data.subarray(40, 72)).toString("hex"),
+      authorityAddress: accounts[0] as string,
       contributorAddress: accounts[1] as string,
       claimAddress: accounts[3] as string
     });
@@ -277,7 +283,9 @@ async function reconcileEvent(
   if (claimInstructions.length > 0) {
     const signatureMatches = Array.isArray(signatures) &&
       signatures.includes(event.transactionSignature);
-    if (!signatureMatches || !authoritySigned) {
+    if (!signatureMatches || claimInstructions.some((claim) =>
+      !signerAddresses.includes(claim.authorityAddress)
+    )) {
       await updateSolanaWebhookEventState(db, {
         id: event.id,
         status: "dead_letter",
