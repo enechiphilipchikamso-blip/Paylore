@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { reconcileHeliusWebhookAddresses } from "./helius-webhook-management.mjs";
 
 const addresses = ["A-address", "Z-address"];
+const stableProgramAddress = "PayrollProgram-address";
+const expectedAddresses = [stableProgramAddress, ...addresses].sort();
 const current = {
   webhookID: "webhook-id",
   webhookURL: "https://paylore.netlify.app/api/webhooks/helius",
@@ -22,7 +24,7 @@ function setup(options: {
     if (init?.method === "PUT") {
       persisted = options.updated ?? {
         ...persisted,
-        accountAddresses: addresses
+        accountAddresses: JSON.parse(String((init?.body as string) ?? "{}")).accountAddresses
       };
       return new Response(JSON.stringify(persisted), { status: options.putStatus ?? 200 });
     }
@@ -43,15 +45,16 @@ describe("dynamic Helius webhook address reconciliation", () => {
         webhookId: "webhook-id",
         expectedWebhookUrl: "https://paylore.netlify.app/api/webhooks/helius",
         fetchImpl,
-        listAddresses: async () => addresses
+        listAddresses: async () => addresses,
+        stableAddresses: [stableProgramAddress]
       });
-      expect(result).toEqual({ status: "updated", addressCount: 2 });
+      expect(result).toEqual({ status: "updated", addressCount: 3 });
       expect(fetchImpl).toHaveBeenCalledTimes(3);
       const update = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1] as RequestInit;
       expect(JSON.parse(String(update.body))).toMatchObject({
         webhookURL: current.webhookURL,
         transactionTypes: current.transactionTypes,
-        accountAddresses: addresses,
+        accountAddresses: expectedAddresses,
         webhookType: current.webhookType,
         authHeader: current.authHeader
       });
