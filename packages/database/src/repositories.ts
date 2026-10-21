@@ -4568,6 +4568,30 @@ export async function recordVerifiedGasTankFundingEvent(
 }
 
 
+export async function getWorkspaceGasTankOperation(
+  db: Database,
+  workspaceId: string,
+  operationId: string
+) {
+  const rows = await db.select().from(gasTankOperations).where(and(
+    eq(gasTankOperations.workspaceId, workspaceId),
+    eq(gasTankOperations.id, operationId)
+  )).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getWorkspaceGasTankOperationByIdempotencyKey(
+  db: Database,
+  workspaceId: string,
+  idempotencyKey: string
+) {
+  const rows = await db.select().from(gasTankOperations).where(and(
+    eq(gasTankOperations.workspaceId, workspaceId),
+    eq(gasTankOperations.idempotencyKey, idempotencyKey)
+  )).limit(1);
+  return rows[0] ?? null;
+}
+
 export async function beginGasTankOperationAttempt(
   db: Database,
   input: {
@@ -4580,6 +4604,7 @@ export async function beginGasTankOperationAttempt(
     maxDailyFeeLamports: string;
     maxDailyOperations: number;
     since: Date;
+    operationData?: Record<string, unknown>;
   }
 ) {
   const positiveInteger = (value: string) =>
@@ -4673,6 +4698,8 @@ export async function beginGasTankOperationAttempt(
           transactionSignature: null,
           feeLamports: input.reservedFeeLamports,
           failureCode: null,
+          lastValidBlockHeight: null,
+          operationData: input.operationData ?? null,
           createdAt: now,
           updatedAt: now
         })
@@ -4696,6 +4723,7 @@ export async function beginGasTankOperationAttempt(
         requestDigest: input.requestDigest,
         status: "preparing",
         feeLamports: input.reservedFeeLamports,
+        operationData: input.operationData ?? null,
         createdAt: now,
         updatedAt: now
       })
@@ -4717,6 +4745,8 @@ export async function updateGasTankOperationAttempt(
     transactionSignature?: string | null;
     feeLamports?: string | null;
     failureCode?: string | null;
+    lastValidBlockHeight?: string | null;
+    operationData?: Record<string, unknown> | null;
   }
 ): Promise<boolean> {
   const previousStatuses =
@@ -4735,6 +4765,12 @@ export async function updateGasTankOperationAttempt(
         : {}),
       ...(input.failureCode !== undefined
         ? { failureCode: input.failureCode }
+        : {}),
+      ...(input.lastValidBlockHeight !== undefined
+        ? { lastValidBlockHeight: input.lastValidBlockHeight }
+        : {}),
+      ...(input.operationData !== undefined
+        ? { operationData: input.operationData }
         : {}),
       updatedAt: new Date()
     })
