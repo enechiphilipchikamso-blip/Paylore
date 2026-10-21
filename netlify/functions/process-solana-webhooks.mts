@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import {
   applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
   createWorkspaceNotificationForFinanceMembers,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
+  getPayrollAllocationForChainReconciliation,
+  recordVerifiedPayrollRecoveryEvent,
   updateSubscriptionPaymentAttemptStatus,
   updateSolanaWebhookEventState
 } from "../../packages/database/src/index";
@@ -20,6 +23,27 @@ type FinalizedTransaction = {
   slot: number;
   meta: { err: unknown } | null;
 } | null;
+
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function decodeBase58(value: string): Uint8Array | null {
+  let number = 0n;
+  for (const character of value) {
+    const digit = BASE58_ALPHABET.indexOf(character);
+    if (digit < 0) return null;
+    number = number * 58n + BigInt(digit);
+  }
+  const bytes: number[] = [];
+  while (number > 0n) {
+    bytes.unshift(Number(number & 0xffn));
+    number >>= 8n;
+  }
+  for (const character of value) {
+    if (character !== "1") break;
+    bytes.unshift(0);
+  }
+  return Uint8Array.from(bytes);
+}
 
 function configuredRpc() {
   const config = parsePayloreConfig(process.env);
@@ -202,6 +226,52 @@ async function reconcileEvent(
       now
     });
     return "dead_letter";
+  }
+
+  const parsed = transaction as unknown as {
+    transaction?: { message?: { instructions?: Array<Record<string, unknown>> } };
+  };
+  const instructions = parsed.transaction?.message?.instructions ?? [];
+  const recoveryDiscriminator = createHash("sha256")
+    .update("global:recover_claim")
+    .digest()
+    .subarray(0, 8);
+  let claimAddress: string | null = null;
+  for (const instruction of instructions) {
+    if (instruction.programId !== payrollProgramId ||
+        typeof instruction.data !== "string" ||
+        !Array.isArray(instruction.accounts)) continue;
+    const data = decodeBase58(instruction.data);
+    if (!data || data.length !== 40 ||
+        !Buffer.from(data.subarray(0, 8)).equals(recoveryDiscriminator) ||
+        data.subarray(8).every((byte) => byte === 0)) continue;
+    const candidate = instruction.accounts[3];
+    if (typeof candidate === "string") {
+      claimAddress = candidate;
+      break;
+    }
+  }
+  if (!claimAddress) {
+    await retry("payroll_event_not_supported_for_reconciliation");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+
+  const allocation = await getPayrollAllocationForChainReconciliation(db, claimAddress);
+  if (!allocation) {
+    await retry("recovery_claim_not_mapped");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  const recovery = await recordVerifiedPayrollRecoveryEvent(db, {
+    workspaceId: allocation.workspaceId,
+    runId: allocation.runId,
+    allocationId: allocation.allocationId,
+    signature: event.transactionSignature,
+    claimAddress,
+    now
+  });
+  if (recovery.status === "conflict" || recovery.status === "not_found") {
+    await retry("recovery_claim_state_conflict");
+    return deadLetter ? "dead_letter" : "retry_pending";
   }
 
   await updateSolanaWebhookEventState(db, {
