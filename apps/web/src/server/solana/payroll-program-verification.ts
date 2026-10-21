@@ -304,6 +304,7 @@ export async function verifyPayrollRecoveryTransaction(input: {
   contributorAddress: string;
   claimId: string;
   claimAddress: string;
+  allocationCommitment: string;
   recoveryReasonCommitment: string;
 }): Promise<void> {
   const config = loadPayloreConfig();
@@ -312,6 +313,7 @@ export async function verifyPayrollRecoveryTransaction(input: {
     throw new Error("The Devnet Payroll Program is not configured.");
   }
   const claimId = decodeHex32(input.claimId);
+  const allocationCommitment = decodeHex32(input.allocationCommitment);
   const reasonCommitment = decodeHex32(input.recoveryReasonCommitment);
   const { workspace } = await deriveWorkspaceAddress(
     input.authorityAddress,
@@ -385,5 +387,36 @@ export async function verifyPayrollRecoveryTransaction(input: {
   });
   if (!matched) {
     throw new Error("The finalized transaction does not perform this Claim PDA recovery.");
+  }
+
+  const claimStateDiscriminator = await instructionDiscriminator("account:ClaimState");
+  const accountInfo = await readSolanaRpc<{
+    value: { owner: string; executable: boolean; data: unknown } | null;
+  }>("getAccountInfo", [
+    claim.address,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  const account = object(accountInfo)?.value;
+  const accountRecord = object(account);
+  const data = decodeBase64AccountData(accountRecord?.data);
+  const workspaceBytes = getAddressEncoder().encode(workspace);
+  const contributorBytes = getAddressEncoder().encode(address(input.contributorAddress));
+  if (
+    !accountRecord ||
+    accountRecord.owner !== programId ||
+    accountRecord.executable !== false ||
+    !data ||
+    data.length !== 138 ||
+    !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
+    !sameBytes(data.subarray(8, 40), workspaceBytes) ||
+    !sameBytes(data.subarray(40, 72), contributorBytes) ||
+    !sameBytes(data.subarray(72, 104), claimId) ||
+    !sameBytes(data.subarray(104, 136), allocationCommitment) ||
+    data[136] !== 2 ||
+    data[137] !== claim.bump
+  ) {
+    throw new Error(
+      "The finalized Claim PDA is not in the expected RECOVERED state for this allocation."
+    );
   }
 }
