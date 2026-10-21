@@ -220,6 +220,25 @@ export function assertSponsoredCost(input: {
   }
 }
 
+export type PreparedSponsorshipState = "live" | "submitted_pending" | "finalized_success" | "finalized_failure" | "expired";
+
+/** Only an absent signature past the last valid block height can release a prepared fee reservation. */
+export function classifyPreparedSponsorshipState(input: {
+  currentBlockHeight: number;
+  lastValidBlockHeight: number;
+  signatureStatus: { confirmationStatus?: string | null; err?: unknown } | null;
+}): PreparedSponsorshipState {
+  if (!Number.isSafeInteger(input.currentBlockHeight) || input.currentBlockHeight < 0 ||
+      !Number.isSafeInteger(input.lastValidBlockHeight) || input.lastValidBlockHeight < 0) {
+    throw new GasTankSponsorshipPolicyError("sponsorship_block_height_invalid");
+  }
+  if (input.signatureStatus) {
+    if (input.signatureStatus.confirmationStatus !== "finalized") return "submitted_pending";
+    return input.signatureStatus.err === null ? "finalized_success" : "finalized_failure";
+  }
+  return input.currentBlockHeight > input.lastValidBlockHeight ? "expired" : "live";
+}
+
 export function assertSimulationSucceeded(value: unknown): void {
   if (!value || typeof value !== "object" || !("value" in value)) {
     throw new GasTankSponsorshipPolicyError("sponsored_simulation_unavailable");

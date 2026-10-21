@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AccountRole } from "@solana/kit";
 import {
   assertAllowedPayrollInstructionSet,
+  classifyPreparedSponsorshipState,
   assertSimulationSucceeded,
   assertSponsoredClaimIntent,
   assertSponsoredCost,
@@ -202,6 +203,23 @@ describe("Gas Tank sponsorship policy", () => {
       dailyBookedFeesLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS,
       dailyOperationCount: 100
     })).toThrow("gas_tank_daily_sponsorship_limit");
+  });
+
+  it("releases sponsorship only when signature history is absent beyond blockhash expiry", () => {
+    const base = { lastValidBlockHeight: 120 };
+    expect(classifyPreparedSponsorshipState({ ...base, currentBlockHeight: 120, signatureStatus: null })).toBe("live");
+    expect(classifyPreparedSponsorshipState({ ...base, currentBlockHeight: 121, signatureStatus: null })).toBe("expired");
+    expect(classifyPreparedSponsorshipState({ ...base, currentBlockHeight: 121, signatureStatus: { confirmationStatus: "confirmed", err: null } })).toBe("submitted_pending");
+    expect(classifyPreparedSponsorshipState({ ...base, currentBlockHeight: 121, signatureStatus: { confirmationStatus: "finalized", err: null } })).toBe("finalized_success");
+    expect(classifyPreparedSponsorshipState({ ...base, currentBlockHeight: 121, signatureStatus: { confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } } })).toBe("finalized_failure");
+  });
+
+  it.each([
+    { currentBlockHeight: -1, lastValidBlockHeight: 10 },
+    { currentBlockHeight: 10.5, lastValidBlockHeight: 10 },
+    { currentBlockHeight: 10, lastValidBlockHeight: -1 }
+  ])("rejects invalid block-height evidence: %o", (heights) => {
+    expect(() => classifyPreparedSponsorshipState({ ...heights, signatureStatus: null })).toThrow("sponsorship_block_height_invalid");
   });
 
   it("fails closed on unavailable or failed simulation", () => {
