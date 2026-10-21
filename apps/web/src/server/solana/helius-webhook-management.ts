@@ -2,7 +2,7 @@ import "server-only";
 
 export const PAYLORE_HELIUS_WEBHOOK_URL =
   "https://paylore.netlify.app/api/webhooks/helius";
-const WEBHOOKS_API_BASE = "https://mainnet.helius-rpc.com/v0/webhooks";
+const WEBHOOKS_API_BASE = "https://api.helius.xyz/v0/webhooks";
 const MAX_MONITORED_ADDRESSES = 100_000;
 const ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
