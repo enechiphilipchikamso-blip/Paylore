@@ -5,6 +5,8 @@ import {
   createWorkspaceNotificationForFinanceMembers,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
+  getWorkspaceGasTankByAddress,
+  recordVerifiedGasTankFundingEvent,
   getPayrollAllocationForChainReconciliation,
   getPayrollAllocationsForChainReconciliationByClaimIds,
   recordPayrollClaimSubmission,
@@ -217,6 +219,60 @@ async function reconcileEvent(
       now
     });
     return verified.duplicate ? "finalized" : "finalized";
+  }
+
+  const parsedTransaction = transaction as unknown as {
+    transaction?: { signatures?: unknown; message?: { accountKeys?: unknown; instructions?: Array<Record<string, unknown>> } };
+  };
+  const txSignatures = parsedTransaction.transaction?.signatures;
+  const txKeys = parsedTransaction.transaction?.message?.accountKeys;
+  const txInstructions = parsedTransaction.transaction?.message?.instructions ?? [];
+  const hasSignature = Array.isArray(txSignatures) && txSignatures.includes(event.transactionSignature);
+  const signerAddresses = Array.isArray(txKeys) ? txKeys.flatMap((entry) =>
+    entry && typeof entry === "object" && "pubkey" in entry &&
+    typeof entry.pubkey === "string" && "signer" in entry && entry.signer === true
+      ? [entry.pubkey] : []
+  ) : [];
+  if (hasSignature) {
+    for (const instruction of txInstructions) {
+      if (instruction.program !== "system" ||
+          instruction.programId !== "11111111111111111111111111111111" ||
+          !instruction.parsed || typeof instruction.parsed !== "object") continue;
+      const parsed = instruction.parsed as Record<string, unknown>;
+      if (parsed.type !== "transfer" || !parsed.info || typeof parsed.info !== "object") continue;
+      const info = parsed.info as Record<string, unknown>;
+      if (typeof info.source !== "string" || typeof info.destination !== "string" ||
+          (typeof info.lamports !== "string" && typeof info.lamports !== "number") ||
+          !signerAddresses.includes(info.source)) continue;
+      let amount: bigint;
+      try {
+        if (typeof info.lamports === "number" && !Number.isSafeInteger(info.lamports)) continue;
+        amount = BigInt(info.lamports);
+      } catch { continue; }
+      if (amount <= 0n || amount >= (1n << 64n)) continue;
+      const gasTank = await getWorkspaceGasTankByAddress(db, info.destination);
+      if (!gasTank) continue;
+      const balance = await readSolanaRpcWithProviders<{ value: number }>(
+        "getBalance", [gasTank.address, { commitment: "finalized" }], providers
+      );
+      if (!balance || !Number.isSafeInteger(balance.value) || balance.value < 0) {
+        await retry("gas_tank_balance_not_reconciled");
+        return deadLetter ? "dead_letter" : "retry_pending";
+      }
+      const funding = await recordVerifiedGasTankFundingEvent(db, {
+        workspaceId: gasTank.workspaceId, destination: gasTank.address,
+        source: info.source, signature: event.transactionSignature,
+        amountLamports: amount.toString(), confirmedBalanceLamports: String(balance.value), now
+      });
+      if (funding.status === "not_found") {
+        await retry("gas_tank_mapping_changed_during_reconciliation");
+        return deadLetter ? "dead_letter" : "retry_pending";
+      }
+      await updateSolanaWebhookEventState(db, {
+        id: event.id, status: "finalized", finalizedAt: now, processedAt: now, now
+      });
+      return "finalized";
+    }
   }
 
   if (!payrollProgramId) {
