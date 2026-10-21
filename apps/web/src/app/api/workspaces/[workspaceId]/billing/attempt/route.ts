@@ -31,13 +31,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     if (parsed.data.signature) attempt = await recordSubscriptionPaymentAttemptSignature(db, { attemptId: attempt.id, signature: parsed.data.signature });
     if (attempt.status === "confirmed") return NextResponse.json({ status: "active" });
     if (!attempt.signature) {
-      const [blockHeight, signatures] = await Promise.all([
+      const [blockHeight, recentSignatures] = await Promise.all([
         readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]),
-        readSolanaRpc<Array<{ signature: string; slot: number; err: unknown; memo: string | null; blockTime: number | null }>>(
+        readSolanaRpc<Array<{ signature: string; slot: number; err: unknown; blockTime: number | null }>>(
           "getSignaturesForAddress",
           [attempt.payerWalletAddress, { commitment: "finalized", limit: PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT }]
         )
       ]);
+      // Signature history does not include memo contents; inspect each finalized
+      // transaction rather than treating the RPC signature record as if it did.
+      const signatures = await Promise.all(recentSignatures.map(async (entry) => {
+        const transaction = await readSolanaRpc<{
+          transaction?: { message?: { instructions?: Array<{ program?: string; parsed?: unknown }> } };
+          meta?: { err?: unknown } | null;
+        } | null>("getTransaction", [entry.signature, {
+          commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0
+        }]).catch(() => null);
+        const instructions = transaction?.transaction?.message?.instructions ?? [];
+        const memoInstruction = instructions.find((instruction) =>
+          instruction.program === "spl-memo" && typeof instruction.parsed === "string"
+        );
+        return {
+          ...entry,
+          err: transaction?.meta?.err ?? entry.err,
+          memo: typeof memoInstruction?.parsed === "string" ? memoInstruction.parsed : null
+        };
+      }));
       const decision = assessAmbiguousPaymentAttempt({
         currentFinalizedBlockHeight: blockHeight,
         lastValidBlockHeight: attempt.lastValidBlockHeight,
