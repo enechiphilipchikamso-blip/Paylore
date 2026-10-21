@@ -13,17 +13,24 @@ function isTheme(value: string | null): value is Theme {
   return value === "light" || value === "dark" || value === "system";
 }
 
+function readThemeCookie(): Theme | null {
+  const match = document.cookie.match(
+    /(?:^|;\s*)paylore-theme=(system|light|dark)(?:;|$)/
+  );
+  const value = match?.[1] ?? null;
+  return isTheme(value) ? value : null;
+}
+
 function getThemeSnapshot(): Theme {
+  if (transientTheme) return transientTheme;
+  const cookieTheme = readThemeCookie();
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (isTheme(stored)) {
-      return stored;
-    }
+    if (isTheme(stored)) return stored;
   } catch {
-    return transientTheme ?? "system";
+    return cookieTheme ?? "system";
   }
-
-  return transientTheme ?? "system";
+  return cookieTheme ?? "system";
 }
 
 function getServerThemeSnapshot(): Theme {
@@ -45,6 +52,7 @@ function subscribeToThemeChange(onChange: () => void) {
     onChange();
   };
 
+  applyTheme(getThemeSnapshot());
   window.addEventListener(THEME_CHANGE_EVENT, updateTheme);
   window.addEventListener("storage", updateTheme);
 
@@ -60,6 +68,13 @@ function saveTheme(theme: Theme) {
     transientTheme = null;
   } catch {
     transientTheme = theme;
+  }
+
+  try {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `${STORAGE_KEY}=${theme}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+  } catch {
+    // Keep the current session usable when persistent browser storage is blocked.
   }
 
   applyTheme(theme);
