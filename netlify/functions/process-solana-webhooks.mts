@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { reconcileHeliusWebhookAddresses } from "./helius-webhook-management.mjs";
 import {
   applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
@@ -531,31 +530,6 @@ export default async function processSolanaWebhooks() {
   const { providers, payrollProgramId } = configuredRpc();
   const { db, client } = createDatabase(appConfig.DATABASE_URL);
   try {
-    try {
-      const baseUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL;
-      const management = await reconcileHeliusWebhookAddresses(db, {
-        apiKey: process.env.PAYLORE_HELIUS_MANAGEMENT_API_KEY,
-        webhookId: process.env.PAYLORE_HELIUS_WEBHOOK_ID,
-        expectedWebhookUrl: baseUrl
-          ? new URL("/api/webhooks/helius", baseUrl).toString()
-          : undefined,
-        stableAddresses: [payrollProgramId]
-      });
-      if (management.status !== "disabled") {
-        console.log(JSON.stringify({
-          event: "helius_webhook_address_reconciliation",
-          status: management.status,
-          addressCount: management.addressCount
-        }));
-      }
-    } catch (error) {
-      console.error(JSON.stringify({
-        event: "helius_webhook_address_reconciliation_failed",
-        errorCode: error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
-          ? error.message
-          : "HELIUS_WEBHOOK_RECONCILIATION_FAILED"
-      }));
-    }
     const events = await claimDueSolanaWebhookEvents(db, {
       limit: 5,
       leaseMilliseconds: 60_000
