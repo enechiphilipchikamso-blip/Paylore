@@ -33,11 +33,11 @@ export function SubscriptionPaymentAction({
   const [, setAttemptId] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
-  async function verifyPayment(signature: string): Promise<boolean> {
-    const endpoint = attemptId
+  async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<boolean> {
+    const endpoint = paymentAttemptId
       ? `/api/workspaces/${workspaceId}/billing/attempt`
       : `/api/workspaces/${workspaceId}/billing`;
-    const body = attemptId ? { attemptId, signature } : { signature };
+    const body = paymentAttemptId ? { attemptId: paymentAttemptId, signature } : { signature };
     const response = await fetch(endpoint, {
       method: "POST",
       credentials: "same-origin",
@@ -180,7 +180,7 @@ export function SubscriptionPaymentAction({
       setProgress("Payment submitted. Waiting for finalized verification…");
       let verified = false;
       try {
-        verified = await verifyPayment(signature);
+        verified = await verifyPayment(signature, prepared.attemptId);
       } catch {
         setPartial(
           "The wallet sent the transaction, but Paylore could not check it yet. Retry verification here; do not send another payment."
