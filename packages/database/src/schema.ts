@@ -849,6 +849,8 @@ export const gasTankOperations =
       transactionSignature: text("transaction_signature"),
       feeLamports: text("fee_lamports"),
       failureCode: text("failure_code"),
+      lastValidBlockHeight: text("last_valid_block_height"),
+      operationData: jsonb("operation_data"),
       createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
