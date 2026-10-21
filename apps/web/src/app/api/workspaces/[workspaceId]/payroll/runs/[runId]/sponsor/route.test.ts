@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   getSessionState: vi.fn(),
   getWorkspaceDeletionState: vi.fn(),
   getWorkspaceGasTankOperation: vi.fn(),
+  getWorkspaceGasTankOperationByIdempotencyKey: vi.fn(),
+  recordPayrollClaimSubmission: vi.fn(),
+  verifyPayrollClaimTransaction: vi.fn(),
   readSolanaRpc: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   getWorkspaceGasTankSponsorshipUsage: vi.fn(),
@@ -24,6 +27,8 @@ vi.mock("@paylore/database", () => ({
   beginGasTankOperationAttempt: mocks.beginGasTankOperationAttempt,
   getWorkspaceDeletionState: mocks.getWorkspaceDeletionState,
   getWorkspaceGasTankOperation: mocks.getWorkspaceGasTankOperation,
+  getWorkspaceGasTankOperationByIdempotencyKey: mocks.getWorkspaceGasTankOperationByIdempotencyKey,
+  recordPayrollClaimSubmission: mocks.recordPayrollClaimSubmission,
   getWorkspaceForUser: mocks.getWorkspaceForUser,
   getWorkspaceGasTankSponsorshipUsage: mocks.getWorkspaceGasTankSponsorshipUsage,
   getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
@@ -47,6 +52,7 @@ vi.mock("../../../../../../../../server/gas-tank", () => ({
   withWorkspaceGasTankKey: mocks.withWorkspaceGasTankKey
 }));
 vi.mock("../../../../../../../../server/solana/rpc", () => ({ readSolanaRpc: mocks.readSolanaRpc }));
+vi.mock("../../../../../../../../server/solana/payroll-program-verification", () => ({ verifyPayrollClaimTransaction: mocks.verifyPayrollClaimTransaction }));
 vi.mock("../../../../../../../../server/gas-tank-sponsorship", () => ({
   prepareSponsoredPayrollClaimTransaction: mocks.prepareSponsoredPayrollClaimTransaction
 }));
@@ -77,6 +83,9 @@ describe("payroll sponsor route", () => {
     mocks.getWorkspaceForUser.mockResolvedValue({ role: "organization_admin" });
     mocks.getWorkspaceDeletionState.mockResolvedValue(null);
     mocks.getWorkspaceGasTankOperation.mockResolvedValue(null);
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(null);
+    mocks.verifyPayrollClaimTransaction.mockResolvedValue(undefined);
+    mocks.recordPayrollClaimSubmission.mockResolvedValue({ status: "committed", submittedCount: 1, totalCount: 1 });
     mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 121);
     mocks.getWorkspaceSubscription.mockResolvedValue({ status: "active" });
     mocks.loadPayloreConfig.mockReturnValue({ PAYLORE_PAYROLL_PROGRAM_ID: "payroll-program" });
@@ -137,6 +146,43 @@ describe("payroll sponsor route", () => {
     expect(body.transactionBase64).toBe("AQIDBA==");
     expect(JSON.stringify(body)).not.toContain("privateKey");
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("replays the same transaction while its blockhash remains valid", async () => {
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
+      id: "operation-a", requestDigest: expect.any(String), status: "prepared",
+      transactionSignature: "5".repeat(64), feeLamports: "5000", lastValidBlockHeight: "120",
+      operationData: {
+        runId: "run-a", claimIds: [claimId], authorityAddress: "manager-wallet",
+        programId: "payroll-program", allocationCommitment: commitment,
+        claims: [{ claimId, claimAddress: "claim-pda" }], blockhash: "blockhash",
+        transactionBase64: "AQIDBA=="
+      }
+    });
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 120);
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ replayed: true, transactionBase64: "AQIDBA==" });
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a finalized sponsored transaction before returning success", async () => {
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
+      id: "operation-a", requestDigest: "wrong"
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_idempotency_conflict" });
+    expect(mocks.recordPayrollClaimSubmission).not.toHaveBeenCalled();
+  });
+
+  it("does not create a second operation while a previous preparation is in flight", async () => {
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
+      id: "operation-a", requestDigest: expect.any(String), status: "preparing"
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
   });
 
   it("continues a manager-confirmed payroll run while earlier claim batches are submitting", async () => {

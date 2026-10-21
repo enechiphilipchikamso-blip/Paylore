@@ -4650,7 +4650,8 @@ export async function beginGasTankOperationAttempt(
     const recent = await tx
       .select({
         status: gasTankOperations.status,
-        feeLamports: gasTankOperations.feeLamports
+        feeLamports: gasTankOperations.feeLamports,
+        failureCode: gasTankOperations.failureCode
       })
       .from(gasTankOperations)
       .where(and(
@@ -4665,7 +4666,8 @@ export async function beginGasTankOperationAttempt(
     let dailyOperations = 0;
     let reservedFees = 0n;
     for (const row of recent) {
-      if (!["preparing", "prepared", "finalized"].includes(row.status)) continue;
+      if (!["preparing", "prepared", "finalized"].includes(row.status) &&
+          !(row.status === "failed" && row.failureCode === "finalized_chain_failure")) continue;
       dailyOperations += 1;
       const amount = row.feeLamports && positiveInteger(row.feeLamports)
         ? BigInt(row.feeLamports)
@@ -4750,9 +4752,15 @@ export async function updateGasTankOperationAttempt(
   }
 ): Promise<boolean> {
   const previousStatuses =
-    input.status === "prepared" || input.status === "failed" || input.status === "cancelled"
-      ? ["preparing"]
-      : ["prepared"];
+    input.status === "finalized"
+      ? ["prepared"]
+      : input.status === "failed" && input.failureCode === "finalized_chain_failure"
+        ? ["prepared"]
+        : input.status === "cancelled" && input.failureCode === "recent_blockhash_expired"
+          ? ["prepared"]
+          : input.status === "prepared" || input.status === "failed" || input.status === "cancelled"
+            ? ["preparing"]
+            : ["prepared"];
   const update = await db
     .update(gasTankOperations)
     .set({

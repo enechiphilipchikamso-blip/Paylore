@@ -10,6 +10,7 @@ import {
   getWorkspaceGasTankSponsorshipUsage,
   getWorkspacePayrollRun,
   getWorkspaceSubscription,
+  recordPayrollClaimSubmission,
   updateGasTankOperationAttempt
 } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../server/session";
@@ -30,6 +31,7 @@ import {
 import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../../server/gas-tank-sponsorship";
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
 import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
+import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -46,6 +48,90 @@ const requestSchema = z.discriminatedUnion("action", [
   }).strict()
 ]);
 const MAX_REQUEST_BYTES = 4_096;
+
+type PreparedSponsorshipData = {
+  runId: string;
+  claimIds: string[];
+  authorityAddress: string;
+  programId: string;
+  allocationCommitment: string;
+  claims: Array<{ claimId: string; claimAddress: string }>;
+  blockhash: string;
+  transactionBase64: string;
+};
+
+function preparedSponsorshipData(value: unknown): PreparedSponsorshipData | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  if (
+    typeof data.runId !== "string" ||
+    !Array.isArray(data.claimIds) ||
+    !data.claimIds.every((id) => typeof id === "string") ||
+    typeof data.authorityAddress !== "string" ||
+    typeof data.programId !== "string" ||
+    typeof data.allocationCommitment !== "string" ||
+    !Array.isArray(data.claims) ||
+    !data.claims.every((claim) => claim && typeof claim === "object" &&
+      typeof (claim as Record<string, unknown>).claimId === "string" &&
+      typeof (claim as Record<string, unknown>).claimAddress === "string") ||
+    typeof data.blockhash !== "string" ||
+    typeof data.transactionBase64 !== "string"
+  ) return null;
+  return data as unknown as PreparedSponsorshipData;
+}
+
+async function reconcileFinalizedSponsorship(input: {
+  db: ReturnType<typeof getDatabase>;
+  workspaceId: string;
+  runId: string;
+  signature: string;
+  operationId: string;
+  data: PreparedSponsorshipData;
+  run: Awaited<ReturnType<typeof getWorkspacePayrollRun>>;
+}) {
+  if (!input.run || input.data.runId !== input.runId ||
+      input.data.claimIds.length !== input.data.claims.length ||
+      input.data.claimIds.some((id, index) => id.toLowerCase() !== input.data.claims[index]?.claimId.toLowerCase())) {
+    throw new GasTankSponsorshipPolicyError("sponsorship_operation_reconciliation_data_invalid");
+  }
+  const claims = input.data.claims.map((claim) => {
+    const allocation = input.run!.allocations.find((item) =>
+      item.claimId?.toLowerCase() === claim.claimId.toLowerCase()
+    );
+    if (!allocation?.contributorWalletAddress) {
+      throw new GasTankSponsorshipPolicyError("sponsorship_operation_allocation_missing");
+    }
+    return {
+      claimId: claim.claimId,
+      claimAddress: claim.claimAddress,
+      contributorAddress: allocation.contributorWalletAddress
+    };
+  });
+  await verifyPayrollClaimTransaction({
+    signature: input.signature,
+    authorityAddress: input.data.authorityAddress,
+    workspaceId: input.workspaceId,
+    allocationCommitment: input.data.allocationCommitment,
+    claims
+  });
+  const saved = await updateGasTankOperationAttempt(input.db, {
+    workspaceId: input.workspaceId,
+    operationId: input.operationId,
+    status: "finalized",
+    transactionSignature: input.signature
+  });
+  if (!saved) throw new GasTankSponsorshipPolicyError("sponsorship_operation_signature_mismatch");
+  const recorded = await recordPayrollClaimSubmission(input.db, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    signature: input.signature,
+    claims: input.data.claims
+  });
+  if (recorded.status !== "committed" && recorded.status !== "submitting") {
+    throw new GasTankSponsorshipPolicyError("sponsorship_claim_persistence_conflict");
+  }
+  return recorded;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,14 +259,6 @@ export async function POST(request: Request, { params }: RouteContext) {
       workspaceId,
       new Date(now.getTime() - 24 * 60 * 60 * 1000)
     );
-    if (usage.overflow || usage.operationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
-        usage.feeLamports + MAX_SPONSORED_FEE_LAMPORTS > MAX_DAILY_SPONSORED_FEE_LAMPORTS) {
-      return NextResponse.json({ error: "gas_tank_daily_sponsorship_limit" }, { status: 429 });
-    }
-    if (BigInt(tank.balanceLamports) < MAX_SPONSORED_FEE_LAMPORTS) {
-      return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
-    }
-
     const requestDigest = createHash("sha256").update(JSON.stringify({
       workspaceId,
       runId,
@@ -196,25 +274,32 @@ export async function POST(request: Request, { params }: RouteContext) {
       if (priorOperation.requestDigest !== requestDigest) {
         return NextResponse.json({ error: "sponsorship_idempotency_conflict" }, { status: 409 });
       }
-      if (priorOperation.status === "prepared") {
-        if (!priorOperation.transactionSignature || !priorOperation.lastValidBlockHeight ||
-            !priorOperation.operationData || typeof priorOperation.operationData !== "object") {
+      if (priorOperation.status === "preparing") {
+        return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
+      }
+      if (priorOperation.status === "prepared" || priorOperation.status === "finalized") {
+        const data = preparedSponsorshipData(priorOperation.operationData);
+        if (!priorOperation.transactionSignature || !priorOperation.lastValidBlockHeight || !data ||
+            data.runId !== runId || data.programId !== programId ||
+            data.authorityAddress !== session.session.walletAddress ||
+            data.allocationCommitment !== run.run.allocationCommitment ||
+            data.claimIds.join(":") !== claimIds.join(":")) {
           return NextResponse.json({ error: "sponsorship_operation_reconciliation_data_missing" }, { status: 409 });
         }
-        const data = priorOperation.operationData as Record<string, unknown>;
         const [statuses, blockHeight] = await Promise.all([
           readSolanaRpc<{ value: Array<{ confirmationStatus?: string | null; err?: unknown } | null> }>(
             "getSignatureStatuses", [[priorOperation.transactionSignature], { searchTransactionHistory: true }]
           ),
           readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }])
         ]);
-        const state = classifyPreparedSponsorshipState({
-          currentBlockHeight: blockHeight,
-          lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
-          signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
-        });
-        if (state === "live" && typeof data.transactionBase64 === "string" &&
-            Array.isArray(data.claims) && typeof data.blockhash === "string") {
+        const state = priorOperation.status === "finalized"
+          ? "finalized_success"
+          : classifyPreparedSponsorshipState({
+              currentBlockHeight: blockHeight,
+              lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
+              signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
+            });
+        if (state === "live" && priorOperation.status === "prepared") {
           return NextResponse.json({
             status: "prepared",
             operationId: priorOperation.id,
@@ -229,18 +314,63 @@ export async function POST(request: Request, { params }: RouteContext) {
             replayed: true
           }, { headers: { "Cache-Control": "no-store" } });
         }
-        return NextResponse.json({
-          error: state === "submitted_pending" ? "sponsorship_transaction_pending_finality"
-            : state === "finalized_success" || state === "finalized_failure" ? "sponsorship_transaction_already_submitted"
-            : "sponsorship_transaction_expired_prepare_again"
-        }, { status: 409, headers: { "Cache-Control": "no-store" } });
+        if (state === "submitted_pending" && priorOperation.status === "prepared") {
+          return NextResponse.json({ error: "sponsorship_transaction_pending_finality" }, { status: 409, headers: { "Cache-Control": "no-store" } });
+        }
+        if (state === "finalized_success") {
+          const reconciled = await reconcileFinalizedSponsorship({
+            db, workspaceId, runId, signature: priorOperation.transactionSignature,
+            operationId: priorOperation.id, data, run
+          });
+          return NextResponse.json({
+            status: "reconciled",
+            signature: priorOperation.transactionSignature,
+            replayed: true,
+            submittedCount: reconciled.submittedCount,
+            totalCount: reconciled.totalCount
+          }, { headers: { "Cache-Control": "no-store" } });
+        }
+        if (state === "finalized_failure") {
+          const transaction = await readSolanaRpc<{ meta?: { fee?: unknown } | null } | null>(
+            "getTransaction",
+            [priorOperation.transactionSignature, { commitment: "finalized", maxSupportedTransactionVersion: 0, encoding: "jsonParsed" }]
+          );
+          if (!transaction?.meta || typeof transaction.meta.fee !== "number" ||
+              !Number.isSafeInteger(transaction.meta.fee) || transaction.meta.fee < 0) {
+            return NextResponse.json({ error: "sponsorship_failed_transaction_fee_unavailable" }, { status: 503 });
+          }
+          const released = await updateGasTankOperationAttempt(db, {
+            workspaceId, operationId: priorOperation.id, status: "failed",
+            transactionSignature: priorOperation.transactionSignature,
+            feeLamports: String(transaction.meta.fee),
+            failureCode: "finalized_chain_failure"
+          });
+          if (!released) return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+          return NextResponse.json({
+            error: "previous_sponsored_transaction_failed_retry_allowed",
+            signature: priorOperation.transactionSignature,
+            feeLamports: String(transaction.meta.fee)
+          }, { status: 409, headers: { "Cache-Control": "no-store" } });
+        }
+        if (state === "expired" && priorOperation.status === "prepared") {
+          const released = await updateGasTankOperationAttempt(db, {
+            workspaceId, operationId: priorOperation.id, status: "cancelled",
+            transactionSignature: priorOperation.transactionSignature,
+            failureCode: "recent_blockhash_expired"
+          });
+          if (!released) return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+        } else {
+          return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+        }
       }
-      if (priorOperation.status === "finalized") {
-        return NextResponse.json({ error: "sponsorship_operation_already_finalized" }, { status: 409 });
-      }
-      if (priorOperation.status === "preparing") {
-        return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
-      }
+    }
+
+    if (usage.overflow || usage.operationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
+        usage.feeLamports + MAX_SPONSORED_FEE_LAMPORTS > MAX_DAILY_SPONSORED_FEE_LAMPORTS) {
+      return NextResponse.json({ error: "gas_tank_daily_sponsorship_limit" }, { status: 429 });
+    }
+    if (BigInt(tank.balanceLamports) < MAX_SPONSORED_FEE_LAMPORTS) {
+      return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
     }
 
     const begun = await beginGasTankOperationAttempt(db, {
@@ -252,7 +382,11 @@ export async function POST(request: Request, { params }: RouteContext) {
       availableBalanceLamports: tank.balanceLamports,
       maxDailyFeeLamports: String(MAX_DAILY_SPONSORED_FEE_LAMPORTS),
       maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
-      since: new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      since: new Date(now.getTime() - 24 * 60 * 60 * 1000),
+      operationData: {
+        runId, claimIds, authorityAddress: session.session.walletAddress,
+        programId, allocationCommitment: run.run.allocationCommitment
+      }
     });
     if (begun.status !== "started" || !begun.operation) {
       if (begun.status === "gas_tank_not_initialized") {
