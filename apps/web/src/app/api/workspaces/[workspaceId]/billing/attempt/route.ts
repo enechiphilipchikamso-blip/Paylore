@@ -5,6 +5,8 @@ import { getDatabase } from "../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../server/security";
 import { clearSessionCookie, getSessionState } from "../../../../../server/session";
 import { PaymentVerificationError, verifySubscriptionPayment } from "../../../../../server/solana/payment-verification";
+import { readSolanaRpc } from "../../../../../server/solana/rpc";
+import { assessAmbiguousPaymentAttempt, PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT } from "../../../../../server/solana/payment-attempt-reconciliation";
 
 const schema = z.object({ attemptId: z.string().uuid(), signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/).optional() });
 export const runtime = "nodejs";
@@ -28,7 +30,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     if (!attempt || attempt.workspaceId !== workspaceId || attempt.userId !== session.session.userId || attempt.payerWalletAddress !== session.session.walletAddress) return NextResponse.json({ error: "payment_attempt_not_found" }, { status: 404 });
     if (parsed.data.signature) attempt = await recordSubscriptionPaymentAttemptSignature(db, { attemptId: attempt.id, signature: parsed.data.signature });
     if (attempt.status === "confirmed") return NextResponse.json({ status: "active" });
-    if (!attempt.signature) return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+    if (!attempt.signature) {
+      const [blockHeight, signatures] = await Promise.all([
+        readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]),
+        readSolanaRpc<Array<{ signature: string; slot: number; err: unknown; memo: string | null; blockTime: number | null }>>(
+          "getSignaturesForAddress",
+          [attempt.payerWalletAddress, { commitment: "finalized", limit: PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT }]
+        )
+      ]);
+      const decision = assessAmbiguousPaymentAttempt({
+        currentFinalizedBlockHeight: blockHeight,
+        lastValidBlockHeight: attempt.lastValidBlockHeight,
+        attemptCreatedAt: attempt.createdAt,
+        expectedMemo: attempt.memo,
+        signatures
+      });
+      if (decision.kind === "submitted") {
+        if (decision.failedOnChain) {
+          await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "failed", signature: null });
+          return NextResponse.json({ status: "safe_to_retry" });
+        }
+        attempt = await recordSubscriptionPaymentAttemptSignature(db, { attemptId: attempt.id, signature: decision.signature });
+      } else if (decision.kind === "safe_to_retry") {
+        await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "expired", signature: null });
+        return NextResponse.json({ status: "safe_to_retry" });
+      } else {
+        return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+      }
+    }
 
     try {
       const verified = await verifySubscriptionPayment(attempt.signature, session.session.walletAddress);
