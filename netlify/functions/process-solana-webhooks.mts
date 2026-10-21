@@ -6,6 +6,8 @@ import {
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
   getPayrollAllocationForChainReconciliation,
+  getPayrollAllocationsForChainReconciliationByClaimIds,
+  recordPayrollClaimSubmission,
   recordVerifiedPayrollRecoveryEvent,
   updateSubscriptionPaymentAttemptStatus,
   updateSolanaWebhookEventState
@@ -232,6 +234,122 @@ async function reconcileEvent(
     transaction?: { message?: { instructions?: Array<Record<string, unknown>> } };
   };
   const instructions = parsed.transaction?.message?.instructions ?? [];
+  const createClaimDiscriminator = createHash("sha256")
+    .update("global:create_claim")
+    .digest()
+    .subarray(0, 8);
+  const transactionBody = transaction as unknown as {
+    transaction?: {
+      signatures?: unknown;
+      message?: { accountKeys?: unknown };
+    };
+  };
+  const signatures = transactionBody.transaction?.signatures;
+  const accountKeys = transactionBody.transaction?.message?.accountKeys;
+  const authoritySigned = Array.isArray(accountKeys) && accountKeys.some((entry) =>
+    entry && typeof entry === "object" &&
+    "pubkey" in entry && entry.pubkey === event.sourceAddress &&
+    "signer" in entry && entry.signer === true
+  );
+  const claimInstructions: Array<{
+    claimId: string;
+    claimAddress: string;
+    contributorAddress: string;
+    commitment: string;
+  }> = [];
+  for (const instruction of instructions) {
+    if (instruction.programId !== payrollProgramId ||
+        typeof instruction.data !== "string" ||
+        !Array.isArray(instruction.accounts)) continue;
+    const data = decodeBase58(instruction.data);
+    if (!data || data.length !== 72 ||
+        !Buffer.from(data.subarray(0, 8)).equals(createClaimDiscriminator)) continue;
+    const accounts = instruction.accounts;
+    if (accounts.length !== 5 ||
+        accounts.some((account) => typeof account !== "string")) continue;
+    claimInstructions.push({
+      claimId: Buffer.from(data.subarray(8, 40)).toString("hex"),
+      commitment: Buffer.from(data.subarray(40, 72)).toString("hex"),
+      contributorAddress: accounts[1] as string,
+      claimAddress: accounts[3] as string
+    });
+  }
+  if (claimInstructions.length > 0) {
+    const signatureMatches = Array.isArray(signatures) &&
+      signatures.includes(event.transactionSignature);
+    if (!signatureMatches || !authoritySigned) {
+      await updateSolanaWebhookEventState(db, {
+        id: event.id,
+        status: "dead_letter",
+        errorCode: "payroll_claim_authority_not_verified",
+        processedAt: now,
+        now
+      });
+      return "dead_letter";
+    }
+    const uniqueClaimIds = claimInstructions.map((claim) => claim.claimId);
+    if (new Set(uniqueClaimIds).size !== uniqueClaimIds.length) {
+      await updateSolanaWebhookEventState(db, {
+        id: event.id,
+        status: "dead_letter",
+        errorCode: "duplicate_claim_instruction",
+        processedAt: now,
+        now
+      });
+      return "dead_letter";
+    }
+    const allocations = await getPayrollAllocationsForChainReconciliationByClaimIds(
+      db,
+      uniqueClaimIds
+    );
+    if (allocations.length !== claimInstructions.length) {
+      await retry("payroll_claim_allocation_not_mapped");
+      return deadLetter ? "dead_letter" : "retry_pending";
+    }
+    const byClaimId = new Map(allocations.map((allocation) => [allocation.claimId, allocation]));
+    const first = allocations[0];
+    const submittedClaims: Array<{ claimId: string; claimAddress: string }> = [];
+    for (const claim of claimInstructions) {
+      const allocation = byClaimId.get(claim.claimId);
+      if (!allocation ||
+          allocation.workspaceId !== first.workspaceId ||
+          allocation.runId !== first.runId ||
+          allocation.contributorWalletAddress !== claim.contributorAddress ||
+          allocation.allocationCommitment !== first.allocationCommitment ||
+          claim.commitment !== first.allocationCommitment ||
+          (allocation.claimAddress !== null && allocation.claimAddress !== claim.claimAddress)) {
+        await updateSolanaWebhookEventState(db, {
+          id: event.id,
+          status: "dead_letter",
+          errorCode: "payroll_claim_allocation_mismatch",
+          processedAt: now,
+          now
+        });
+        return "dead_letter";
+      }
+      submittedClaims.push({ claimId: claim.claimId, claimAddress: claim.claimAddress });
+    }
+    const result = await recordPayrollClaimSubmission(db, {
+      workspaceId: first.workspaceId,
+      runId: first.runId,
+      signature: event.transactionSignature,
+      claims: submittedClaims,
+      now
+    });
+    if (result.status !== "committed" && result.status !== "submitting") {
+      await retry("payroll_claim_state_conflict");
+      return deadLetter ? "dead_letter" : "retry_pending";
+    }
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "finalized",
+      finalizedAt: now,
+      processedAt: now,
+      now
+    });
+    return "finalized";
+  }
+
   const recoveryDiscriminator = createHash("sha256")
     .update("global:recover_claim")
     .digest()
