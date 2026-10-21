@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   beginGasTankOperationAttempt,
+  getWorkspaceGasTankOperation,
   getWorkspaceDeletionState,
   getWorkspaceForUser,
   getWorkspaceGasTankSponsorshipUsage,
@@ -26,6 +27,8 @@ import {
   MAX_SPONSORED_FEE_LAMPORTS
 } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../../server/gas-tank-sponsorship";
+import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
+import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -75,15 +78,46 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
 
     if (parsed.data.action === "cancel") {
+      const operation = await getWorkspaceGasTankOperation(db, workspaceId, parsed.data.operationId);
+      if (!operation) return NextResponse.json({ error: "sponsorship_operation_not_found" }, { status: 404 });
+      if (operation.status === "cancelled") {
+        return NextResponse.json({ status: "cancelled" }, { headers: { "Cache-Control": "no-store" } });
+      }
+      if (operation.status === "preparing" && !operation.transactionSignature) {
+        const cancelled = await updateGasTankOperationAttempt(db, {
+          workspaceId, operationId: operation.id, status: "cancelled", failureCode: "wallet_user_cancelled"
+        });
+        return cancelled
+          ? NextResponse.json({ status: "cancelled" }, { headers: { "Cache-Control": "no-store" } })
+          : NextResponse.json({ error: "sponsorship_operation_not_cancellable" }, { status: 409 });
+      }
+      if (operation.status !== "prepared" || !operation.transactionSignature || !operation.lastValidBlockHeight) {
+        return NextResponse.json({ error: "sponsorship_operation_not_cancellable" }, { status: 409 });
+      }
+      const [statuses, currentBlockHeight] = await Promise.all([
+        readSolanaRpc<{ value: Array<{ confirmationStatus?: string | null; err?: unknown } | null> }>(
+          "getSignatureStatuses", [[operation.transactionSignature], { searchTransactionHistory: true }]
+        ),
+        readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }])
+      ]);
+      const state = classifyPreparedSponsorshipState({
+        currentBlockHeight,
+        lastValidBlockHeight: Number(operation.lastValidBlockHeight),
+        signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
+      });
+      if (state !== "expired") {
+        return NextResponse.json({
+          error: state === "finalized_success" || state === "finalized_failure"
+            ? "sponsorship_transaction_already_submitted"
+            : state === "submitted_pending" ? "sponsorship_transaction_pending_finality" : "sponsorship_transaction_still_live"
+        }, { status: 409, headers: { "Cache-Control": "no-store" } });
+      }
       const cancelled = await updateGasTankOperationAttempt(db, {
-        workspaceId,
-        operationId: parsed.data.operationId,
-        status: "cancelled",
-        failureCode: "wallet_user_cancelled"
+        workspaceId, operationId: operation.id, status: "cancelled", failureCode: "recent_blockhash_expired"
       });
       return cancelled
-        ? NextResponse.json({ status: "cancelled" }, { headers: { "Cache-Control": "no-store" } })
-        : NextResponse.json({ error: "sponsorship_operation_not_cancellable" }, { status: 409 });
+        ? NextResponse.json({ status: "cancelled", reason: "recent_blockhash_expired" }, { headers: { "Cache-Control": "no-store" } })
+        : NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
     }
 
     const deletion = await getWorkspaceDeletionState(db, workspaceId);
@@ -207,7 +241,9 @@ export async function POST(request: Request, { params }: RouteContext) {
         operationId: begun.operation.id,
         status: "prepared",
         transactionSignature: prepared.signature,
-        feeLamports: prepared.feeLamports
+        feeLamports: prepared.feeLamports,
+        lastValidBlockHeight: String(prepared.lastValidBlockHeight),
+        operationData: { runId, claimIds, authorityAddress: session.session.walletAddress, programId, allocationCommitment: run.run.allocationCommitment, claims: prepared.claims, blockhash: prepared.blockhash }
       });
       if (!saved) throw new GasTankSponsorshipPolicyError("sponsorship_operation_state_changed");
       operationForFailure = null;
