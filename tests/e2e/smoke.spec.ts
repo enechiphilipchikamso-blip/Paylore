@@ -198,6 +198,10 @@ test.describe("public experience", () => {
       "href",
       "/icons/favicon.svg"
     );
+    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", "Paylore");
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/manifest.webmanifest");
+    await expect(page.locator('link[rel="shortcut icon"][href="/icons/paylore-192x192.png"]')).toHaveCount(1);
+    await expect(page.locator('link[rel="icon"][type="image/png"][sizes="192x192"][href="/icons/paylore-192x192.png"]')).toHaveCount(1);
     await expect(
       page.locator('link[rel="apple-touch-icon"]')
     ).toHaveAttribute("href", "/icons/paylore-180x180.png");

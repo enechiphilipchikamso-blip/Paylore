@@ -30,7 +30,7 @@ export function SubscriptionPaymentAction({
   const [partial, setPartial] = useState<string | null>(null);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
-  const [, setAttemptId] = useState<string | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
   async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<boolean> {
@@ -45,7 +45,7 @@ export function SubscriptionPaymentAction({
       body: JSON.stringify(body)
     });
     const result = await response.json().catch(() => null) as { status?: string } | null;
-    if (!response.ok || (attemptId && result?.status !== "active")) return false;
+    if (!response.ok || (paymentAttemptId && result?.status !== "active")) return false;
     setPendingSignature(null);
     setSubmissionUncertain(false);
     setProgress(null);
@@ -200,7 +200,7 @@ export function SubscriptionPaymentAction({
           : "Workspace activation could not be completed.";
       if (isWalletCancellation(cause)) {
         setProgress(null);
-        setPartial("The wallet request was cancelled. No activation payment was sent.");
+        setPartial("Payment was canceled. No payment was sent.");
       } else if (walletSubmissionStarted) {
         setSubmissionUncertain(true);
         setPartial(
@@ -208,7 +208,7 @@ export function SubscriptionPaymentAction({
         );
       } else {
         setProgress(null);
-        setError(message);
+        setError("The activation transaction could not be prepared. No payment was sent. Please try again.");
       }
     } finally {
       setBusy(false);
