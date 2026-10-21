@@ -17,4 +17,4 @@ SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,SOLANA_NETWORK,PAYLORE_NETWORK,PAYLORE_RPC_PR
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
-external_node_modules = ["@solana/kit", "drizzle-orm", "postgres", "zod"]
+external_node_modules = ["drizzle-orm", "postgres"]
