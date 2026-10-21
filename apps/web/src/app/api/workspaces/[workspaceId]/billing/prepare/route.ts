@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { getWorkspaceForUser } from "@paylore/database";
 import { getDatabase } from "../../../../../../server/db";
 import { loadPayloreConfig } from "../../../../../../server/config";
@@ -13,6 +14,8 @@ import { readSolanaRpc, SolanaRpcError } from "../../../../../../server/solana/r
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
+
+const SPL_TOKEN_PROGRAM_ADDRESS = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,19 +61,43 @@ export async function POST(
       );
     }
 
-    const latest = await readSolanaRpc<{
-      context: { slot: number };
-      value: {
-        blockhash: string;
-        lastValidBlockHeight: number;
-      };
-    }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    const mintAddress = config.PAYLORE_SUBSCRIPTION_USDC_MINT;
+    const [latest, mintAccount] = await Promise.all([
+      readSolanaRpc<{
+        context: { slot: number };
+        value: {
+          blockhash: string;
+          lastValidBlockHeight: number;
+        };
+      }>("getLatestBlockhash", [{ commitment: "confirmed" }]),
+      readSolanaRpc<{
+        value: { owner: string } | null;
+      }>("getAccountInfo", [mintAddress, {
+        commitment: "confirmed",
+        encoding: "base64"
+      }])
+    ]);
+
+    const supportedTokenPrograms = new Set<string>([
+      SPL_TOKEN_PROGRAM_ADDRESS,
+      TOKEN_2022_PROGRAM_ADDRESS
+    ]);
+    if (
+      !mintAccount.value ||
+      !supportedTokenPrograms.has(mintAccount.value.owner)
+    ) {
+      return NextResponse.json(
+        { error: "payment_configuration_incomplete" },
+        { status: 503 }
+      );
+    }
 
     return NextResponse.json(
       {
         payer: session.session.walletAddress,
         recipient: config.PAYLORE_SUBSCRIPTION_RECIPIENT,
-        mint: config.PAYLORE_SUBSCRIPTION_USDC_MINT,
+        mint: mintAddress,
+        tokenProgram: mintAccount.value.owner,
         blockhash: latest.value.blockhash,
         lastValidBlockHeight: latest.value.lastValidBlockHeight
       },
