@@ -4299,3 +4299,77 @@ export async function getPayrollAllocationForChainReconciliation(
   }
   return rows[0] ?? null;
 }
+
+export async function recordVerifiedPayrollRecoveryEvent(
+  db: Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    signature: string;
+    claimAddress: string;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        id: payrollAllocations.id,
+        claimAddress: payrollAllocations.claimAddress,
+        status: payrollAllocations.status,
+        claimId: payrollAllocations.claimId
+      })
+      .from(payrollAllocations)
+      .where(and(
+        eq(payrollAllocations.id, input.allocationId),
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        eq(payrollAllocations.payrollRunId, input.runId)
+      ))
+      .for("update")
+      .limit(1);
+    const allocation = rows[0];
+    if (!allocation) return { status: "not_found" as const };
+    if (allocation.status === "recovered" &&
+        allocation.claimAddress === input.claimAddress) {
+      return { status: "duplicate" as const };
+    }
+    if (allocation.status !== "unclaimed" ||
+        allocation.claimAddress !== input.claimAddress) {
+      return { status: "conflict" as const };
+    }
+    const updated = await tx.update(payrollAllocations).set({
+      status: "recovered",
+      recoveredAt: now,
+      transactionSignature: input.signature,
+      updatedAt: now
+    }).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.status, "unclaimed"),
+      eq(payrollAllocations.claimAddress, input.claimAddress)
+    )).returning({ id: payrollAllocations.id });
+    if (!updated[0]) return { status: "conflict" as const };
+    await tx.insert(workspaceLedgerEntries).values({
+      workspaceId: input.workspaceId,
+      idempotencyKey: `payroll-recovery-chain:${input.allocationId}`,
+      category: "recovery",
+      entryType: "claim_entitlement_cancelled",
+      status: "finalized",
+      referenceType: "payroll_allocation",
+      referenceId: input.allocationId,
+      transactionSignature: input.signature,
+      metadata: {
+        runId: input.runId,
+        claimId: allocation.claimId,
+        claimAddress: input.claimAddress,
+        valueTransferred: false,
+        source: "finalized_chain_event"
+      },
+      createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    });
+    return { status: "recovered" as const };
+  });
+}
