@@ -17,14 +17,16 @@ function setup(options: {
   getStatus?: number;
   putStatus?: number;
 } = {}) {
+  let persisted = options.current ?? current;
   const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     if (init?.method === "PUT") {
-      return new Response(JSON.stringify(options.updated ?? {
-        ...options.current ?? current,
+      persisted = options.updated ?? {
+        ...persisted,
         accountAddresses: addresses
-      }), { status: options.putStatus ?? 200 });
+      };
+      return new Response(JSON.stringify(persisted), { status: options.putStatus ?? 200 });
     }
-    return new Response(JSON.stringify(options.current ?? current), {
+    return new Response(JSON.stringify(persisted), {
       status: options.getStatus ?? 200
     });
   }) as unknown as typeof fetch;
@@ -44,7 +46,7 @@ describe("dynamic Helius webhook address reconciliation", () => {
         listAddresses: async () => addresses
       });
       expect(result).toEqual({ status: "updated", addressCount: 2 });
-      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
       const update = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1] as RequestInit;
       expect(JSON.parse(String(update.body))).toMatchObject({
         webhookURL: current.webhookURL,
