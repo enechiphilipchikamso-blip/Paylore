@@ -30,6 +30,8 @@ export function SubscriptionPaymentAction({
   const [partial, setPartial] = useState<string | null>(null);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
 
   async function verifyPayment(signature: string): Promise<boolean> {
     const response = await fetch(
@@ -78,6 +80,7 @@ export function SubscriptionPaymentAction({
     setError(null);
     setPartial(null);
     setSubmissionUncertain(false);
+    setProgress("Preparing your $49 USDC payment…");
     let walletSubmissionStarted = false;
     try {
       const prepareResponse = await fetch(
@@ -104,7 +107,11 @@ export function SubscriptionPaymentAction({
         tokenProgram: string;
         blockhash: string;
         lastValidBlockHeight: number;
+        attemptId: string;
+        memo: string;
+        expiresAt: string;
       } = await prepareResponse.json();
+      setAttemptId(prepared.attemptId);
       if (prepared.payer !== walletAddress) {
         throw new Error(
           "Your authenticated wallet changed. Sign in again before paying."
@@ -113,9 +120,11 @@ export function SubscriptionPaymentAction({
 
       const transaction = await createSubscriptionPaymentTransaction({
         ...prepared,
-        workspaceId
+        workspaceId,
+        memo: prepared.memo
       });
       const wallet = await findAuthenticatedWallet(walletAddress);
+      setProgress("Waiting for wallet approval…");
       walletSubmissionStarted = true;
       const [sent] = await wallet.signAndSendTransaction({
         account: wallet.account,
@@ -151,6 +160,7 @@ export function SubscriptionPaymentAction({
           ? cause.message
           : "Workspace activation could not be completed.";
       if (isWalletCancellation(cause)) {
+        setProgress(null);
         setPartial("The wallet request was cancelled. No activation payment was sent.");
       } else if (walletSubmissionStarted) {
         setSubmissionUncertain(true);
@@ -158,6 +168,7 @@ export function SubscriptionPaymentAction({
           "The wallet did not return a transaction confirmation. Check your wallet activity before trying again to avoid a duplicate payment."
         );
       } else {
+        setProgress(null);
         setError(message);
       }
     } finally {
@@ -182,7 +193,7 @@ export function SubscriptionPaymentAction({
       {busy ? (
         <p className="loading-indicator" role="status" aria-live="polite">
           <span className="loading-indicator__icon" aria-hidden="true" />
-          Activating your workspace…
+          {progress || "Activating your workspace…"}
         </p>
       ) : pendingSignature ? (
         <button
