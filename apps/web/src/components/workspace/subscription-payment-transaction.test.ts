@@ -11,6 +11,7 @@ describe("subscription payment transaction", () => {
       mint: "8wZmMHQY3bCJMhWs8j6BLxvgNLUkCXB2F5tEZPFF8A6q",
       tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
       workspaceId: "workspace-test",
+      memo: "Paylore activation attempt test | workspace workspace-test",
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     });
@@ -40,6 +41,7 @@ describe("subscription payment transaction", () => {
       mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
       tokenProgram: classicTokenProgram,
       workspaceId: "workspace-classic-usdc",
+      memo: "Paylore activation attempt test | workspace workspace-classic-usdc",
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     });
@@ -61,6 +63,7 @@ describe("subscription payment transaction", () => {
       mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
       tokenProgram: "11111111111111111111111111111111",
       workspaceId: "workspace-test",
+      memo: "Paylore activation attempt test | workspace workspace-test",
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     })).rejects.toThrow("unsupported token program");

@@ -30,7 +30,7 @@ export function SubscriptionPaymentAction({
   const [partial, setPartial] = useState<string | null>(null);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
-  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [, setAttemptId] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
   async function verifyPayment(signature: string): Promise<boolean> {
