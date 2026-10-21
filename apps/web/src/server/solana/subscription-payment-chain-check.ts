@@ -56,7 +56,7 @@ export function isExactSubscriptionPaymentTransaction(
     !expected.payerAddress ||
     !expected.recipient ||
     !expected.mint ||
-    !/^\\d+$/.test(expected.amountBaseUnits)
+    !/^\d+$/.test(expected.amountBaseUnits)
   ) {
     return false;
   }
@@ -90,7 +90,7 @@ export function isExactSubscriptionPaymentTransaction(
     const decimals = tokenAmount?.decimals;
     if (
       typeof amount !== "string" ||
-      !/^\\d+$/.test(amount) ||
+      !/^\d+$/.test(amount) ||
       decimals !== 6
     ) {
       continue;
