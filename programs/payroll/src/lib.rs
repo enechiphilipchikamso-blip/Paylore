@@ -94,28 +94,11 @@ pub mod paylore_payroll {
         Ok(())
     }
 
-    pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
-        validate_token_account_identity(
-            &ctx.accounts.reserve_token_account.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.mint.key(),
-        )?;
-        validate_token_account_identity(
-            &ctx.accounts.destination_token_account.to_account_info(),
-            ctx.accounts.contributor.key(),
-            ctx.accounts.mint.key(),
-        )?;
-        require_confidential_transfer_precedes_claim(
-            &ctx.accounts.instructions_sysvar.to_account_info(),
-            ctx.accounts.reserve_token_account.key(),
-            ctx.accounts.mint.key(),
-            ctx.accounts.destination_token_account.key(),
-            ctx.accounts.reserve_authority.key(),
-        )?;
-
-        // The state write is atomic with the Token-2022 confidential transfer;
-        // Solana rolls back both instructions if either one fails.
-        transition_claim_to_claimed(&mut ctx.accounts.claim)
+    pub fn mark_claimed(_ctx: Context<MarkClaimed>) -> Result<()> {
+        // A transfer's ciphertext proof does not yet bind its hidden amount to
+        // this allocation's stored commitment. Failing closed prevents a tiny
+        // unrelated transfer from consuming a larger payroll entitlement.
+        err!(PayrollError::SettlementAmountBindingUnavailable)
     }
 
     pub fn recover_claim(
@@ -170,53 +153,6 @@ fn validate_token_account_identity(
         data[0..32] == expected_mint_bytes[..]
             && data[32..64] == expected_owner_bytes[..],
         PayrollError::InvalidTokenAccount
-    );
-    Ok(())
-}
-
-fn matches_expected_confidential_transfer(
-    instruction: &Instruction,
-    source: Pubkey,
-    mint: Pubkey,
-    destination: Pubkey,
-    authority: Pubkey,
-) -> bool {
-    instruction.program_id == TOKEN_2022_PROGRAM_ID
-        && instruction.data.get(0..2) == Some(&[27u8, 7u8][..])
-        && instruction.accounts.len() > 8
-        && instruction.accounts[1].pubkey == source
-        && instruction.accounts[2].pubkey == mint
-        && instruction.accounts[3].pubkey == destination
-        && instruction.accounts[8].pubkey == authority
-        && instruction.accounts[8].is_signer
-}
-
-fn require_confidential_transfer_precedes_claim(
-    instructions_sysvar: &AccountInfo,
-    source: Pubkey,
-    mint: Pubkey,
-    destination: Pubkey,
-    authority: Pubkey,
-) -> Result<()> {
-    let current_index = load_current_index_checked(instructions_sysvar)
-        .map_err(|_| error!(PayrollError::SettlementTransferRequired))?;
-    let mut matching_transfers = 0u8;
-    for index in 0..current_index {
-        let instruction = load_instruction_at_checked(index as usize, instructions_sysvar)
-            .map_err(|_| error!(PayrollError::SettlementTransferRequired))?;
-        if matches_expected_confidential_transfer(
-            &instruction,
-            source,
-            mint,
-            destination,
-            authority,
-        ) {
-            matching_transfers = matching_transfers.saturating_add(1);
-        }
-    }
-    require!(
-        matching_transfers == 1,
-        PayrollError::SettlementTransferRequired
     );
     Ok(())
 }
@@ -493,8 +429,8 @@ pub enum PayrollError {
     InvalidTokenAccount,
     #[msg("The workspace reserve is already configured with a different identity.")]
     ReserveConfigurationConflict,
-    #[msg("The claim can only be settled atomically with its configured confidential transfer.")]
-    SettlementTransferRequired,
+    #[msg("Confidential settlement cannot yet prove the transferred amount matches this allocation.")]
+    SettlementAmountBindingUnavailable,
 }
 
 #[cfg(test)]
@@ -578,54 +514,6 @@ mod tests {
         assert_eq!(recoverable.status, ClaimStatus::Recovered);
         assert!(transition_claim_to_claimed(&mut recoverable).is_err());
         assert!(transition_claim_to_recovered(&mut recoverable).is_err());
-    }
-
-    #[test]
-    fn claim_requires_exact_signed_token_2022_confidential_transfer() {
-        let source = Pubkey::new_unique();
-        let mint = Pubkey::new_unique();
-        let destination = Pubkey::new_unique();
-        let authority = Pubkey::new_unique();
-        let mut accounts = vec![
-            AccountMeta::new_readonly(Pubkey::new_unique(), false),
-            AccountMeta::new(source, false),
-            AccountMeta::new_readonly(mint, false),
-            AccountMeta::new(destination, false),
-            AccountMeta::new_readonly(Pubkey::new_unique(), false),
-            AccountMeta::new_readonly(Pubkey::new_unique(), false),
-            AccountMeta::new_readonly(Pubkey::new_unique(), false),
-            AccountMeta::new_readonly(Pubkey::new_unique(), false),
-            AccountMeta::new_readonly(authority, true),
-        ];
-        let instruction = Instruction {
-            program_id: TOKEN_2022_PROGRAM_ID,
-            accounts: accounts.clone(),
-            data: vec![27, 7, 0],
-        };
-        assert!(matches_expected_confidential_transfer(
-            &instruction, source, mint, destination, authority
-        ));
-
-        accounts[1].pubkey = Pubkey::new_unique();
-        let wrong_source = Instruction { accounts: accounts.clone(), ..instruction.clone() };
-        assert!(!matches_expected_confidential_transfer(
-            &wrong_source, source, mint, destination, authority
-        ));
-
-        accounts[1].pubkey = source;
-        accounts[8].is_signer = false;
-        let unsigned_reserve = Instruction { accounts, ..instruction.clone() };
-        assert!(!matches_expected_confidential_transfer(
-            &unsigned_reserve, source, mint, destination, authority
-        ));
-
-        let classic_transfer = Instruction {
-            program_id: Pubkey::new_unique(),
-            ..instruction
-        };
-        assert!(!matches_expected_confidential_transfer(
-            &classic_transfer, source, mint, destination, authority
-        ));
     }
 
     #[test]
