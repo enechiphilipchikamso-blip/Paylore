@@ -1,11 +1,15 @@
 import {
+  applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
   createDatabase,
+  getSubscriptionPaymentAttemptBySignature,
+  updateSubscriptionPaymentAttemptStatus,
   updateSolanaWebhookEventState
 } from "../../packages/database/src/index";
 import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/config";
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
+import { isExactSubscriptionPaymentTransaction } from "../../apps/web/src/server/solana/subscription-payment-chain-check";
 
 export const config = {
   schedule: "* * * * *"
@@ -110,6 +114,60 @@ async function reconcileEvent(
     });
     return "failed";
   }
+  const paymentAttempt = await getSubscriptionPaymentAttemptBySignature(
+    db,
+    event.transactionSignature
+  );
+  if (paymentAttempt) {
+    const exactPayment = isExactSubscriptionPaymentTransaction(transaction, {
+      signature: event.transactionSignature,
+      payerAddress: paymentAttempt.payerWalletAddress,
+      recipient: paymentAttempt.recipient,
+      mint: paymentAttempt.mint,
+      amountBaseUnits: paymentAttempt.amountBaseUnits
+    });
+    if (!exactPayment) {
+      await updateSubscriptionPaymentAttemptStatus(db, {
+        attemptId: paymentAttempt.id,
+        signature: event.transactionSignature,
+        status: "failed",
+        now
+      });
+      await updateSolanaWebhookEventState(db, {
+        id: event.id,
+        status: "failed",
+        errorCode: "subscription_payment_intent_mismatch",
+        processedAt: now,
+        now
+      });
+      return "failed";
+    }
+
+    const verified = await applyVerifiedSubscriptionPayment(db, {
+      workspaceId: paymentAttempt.workspaceId,
+      userId: paymentAttempt.userId,
+      signature: event.transactionSignature,
+      mint: paymentAttempt.mint,
+      recipient: paymentAttempt.recipient,
+      amountBaseUnits: paymentAttempt.amountBaseUnits,
+      now
+    });
+    await updateSubscriptionPaymentAttemptStatus(db, {
+      attemptId: paymentAttempt.id,
+      signature: event.transactionSignature,
+      status: "confirmed",
+      now
+    });
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "finalized",
+      finalizedAt: now,
+      processedAt: now,
+      now
+    });
+    return verified.duplicate ? "finalized" : "finalized";
+  }
+
   if (!payrollProgramId) {
     await retry("payroll_program_not_configured");
     return deadLetter ? "dead_letter" : "retry_pending";
