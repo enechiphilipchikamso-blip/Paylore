@@ -28,6 +28,7 @@ export async function reconcileHeliusWebhookAddresses(
     expectedWebhookUrl: string | undefined;
     fetchImpl?: typeof fetch;
     listAddresses?: (db: Database) => Promise<string[]>;
+    stableAddresses?: string[];
   }
 ): Promise<{ status: "disabled" | "unchanged" | "updated"; addressCount: number }> {
   if (!input.apiKey || !input.webhookId || !input.expectedWebhookUrl) {
@@ -43,7 +44,10 @@ export async function reconcileHeliusWebhookAddresses(
     throw new Error("HELIUS_WEBHOOK_URL_INVALID");
   }
 
-  const addresses = await (input.listAddresses ?? listHeliusMonitoredAddresses)(db);
+  const addresses = [...new Set([
+    ...(input.stableAddresses ?? []),
+    ...(await (input.listAddresses ?? listHeliusMonitoredAddresses)(db))
+  ].filter((address) => typeof address === "string" && address.length > 0))].sort();
   const fetchImpl = input.fetchImpl ?? fetch;
   const endpoint = "https://api.helius.xyz/v0/webhooks/" +
     encodeURIComponent(input.webhookId) + "?api-key=" + encodeURIComponent(input.apiKey);
@@ -89,13 +93,27 @@ export async function reconcileHeliusWebhookAddresses(
   }
 
   const updated = await updateResponse.json() as HeliusWebhook;
-  const updatedAddresses = Array.isArray(updated.accountAddresses)
-    ? updated.accountAddresses.filter((address): address is string => typeof address === "string").sort()
-    : [];
   if (updated.webhookID !== input.webhookId ||
-      updated.webhookURL !== expectedUrl.toString() ||
-      updatedAddresses.length !== addresses.length ||
-      !updatedAddresses.every((address, index) => address === addresses[index])) {
+      updated.webhookURL !== expectedUrl.toString()) {
+    throw new Error("HELIUS_WEBHOOK_UPDATE_NOT_RECONCILED");
+  }
+
+  const readBackResponse = await fetchImpl(endpoint, {
+    method: "GET",
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(10_000)
+  });
+  if (!readBackResponse.ok) {
+    throw new Error("HELIUS_WEBHOOK_READBACK_FAILED_" + readBackResponse.status);
+  }
+  const readBack = await readBackResponse.json() as HeliusWebhook;
+  const readBackAddresses = Array.isArray(readBack.accountAddresses)
+    ? readBack.accountAddresses.filter((address): address is string => typeof address === "string").sort()
+    : [];
+  if (readBack.webhookID !== input.webhookId ||
+      readBack.webhookURL !== expectedUrl.toString() ||
+      readBackAddresses.length !== addresses.length ||
+      !readBackAddresses.every((address, index) => address === addresses[index])) {
     throw new Error("HELIUS_WEBHOOK_UPDATE_NOT_RECONCILED");
   }
   return { status: "updated", addressCount: addresses.length };
