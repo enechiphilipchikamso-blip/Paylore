@@ -23,7 +23,9 @@ describe("Solana payroll event decoding invariants", () => {
     const payload = Buffer.concat([discriminator, Buffer.alloc(32, 1), Buffer.alloc(32, 2)]);
     expect(payload).toHaveLength(72);
     expect(Buffer.from(payload.subarray(0, 8))).toEqual(discriminator);
-    expect(Buffer.from(encodeBase58(payload), "base64")).not.toEqual(payload);
+    const encoded = encodeBase58(payload);
+    expect(encoded.length).toBeGreaterThan(0);
+    expect(Buffer.from(encoded, "base64")).not.toEqual(payload);
   });
 
   it("does not accept an instruction with a truncated claim commitment", () => {
