@@ -9,6 +9,7 @@ describe("subscription payment transaction", () => {
       payer: "11111111111111111111111111111111",
       recipient: "Vote111111111111111111111111111111111111111",
       mint: "8wZmMHQY3bCJMhWs8j6BLxvgNLUkCXB2F5tEZPFF8A6q",
+      tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
       workspaceId: "workspace-test",
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
@@ -29,4 +30,40 @@ describe("subscription payment transaction", () => {
       Buffer.from("Paylore workspace activation | 49 USDC | recipient Vote111111111111111111111111111111111111111 | workspace workspace-test")
     )).toBe(true);
   });
+ 
+  it("builds a classic SPL Token payment for a classic USDC mint", async () => {
+    const classicTokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const recipient = "Vote111111111111111111111111111111111111111";
+    const transaction = await createSubscriptionPaymentTransaction({
+      payer: "11111111111111111111111111111111",
+      recipient,
+      mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
+      tokenProgram: classicTokenProgram,
+      workspaceId: "workspace-classic-usdc",
+      blockhash: "11111111111111111111111111111111",
+      lastValidBlockHeight: 100
+    });
+
+    expect(Buffer.from(transaction).includes(
+      Buffer.from(getAddressEncoder().encode(address(classicTokenProgram)))
+    )).toBe(true);
+    expect(Buffer.from(transaction).includes(
+      Buffer.from(
+        `Paylore workspace activation | 49 USDC | recipient ${recipient} | workspace workspace-classic-usdc`
+      )
+    )).toBe(true);
+  });
+
+  it("rejects a token program not supported for subscription payments", async () => {
+    await expect(createSubscriptionPaymentTransaction({
+      payer: "11111111111111111111111111111111",
+      recipient: "Vote111111111111111111111111111111111111111",
+      mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
+      tokenProgram: "11111111111111111111111111111111",
+      workspaceId: "workspace-test",
+      blockhash: "11111111111111111111111111111111",
+      lastValidBlockHeight: 100
+    })).rejects.toThrow("unsupported token program");
+  });
+
 });
