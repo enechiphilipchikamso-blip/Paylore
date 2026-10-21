@@ -7,7 +7,6 @@ import {
   appendTransactionMessageInstructions,
   blockhash,
   createKeyPairSignerFromBytes,
-  createSolanaRpc,
   createTransactionMessage,
   getAddressEncoder,
   getBase64EncodedWireTransaction,

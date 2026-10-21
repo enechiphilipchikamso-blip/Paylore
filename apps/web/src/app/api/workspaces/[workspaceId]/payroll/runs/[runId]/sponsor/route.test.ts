@@ -157,6 +157,26 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
   });
 
+  it("returns the atomic budget rejection when reserved fees exceed the workspace balance", async () => {
+    mocks.beginGasTankOperationAttempt.mockResolvedValue({
+      status: "gas_tank_insufficient_balance", operation: null
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_insufficient_balance" });
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+  });
+
+  it("returns a rate limit when concurrent reservations exhaust the daily budget", async () => {
+    mocks.beginGasTankOperationAttempt.mockResolvedValue({
+      status: "gas_tank_daily_sponsorship_limit", operation: null
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_daily_sponsorship_limit" });
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+  });
+
   it("returns an actionable conflict when the Gas Tank cannot cover fees", async () => {
     mocks.getWorkspaceGasTankSnapshot.mockResolvedValue({
       address: "gas-tank-wallet", balanceLamports: "0", lowBalance: true,

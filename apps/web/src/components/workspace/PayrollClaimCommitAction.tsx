@@ -33,7 +33,6 @@ export function PayrollClaimCommitAction({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
-  const [sponsorOperationId, setSponsorOperationId] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     state: "success" | "error" | "partial";
     text: string;
@@ -110,7 +109,6 @@ export function PayrollClaimCommitAction({
           }
           throw new Error("The Gas Tank could not prepare a permitted sponsored transaction. No arbitrary transaction was signed.");
         }
-        setSponsorOperationId(sponsorship.operationId);
         const transaction = Uint8Array.from(
           atob(sponsorship.transactionBase64),
           (character) => character.charCodeAt(0)
@@ -137,7 +135,6 @@ export function PayrollClaimCommitAction({
                 body: JSON.stringify({ action: "cancel", operationId: sponsorship.operationId })
               }
             ).catch(() => undefined);
-            setSponsorOperationId(null);
             throw new Error("Transaction canceled in your wallet. No sponsored transaction was submitted; you can retry.");
           }
           throw error;
@@ -178,7 +175,6 @@ export function PayrollClaimCommitAction({
         text: "All Claim PDAs are finalized and reconciled. Contributor settlement is a separate step."
       });
       setProgress("");
-      setSponsorOperationId(null);
       router.refresh();
     } catch (error) {
       setMessage({

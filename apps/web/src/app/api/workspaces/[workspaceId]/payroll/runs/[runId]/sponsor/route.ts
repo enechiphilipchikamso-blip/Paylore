@@ -161,9 +161,22 @@ export async function POST(request: Request, { params }: RouteContext) {
       idempotencyKey,
       operationType: "payroll_claim_commitment",
       requestDigest,
-      reservedFeeLamports: String(MAX_SPONSORED_FEE_LAMPORTS)
+      reservedFeeLamports: String(MAX_SPONSORED_FEE_LAMPORTS),
+      availableBalanceLamports: tank.balanceLamports,
+      maxDailyFeeLamports: String(MAX_DAILY_SPONSORED_FEE_LAMPORTS),
+      maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
+      since: new Date(now.getTime() - 24 * 60 * 60 * 1000)
     });
     if (begun.status !== "started" || !begun.operation) {
+      if (begun.status === "gas_tank_not_initialized") {
+        return NextResponse.json({ error: "gas_tank_not_initialized" }, { status: 409 });
+      }
+      if (begun.status === "gas_tank_insufficient_balance") {
+        return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
+      }
+      if (begun.status === "gas_tank_daily_sponsorship_limit") {
+        return NextResponse.json({ error: "gas_tank_daily_sponsorship_limit" }, { status: 429 });
+      }
       return NextResponse.json({
         error: begun.status === "finalized"
           ? "gas_tank_operation_already_finalized"
