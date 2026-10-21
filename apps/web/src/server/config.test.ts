@@ -124,6 +124,28 @@ describe("parsePayloreConfig", () => {
     );
   });
 
+  it("accepts server-only Helius webhook management configuration", () => {
+    const config = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_MANAGEMENT_API_KEY: "helius-management-key",
+      PAYLORE_HELIUS_WEBHOOK_ID: "existing-webhook-id"
+    });
+
+    expect(config.PAYLORE_HELIUS_MANAGEMENT_API_KEY).toBe("helius-management-key");
+    expect(config.PAYLORE_HELIUS_WEBHOOK_ID).toBe("existing-webhook-id");
+  });
+
+  it("treats blank Helius management settings as unconfigured", () => {
+    const config = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_MANAGEMENT_API_KEY: " ",
+      PAYLORE_HELIUS_WEBHOOK_ID: ""
+    });
+
+    expect(config.PAYLORE_HELIUS_MANAGEMENT_API_KEY).toBeUndefined();
+    expect(config.PAYLORE_HELIUS_WEBHOOK_ID).toBeUndefined();
+  });
+
   it("keeps custom Token Wrap unwrap disabled until explicitly verified", () => {
     expect(
       parsePayloreConfig({ NODE_ENV: "test" }).TOKEN_WRAP_UNWRAP_ENABLED

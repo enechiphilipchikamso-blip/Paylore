@@ -89,7 +89,15 @@ const payloreConfigSchema = z.object({
     ),
   PAYLORE_HELIUS_WEBHOOK_SECRET: z
     .string()
-    .optional()
+    .optional(),
+  PAYLORE_HELIUS_MANAGEMENT_API_KEY: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(1).optional()
+  ),
+  PAYLORE_HELIUS_WEBHOOK_ID: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(1).optional()
+  )
 }).superRefine((config, context) => {
   if (
     config.PAYLORE_RESERVE_ENVELOPE_KEY &&

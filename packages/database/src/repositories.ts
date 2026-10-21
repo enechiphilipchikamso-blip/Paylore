@@ -2361,6 +2361,39 @@ export async function createWorkspaceLedgerEntry(
   return { entry: existing[0], created: false };
 }
 
+export async function listHeliusMonitoredAddresses(db: Database): Promise<string[]> {
+  const [
+    reserves,
+    gasTanks,
+    contributorAccounts,
+    claimAccounts
+  ] = await Promise.all([
+    db.select({ address: workspaceReserves.address }).from(workspaceReserves),
+    db.select({ address: workspaceGasTanks.address }).from(workspaceGasTanks),
+    db
+      .select({ address: contributorConfidentialAccounts.tokenAccountAddress })
+      .from(contributorConfidentialAccounts)
+      .where(isNull(contributorConfidentialAccounts.closedAt)),
+    db
+      .select({ address: payrollAllocations.claimAddress })
+      .from(payrollAllocations)
+      .where(isNotNull(payrollAllocations.claimAddress))
+  ]);
+
+  // These are application-owned custody and entitlement accounts. Identity wallets
+  // are intentionally excluded; the monitored set must not become a contributor list.
+  return [
+    ...new Set(
+      [
+        ...reserves.map((row) => row.address),
+        ...gasTanks.map((row) => row.address),
+        ...contributorAccounts.map((row) => row.address),
+        ...claimAccounts.map((row) => row.address)
+      ].filter((value): value is string => typeof value === "string" && value.length > 0)
+    )
+  ].sort();
+}
+
 export async function persistSolanaWebhookEvents(
   db: Database,
   events: Array<typeof solanaWebhookEvents.$inferInsert>
