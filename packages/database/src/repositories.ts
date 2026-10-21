@@ -4411,3 +4411,130 @@ export async function getPayrollAllocationsForChainReconciliationByClaimIds(
     )
     .where(inArray(payrollAllocations.claimId, claimIds));
 }
+
+export async function getWorkspaceGasTankByAddress(
+  db: Database,
+  address: string
+) {
+  const rows = await db
+    .select({
+      workspaceId: workspaceGasTanks.workspaceId,
+      address: workspaceGasTanks.address
+    })
+    .from(workspaceGasTanks)
+    .where(eq(workspaceGasTanks.address, address))
+    .limit(2);
+  if (rows.length > 1) {
+    throw new Error("A Gas Tank address maps to multiple workspaces.");
+  }
+  return rows[0] ?? null;
+}
+
+export async function recordVerifiedGasTankFundingEvent(
+  db: Database,
+  input: {
+    workspaceId: string;
+    destination: string;
+    source: string;
+    signature: string;
+    amountLamports: string;
+    confirmedBalanceLamports: string;
+    now?: Date;
+  }
+) {
+  if (!/^[1-9][0-9]*$/.test(input.amountLamports) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.confirmedBalanceLamports) ||
+      BigInt(input.amountLamports) >= (1n << 64n) ||
+      BigInt(input.confirmedBalanceLamports) >= (1n << 64n)) {
+    throw new Error("Invalid finalized Gas Tank balance or funding amount.");
+  }
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const tanks = await tx
+      .select({
+        workspaceId: workspaceGasTanks.workspaceId,
+        address: workspaceGasTanks.address
+      })
+      .from(workspaceGasTanks)
+      .where(and(
+        eq(workspaceGasTanks.workspaceId, input.workspaceId),
+        eq(workspaceGasTanks.address, input.destination)
+      ))
+      .for("update")
+      .limit(1);
+    if (!tanks[0]) return { status: "not_found" as const };
+    const entries = await tx
+      .insert(workspaceLedgerEntries)
+      .values({
+        workspaceId: input.workspaceId,
+        idempotencyKey: "gas-tank-funding:" + input.signature,
+        category: "gas_operations",
+        entryType: "gas_tank_funding",
+        status: "finalized",
+        amountBaseUnits: input.amountLamports,
+        referenceType: "gas_tank",
+        referenceId: input.workspaceId,
+        transactionSignature: input.signature,
+        metadata: {
+          asset: "SOL",
+          source: input.source,
+          destination: input.destination,
+          amountLamports: input.amountLamports,
+          valueTransferred: true,
+          sourceOfTruth: "finalized_solana_rpc"
+        },
+        createdAt: now
+      })
+      .onConflictDoNothing({
+        target: [
+          workspaceLedgerEntries.workspaceId,
+          workspaceLedgerEntries.idempotencyKey
+        ]
+      })
+      .returning({ id: workspaceLedgerEntries.id });
+    await tx
+      .update(workspaceGasTanks)
+      .set({
+        balanceLamports: input.confirmedBalanceLamports,
+        lastActivityAt: now,
+        updatedAt: now
+      })
+      .where(and(
+        eq(workspaceGasTanks.workspaceId, input.workspaceId),
+        eq(workspaceGasTanks.address, input.destination)
+      ));
+
+    if (entries[0]) {
+      const members = await tx
+        .select({ userId: workspaceMemberships.userId })
+        .from(workspaceMemberships)
+        .where(and(
+          eq(workspaceMemberships.workspaceId, input.workspaceId),
+          or(
+            eq(workspaceMemberships.role, "organization_admin"),
+            eq(workspaceMemberships.role, "finance_auditor")
+          )
+        ));
+      await tx
+        .insert(workspaceNotifications)
+        .values(members.map((member) => ({
+          workspaceId: input.workspaceId,
+          recipientKey: member.userId,
+          eventKey: "gas-tank-funding:" + input.signature,
+          category: "Gas Tank & Network Operations",
+          title: "Gas Tank funded",
+          body: "A finalized manual SOL transfer was reconciled to this workspace Gas Tank.",
+          destination: "/workspace/" + input.workspaceId + "/gas-tank",
+          createdAt: now
+        })))
+        .onConflictDoNothing({
+          target: [
+            workspaceNotifications.workspaceId,
+            workspaceNotifications.eventKey,
+            workspaceNotifications.recipientKey
+          ]
+        });
+    }
+    return { status: entries[0] ? "recorded" as const : "duplicate" as const };
+  });
+}
