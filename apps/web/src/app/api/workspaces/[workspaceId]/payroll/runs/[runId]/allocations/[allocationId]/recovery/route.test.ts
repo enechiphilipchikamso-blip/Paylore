@@ -9,12 +9,17 @@ const mocks = vi.hoisted(() => {
     clearSessionCookie: vi.fn(),
     getDatabase: vi.fn(),
     getSessionState: vi.fn(),
-    getWorkspaceForUser: vi.fn()
+    getWorkspaceForUser: vi.fn(),
+    getWorkspacePayrollRun: vi.fn(),
+    recordPayrollRecovery: vi.fn(),
+    verifyPayrollRecoveryTransaction: vi.fn()
   };
 });
 
 vi.mock("@paylore/database", () => ({
-  getWorkspaceForUser: mocks.getWorkspaceForUser
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+  getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
+  recordPayrollRecovery: mocks.recordPayrollRecovery
 }));
 
 vi.mock("../../../../../../../../../../server/session", () => ({
@@ -24,6 +29,10 @@ vi.mock("../../../../../../../../../../server/session", () => ({
 
 vi.mock("../../../../../../../../../../server/db", () => ({
   getDatabase: mocks.getDatabase
+}));
+
+vi.mock("../../../../../../../../../../server/solana/payroll-program-verification", () => ({
+  verifyPayrollRecoveryTransaction: mocks.verifyPayrollRecoveryTransaction
 }));
 
 vi.mock("../../../../../../../../../../server/security", () => ({
@@ -51,19 +60,65 @@ describe("payroll recovery route", () => {
     mocks.getWorkspaceForUser.mockResolvedValue({
       role: "organization_admin"
     });
+    mocks.getWorkspacePayrollRun.mockResolvedValue({
+      run: { allocationCommitment: "ab".repeat(32) },
+      allocations: [{
+        id: "allocation-a",
+        claimId: "01".repeat(32),
+        claimAddress: "claim-address",
+        contributorWalletAddress: "contributor-wallet",
+        status: "unclaimed"
+      }]
+    });
+    mocks.recordPayrollRecovery.mockResolvedValue({ status: "recovered" });
   });
 
-  it("fails closed before accepting a recovery from a workspace administrator", async () => {
+  it("requires a finalized on-chain recovery before recording it", async () => {
     const response = await POST(
-      new Request("https://paylore.test/api/recovery", { method: "POST" }),
-      routeContext
+      new Request("https://paylore.test/api/recovery", {
+        method: "POST",
+        headers: { origin: "https://paylore.test", "content-type": "application/json" },
+        body: JSON.stringify({
+          signature: "5".repeat(64),
+          reason: "payroll_correction"
+        })
+      }),
+      { params: Promise.resolve({
+        workspaceId: "workspace-a",
+        runId: "run-a",
+        allocationId: "allocation-a"
+      }) }
     );
 
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({
-      error: "payroll_financial_recovery_unavailable"
+    expect(mocks.verifyPayrollRecoveryTransaction).toHaveBeenCalledOnce();
+    expect(mocks.recordPayrollRecovery).not.toHaveBeenCalled();
+  });
+
+  it("records recovery only after the finalized PDA verifier succeeds", async () => {
+    mocks.verifyPayrollRecoveryTransaction.mockResolvedValue(undefined);
+    const response = await POST(
+      new Request("https://paylore.test/api/recovery", {
+        method: "POST",
+        headers: { origin: "https://paylore.test", "content-type": "application/json" },
+        body: JSON.stringify({
+          signature: "5".repeat(64),
+          reason: "payroll_correction"
+        })
+      }),
+      { params: Promise.resolve({
+        workspaceId: "workspace-a",
+        runId: "run-a",
+        allocationId: "allocation-a"
+      }) }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "recovered",
+      valueTransferred: false
     });
-    expect(mocks.getWorkspaceForUser).toHaveBeenCalledOnce();
+    expect(mocks.recordPayrollRecovery).toHaveBeenCalledOnce();
   });
 
   it("requires authentication before reaching recovery handling", async () => {
