@@ -4253,3 +4253,49 @@ export async function getSubscriptionPaymentAttemptBySignature(
     .limit(1);
   return rows[0] ?? null;
 }
+
+export async function getPayrollAllocationForChainReconciliation(
+  db: Database,
+  claimAddress: string
+) {
+  const rows = await db
+    .select({
+      workspaceId: payrollAllocations.workspaceId,
+      runId: payrollAllocations.payrollRunId,
+      allocationId: payrollAllocations.id,
+      claimId: payrollAllocations.claimId,
+      claimAddress: payrollAllocations.claimAddress,
+      allocationStatus: payrollAllocations.status,
+      transactionSignature: payrollAllocations.transactionSignature,
+      amountBaseUnits: payrollAllocations.amountBaseUnits,
+      contributorWalletAddress: contributors.identityWalletAddress,
+      allocationCommitment: payrollRuns.allocationCommitment,
+      recoveryStatus: payrollRecoveries.status,
+      recoverySignature: payrollRecoveries.transactionSignature
+    })
+    .from(payrollAllocations)
+    .innerJoin(
+      payrollRuns,
+      and(
+        eq(payrollRuns.id, payrollAllocations.payrollRunId),
+        eq(payrollRuns.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .leftJoin(
+      payrollRecoveries,
+      eq(payrollRecoveries.allocationId, payrollAllocations.id)
+    )
+    .where(eq(payrollAllocations.claimAddress, claimAddress))
+    .limit(2);
+  if (rows.length > 1) {
+    throw new Error("The Claim PDA address maps to more than one application allocation.");
+  }
+  return rows[0] ?? null;
+}
