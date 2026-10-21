@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   getDatabase: vi.fn(),
   getSessionState: vi.fn(),
   getWorkspaceDeletionState: vi.fn(),
+  getWorkspaceGasTankOperation: vi.fn(),
+  readSolanaRpc: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   getWorkspaceGasTankSponsorshipUsage: vi.fn(),
   getWorkspacePayrollRun: vi.fn(),
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@paylore/database", () => ({
   beginGasTankOperationAttempt: mocks.beginGasTankOperationAttempt,
   getWorkspaceDeletionState: mocks.getWorkspaceDeletionState,
+  getWorkspaceGasTankOperation: mocks.getWorkspaceGasTankOperation,
   getWorkspaceForUser: mocks.getWorkspaceForUser,
   getWorkspaceGasTankSponsorshipUsage: mocks.getWorkspaceGasTankSponsorshipUsage,
   getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
@@ -43,6 +46,7 @@ vi.mock("../../../../../../../../server/gas-tank", () => ({
   getWorkspaceGasTankSnapshot: mocks.getWorkspaceGasTankSnapshot,
   withWorkspaceGasTankKey: mocks.withWorkspaceGasTankKey
 }));
+vi.mock("../../../../../../../../server/solana/rpc", () => ({ readSolanaRpc: mocks.readSolanaRpc }));
 vi.mock("../../../../../../../../server/gas-tank-sponsorship", () => ({
   prepareSponsoredPayrollClaimTransaction: mocks.prepareSponsoredPayrollClaimTransaction
 }));
@@ -72,6 +76,8 @@ describe("payroll sponsor route", () => {
     });
     mocks.getWorkspaceForUser.mockResolvedValue({ role: "organization_admin" });
     mocks.getWorkspaceDeletionState.mockResolvedValue(null);
+    mocks.getWorkspaceGasTankOperation.mockResolvedValue(null);
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 121);
     mocks.getWorkspaceSubscription.mockResolvedValue({ status: "active" });
     mocks.loadPayloreConfig.mockReturnValue({ PAYLORE_PAYROLL_PROGRAM_ID: "payroll-program" });
     mocks.getWorkspacePayrollRun.mockResolvedValue({
@@ -153,11 +159,27 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
   });
 
-  it("does not report a prepared sponsorship cancellation as released when the server rejects it", async () => {
-    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+  it("does not release a prepared transaction while its blockhash remains valid", async () => {
+    mocks.getWorkspaceGasTankOperation.mockResolvedValue({
+      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
+    });
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 120);
     const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_operation_not_cancellable" });
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_transaction_still_live" });
+    expect(mocks.updateGasTankOperationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("releases a prepared reservation only after signature absence and blockhash expiry", async () => {
+    mocks.getWorkspaceGasTankOperation.mockResolvedValue({
+      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
+    });
+    const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ status: "cancelled", reason: "recent_blockhash_expired" });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a", operationId: "operation-a", status: "cancelled", failureCode: "recent_blockhash_expired"
+    }));
   });
 
   it("rejects arbitrary serialized bytes or unknown actions", async () => {
