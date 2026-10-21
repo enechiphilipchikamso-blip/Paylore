@@ -27,6 +27,7 @@ export async function reconcileHeliusWebhookAddresses(
     webhookId: string | undefined;
     expectedWebhookUrl: string | undefined;
     fetchImpl?: typeof fetch;
+    listAddresses?: (db: Database) => Promise<string[]>;
   }
 ): Promise<{ status: "disabled" | "unchanged" | "updated"; addressCount: number }> {
   if (!input.apiKey || !input.webhookId || !input.expectedWebhookUrl) {
@@ -42,7 +43,7 @@ export async function reconcileHeliusWebhookAddresses(
     throw new Error("HELIUS_WEBHOOK_URL_INVALID");
   }
 
-  const addresses = await listHeliusMonitoredAddresses(db);
+  const addresses = await (input.listAddresses ?? listHeliusMonitoredAddresses)(db);
   const fetchImpl = input.fetchImpl ?? fetch;
   const endpoint = "https://api.helius.xyz/v0/webhooks/" +
     encodeURIComponent(input.webhookId) + "?api-key=" + encodeURIComponent(input.apiKey);
