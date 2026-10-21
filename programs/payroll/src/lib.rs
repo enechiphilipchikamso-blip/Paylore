@@ -1,8 +1,14 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{
+    instruction::Instruction,
+    sysvar::instructions::{load_current_index_checked, load_instruction_at_checked}
+};
 
 declare_id!("4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93");
 
 pub const MAX_ID_LENGTH: usize = 64;
+const TOKEN_2022_PROGRAM_ID: Pubkey =
+    pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 #[program]
 pub mod paylore_payroll {
@@ -54,20 +60,165 @@ pub mod paylore_payroll {
         Ok(())
     }
 
-    pub fn mark_claimed(_ctx: Context<MarkClaimed>) -> Result<()> {
-        ensure_financial_settlement_is_implemented()
+    pub fn configure_workspace_reserve(
+        ctx: Context<ConfigureWorkspaceReserve>,
+    ) -> Result<()> {
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        require_keys_eq!(
+            *ctx.accounts.mint.owner,
+            TOKEN_2022_PROGRAM_ID,
+            PayrollError::InvalidTokenAccount
+        );
+
+        let state = &mut ctx.accounts.reserve_state;
+        if state.workspace != Pubkey::default() {
+            require!(
+                state.workspace == ctx.accounts.workspace.key()
+                    && state.reserve_authority == ctx.accounts.reserve_authority.key()
+                    && state.reserve_token_account == ctx.accounts.reserve_token_account.key()
+                    && state.mint == ctx.accounts.mint.key(),
+                PayrollError::ReserveConfigurationConflict
+            );
+            return Ok(());
+        }
+
+        state.workspace = ctx.accounts.workspace.key();
+        state.reserve_authority = ctx.accounts.reserve_authority.key();
+        state.reserve_token_account = ctx.accounts.reserve_token_account.key();
+        state.mint = ctx.accounts.mint.key();
+        state.bump = ctx.bumps.reserve_state;
+        Ok(())
+    }
+
+    pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
+            &ctx.accounts.destination_token_account.to_account_info(),
+            ctx.accounts.contributor.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        require_confidential_transfer_precedes_claim(
+            &ctx.accounts.instructions_sysvar.to_account_info(),
+            ctx.accounts.reserve_token_account.key(),
+            ctx.accounts.mint.key(),
+            ctx.accounts.destination_token_account.key(),
+            ctx.accounts.reserve_authority.key(),
+        )?;
+
+        // The state write is atomic with the Token-2022 confidential transfer;
+        // Solana rolls back both instructions if either one fails.
+        transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
 
     pub fn recover_claim(
-        _ctx: Context<RecoverClaim>,
-        _recovery_reason_commitment: [u8; 32],
+        ctx: Context<RecoverClaim>,
+        recovery_reason_commitment: [u8; 32],
     ) -> Result<()> {
-        ensure_financial_settlement_is_implemented()
+        require!(
+            recovery_reason_commitment != [0; 32],
+            PayrollError::InvalidRecoveryReason
+        );
+
+        // Payroll entitlements are funded from the shared reserve only when
+        // claimed. Cancelling an unclaimed entitlement releases the reservation;
+        // no token transfer is needed because the reserve has not been debited.
+        transition_claim_to_recovered(&mut ctx.accounts.claim)
     }
 }
 
-fn ensure_financial_settlement_is_implemented() -> Result<()> {
-    err!(PayrollError::FinancialSettlementUnavailable)
+fn transition_claim_to_claimed(claim: &mut Account<ClaimState>) -> Result<()> {
+    require!(
+        claim.status == ClaimStatus::Unclaimed,
+        PayrollError::InvalidClaimTransition
+    );
+    claim.status = ClaimStatus::Claimed;
+    Ok(())
+}
+
+fn transition_claim_to_recovered(claim: &mut Account<ClaimState>) -> Result<()> {
+    require!(
+        claim.status == ClaimStatus::Unclaimed,
+        PayrollError::InvalidClaimTransition
+    );
+    claim.status = ClaimStatus::Recovered;
+    Ok(())
+}
+
+fn validate_token_account_identity(
+    account: &AccountInfo,
+    expected_owner: Pubkey,
+    expected_mint: Pubkey,
+) -> Result<()> {
+    require_keys_eq!(
+        *account.owner,
+        TOKEN_2022_PROGRAM_ID,
+        PayrollError::InvalidTokenAccount
+    );
+    let data = account.try_borrow_data()?;
+    require!(data.len() >= 165, PayrollError::InvalidTokenAccount);
+    let expected_mint_bytes = expected_mint.to_bytes();
+    let expected_owner_bytes = expected_owner.to_bytes();
+    require!(
+        data[0..32] == expected_mint_bytes[..]
+            && data[32..64] == expected_owner_bytes[..],
+        PayrollError::InvalidTokenAccount
+    );
+    Ok(())
+}
+
+fn matches_expected_confidential_transfer(
+    instruction: &Instruction,
+    source: Pubkey,
+    mint: Pubkey,
+    destination: Pubkey,
+    authority: Pubkey,
+) -> bool {
+    instruction.program_id == TOKEN_2022_PROGRAM_ID
+        && instruction.data.get(0..2) == Some(&[27u8, 7u8][..])
+        && instruction.accounts.len() > 8
+        && instruction.accounts[1].pubkey == source
+        && instruction.accounts[2].pubkey == mint
+        && instruction.accounts[3].pubkey == destination
+        && instruction.accounts[8].pubkey == authority
+        && instruction.accounts[8].is_signer
+}
+
+fn require_confidential_transfer_precedes_claim(
+    instructions_sysvar: &AccountInfo,
+    source: Pubkey,
+    mint: Pubkey,
+    destination: Pubkey,
+    authority: Pubkey,
+) -> Result<()> {
+    let current_index = load_current_index_checked(instructions_sysvar)
+        .map_err(|_| error!(PayrollError::SettlementTransferRequired))?;
+    let mut matching_transfers = 0u8;
+    for index in 0..current_index {
+        let instruction = load_instruction_at_checked(index as usize, instructions_sysvar)
+            .map_err(|_| error!(PayrollError::SettlementTransferRequired))?;
+        if matches_expected_confidential_transfer(
+            &instruction,
+            source,
+            mint,
+            destination,
+            authority,
+        ) {
+            matching_transfers = matching_transfers.saturating_add(1);
+        }
+    }
+    require!(
+        matching_transfers == 1,
+        PayrollError::SettlementTransferRequired
+    );
+    Ok(())
 }
 
 fn validate_claim_initialization(
@@ -171,9 +322,69 @@ pub struct CreateClaim<'info> {
 }
 
 #[derive(Accounts)]
+pub struct ConfigureWorkspaceReserve<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        has_one = authority,
+        seeds = [
+            b"workspace",
+            authority.key().as_ref(),
+            workspace.workspace_seed.as_ref()
+        ],
+        bump = workspace.bump
+    )]
+    pub workspace: Account<'info, WorkspaceState>,
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = WorkspaceReserveState::SPACE,
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    /// CHECK: The reserve key is persisted in this state; the key must own the
+    /// registered Token-2022 account and sign every settlement transfer.
+    pub reserve_authority: UncheckedAccount<'info>,
+    /// CHECK: The identity and token-account header are checked before storing.
+    pub reserve_token_account: UncheckedAccount<'info>,
+    /// CHECK: The mint is validated against the Token-2022 program owner.
+    pub mint: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct MarkClaimed<'info> {
     pub contributor: Signer<'info>,
-    #[account(mut,
+    #[account(
+        seeds = [
+            b"workspace",
+            workspace.authority.as_ref(),
+            workspace.workspace_seed.as_ref()
+        ],
+        bump = workspace.bump,
+        constraint = claim.workspace == workspace.key()
+    )]
+    pub workspace: Account<'info, WorkspaceState>,
+    #[account(
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump = reserve_state.bump,
+        has_one = workspace
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    #[account(address = reserve_state.reserve_authority)]
+    pub reserve_authority: Signer<'info>,
+    #[account(address = reserve_state.reserve_token_account)]
+    /// CHECK: Identity is confirmed against the configured reserve owner and mint.
+    pub reserve_token_account: UncheckedAccount<'info>,
+    #[account(address = reserve_state.mint)]
+    /// CHECK: The mint is bound to the configured Token-2022 reserve account.
+    pub mint: UncheckedAccount<'info>,
+    #[account(mut)]
+    /// CHECK: Identity is confirmed against this claim's contributor and mint.
+    pub destination_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
         seeds = [
             b"claim",
             claim.workspace.as_ref(),
@@ -181,9 +392,13 @@ pub struct MarkClaimed<'info> {
             claim.claim_id.as_ref()
         ],
         bump = claim.bump,
-        has_one = contributor
+        has_one = contributor,
+        constraint = claim.workspace == workspace.key()
     )]
     pub claim: Account<'info, ClaimState>,
+    /// CHECK: The program reads the current transaction's instruction list only.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -229,6 +444,19 @@ impl WorkspaceState {
 }
 
 #[account]
+pub struct WorkspaceReserveState {
+    pub workspace: Pubkey,
+    pub reserve_authority: Pubkey,
+    pub reserve_token_account: Pubkey,
+    pub mint: Pubkey,
+    pub bump: u8,
+}
+
+impl WorkspaceReserveState {
+    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 1;
+}
+
+#[account]
 pub struct ClaimState {
     pub workspace: Pubkey,
     pub contributor: Pubkey,
@@ -261,8 +489,12 @@ pub enum PayrollError {
     WorkspaceInitializationConflict,
     #[msg("The claim PDA already belongs to a different or completed allocation.")]
     ClaimInitializationConflict,
-    #[msg("Financial claim and recovery settlement is not implemented.")]
-    FinancialSettlementUnavailable,
+    #[msg("The configured reserve, token account, or mint identity is invalid.")]
+    InvalidTokenAccount,
+    #[msg("The workspace reserve is already configured with a different identity.")]
+    ReserveConfigurationConflict,
+    #[msg("The claim can only be settled atomically with its configured confidential transfer.")]
+    SettlementTransferRequired,
 }
 
 #[cfg(test)]
@@ -320,8 +552,80 @@ mod tests {
     }
 
     #[test]
-    fn financial_claim_operations_fail_closed_without_settlement() {
-        assert!(ensure_financial_settlement_is_implemented().is_err());
+    fn claim_status_transitions_are_one_way_and_reject_replays() {
+        let mut claim = Account::new(ClaimState {
+            workspace: Pubkey::new_unique(),
+            contributor: Pubkey::new_unique(),
+            claim_id: [1; 32],
+            allocation_commitment: [2; 32],
+            status: ClaimStatus::Unclaimed,
+            bump: 0,
+        });
+        assert!(transition_claim_to_claimed(&mut claim).is_ok());
+        assert_eq!(claim.status, ClaimStatus::Claimed);
+        assert!(transition_claim_to_recovered(&mut claim).is_err());
+        assert!(transition_claim_to_claimed(&mut claim).is_err());
+
+        let mut recoverable = Account::new(ClaimState {
+            workspace: Pubkey::new_unique(),
+            contributor: Pubkey::new_unique(),
+            claim_id: [3; 32],
+            allocation_commitment: [4; 32],
+            status: ClaimStatus::Unclaimed,
+            bump: 0,
+        });
+        assert!(transition_claim_to_recovered(&mut recoverable).is_ok());
+        assert_eq!(recoverable.status, ClaimStatus::Recovered);
+        assert!(transition_claim_to_claimed(&mut recoverable).is_err());
+        assert!(transition_claim_to_recovered(&mut recoverable).is_err());
+    }
+
+    #[test]
+    fn claim_requires_exact_signed_token_2022_confidential_transfer() {
+        let source = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mut accounts = vec![
+            AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            AccountMeta::new(source, false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+        let instruction = Instruction {
+            program_id: TOKEN_2022_PROGRAM_ID,
+            accounts: accounts.clone(),
+            data: vec![27, 7, 0],
+        };
+        assert!(matches_expected_confidential_transfer(
+            &instruction, source, mint, destination, authority
+        ));
+
+        accounts[1].pubkey = Pubkey::new_unique();
+        let wrong_source = Instruction { accounts: accounts.clone(), ..instruction.clone() };
+        assert!(!matches_expected_confidential_transfer(
+            &wrong_source, source, mint, destination, authority
+        ));
+
+        accounts[1].pubkey = source;
+        accounts[8].is_signer = false;
+        let unsigned_reserve = Instruction { accounts, ..instruction.clone() };
+        assert!(!matches_expected_confidential_transfer(
+            &unsigned_reserve, source, mint, destination, authority
+        ));
+
+        let classic_transfer = Instruction {
+            program_id: Pubkey::new_unique(),
+            ..instruction
+        };
+        assert!(!matches_expected_confidential_transfer(
+            &classic_transfer, source, mint, destination, authority
+        ));
     }
 
     #[test]
