@@ -24,6 +24,7 @@ import {
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   hasReachedInactivityThreshold,
   isContributorAssociationCleanupEligible,
+  isWorkspaceRetentionEligible,
   scheduleWorkspaceDeletion
 } from "./retention-policy";
 import {
@@ -3330,7 +3331,8 @@ export async function permanentlyDeleteEligibleWorkspace(
         deletionRequestedAt: workspaceRetention.deletionRequestedAt,
         deletionScheduledAt: workspaceRetention.deletionScheduledAt,
         deletionCanceledAt: workspaceRetention.deletionCanceledAt,
-        deletedAt: workspaceRetention.deletedAt
+        deletedAt: workspaceRetention.deletedAt,
+        lastActivityAt: workspaceRetention.lastActivityAt
       })
       .from(workspaceRetention)
       .where(eq(workspaceRetention.workspaceId, input.workspaceId))
@@ -3374,6 +3376,31 @@ export async function permanentlyDeleteEligibleWorkspace(
     if (retention.deletionScheduledAt > now) {
       await recordOutcome("pending", "waiting_period");
       return { status: "waiting_period" as const };
+    }
+
+    const subscriptionRows = await tx
+      .select({ status: workspaceSubscriptions.status })
+      .from(workspaceSubscriptions)
+      .where(eq(workspaceSubscriptions.workspaceId, input.workspaceId))
+      .limit(1);
+    const inactiveDays = Math.floor(
+      (now.getTime() - retention.lastActivityAt.getTime()) /
+        (24 * 60 * 60 * 1000)
+    );
+    const retentionEligible = isWorkspaceRetentionEligible({
+      inactiveDays,
+      subscriptionStatus: subscriptionRows[0]?.status ?? null,
+      gasTankConfigured: false,
+      reserveConfigured: false,
+      outstandingObligations: false
+    });
+    if (!retentionEligible) {
+      const status =
+        inactiveDays < 365
+          ? "retention_period_not_reached" as const
+          : "subscription_not_eligible" as const;
+      await recordOutcome("blocked", status);
+      return { status };
     }
 
     const gasTankRows = await tx
