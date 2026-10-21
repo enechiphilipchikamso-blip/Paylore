@@ -4743,7 +4743,10 @@ export async function updateGasTankOperationAttempt(
     .where(and(
       eq(gasTankOperations.id, input.operationId),
       eq(gasTankOperations.workspaceId, input.workspaceId),
-      inArray(gasTankOperations.status, previousStatuses)
+      inArray(gasTankOperations.status, previousStatuses),
+      ...(input.status === "finalized" && input.transactionSignature !== undefined
+        ? [eq(gasTankOperations.transactionSignature, input.transactionSignature)]
+        : [])
     ))
     .returning({ id: gasTankOperations.id });
   if (update[0]) return true;
