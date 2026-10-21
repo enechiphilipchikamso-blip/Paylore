@@ -54,9 +54,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
         return {
           ...entry,
           err: transaction?.meta?.err ?? entry.err,
-          memo: typeof memoInstruction?.parsed === "string" ? memoInstruction.parsed : null
+          memo: typeof memoInstruction?.parsed === "string" ? memoInstruction.parsed : null,
+          historyAvailable: Boolean(transaction?.meta && transaction.transaction?.message?.instructions)
         };
       }));
+      if (signatures.some((entry) => !entry.historyAvailable)) {
+        return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+      }
       const decision = assessAmbiguousPaymentAttempt({
         currentFinalizedBlockHeight: blockHeight,
         lastValidBlockHeight: attempt.lastValidBlockHeight,
