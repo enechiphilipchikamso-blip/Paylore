@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   beginGasTankOperationAttempt,
   getWorkspaceGasTankOperation,
+  getWorkspaceGasTankOperationByIdempotencyKey,
   getWorkspaceDeletionState,
   getWorkspaceForUser,
   getWorkspaceGasTankSponsorshipUsage,
@@ -190,6 +191,58 @@ export async function POST(request: Request, { params }: RouteContext) {
     })).digest("hex");
     const idempotencyKey = "payroll-claim:" + runId + ":" + createHash("sha256")
       .update(claimIds.join(":")).digest("hex");
+    const priorOperation = await getWorkspaceGasTankOperationByIdempotencyKey(db, workspaceId, idempotencyKey);
+    if (priorOperation) {
+      if (priorOperation.requestDigest !== requestDigest) {
+        return NextResponse.json({ error: "sponsorship_idempotency_conflict" }, { status: 409 });
+      }
+      if (priorOperation.status === "prepared") {
+        if (!priorOperation.transactionSignature || !priorOperation.lastValidBlockHeight ||
+            !priorOperation.operationData || typeof priorOperation.operationData !== "object") {
+          return NextResponse.json({ error: "sponsorship_operation_reconciliation_data_missing" }, { status: 409 });
+        }
+        const data = priorOperation.operationData as Record<string, unknown>;
+        const [statuses, blockHeight] = await Promise.all([
+          readSolanaRpc<{ value: Array<{ confirmationStatus?: string | null; err?: unknown } | null> }>(
+            "getSignatureStatuses", [[priorOperation.transactionSignature], { searchTransactionHistory: true }]
+          ),
+          readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }])
+        ]);
+        const state = classifyPreparedSponsorshipState({
+          currentBlockHeight: blockHeight,
+          lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
+          signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
+        });
+        if (state === "live" && typeof data.transactionBase64 === "string" &&
+            Array.isArray(data.claims) && typeof data.blockhash === "string") {
+          return NextResponse.json({
+            status: "prepared",
+            operationId: priorOperation.id,
+            idempotencyKey,
+            transactionBase64: data.transactionBase64,
+            signature: priorOperation.transactionSignature,
+            feeLamports: priorOperation.feeLamports,
+            gasTankAddress: tank.address,
+            claims: data.claims,
+            blockhash: data.blockhash,
+            lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
+            replayed: true
+          }, { headers: { "Cache-Control": "no-store" } });
+        }
+        return NextResponse.json({
+          error: state === "submitted_pending" ? "sponsorship_transaction_pending_finality"
+            : state === "finalized_success" || state === "finalized_failure" ? "sponsorship_transaction_already_submitted"
+            : "sponsorship_transaction_expired_prepare_again"
+        }, { status: 409, headers: { "Cache-Control": "no-store" } });
+      }
+      if (priorOperation.status === "finalized") {
+        return NextResponse.json({ error: "sponsorship_operation_already_finalized" }, { status: 409 });
+      }
+      if (priorOperation.status === "preparing") {
+        return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
+      }
+    }
+
     const begun = await beginGasTankOperationAttempt(db, {
       workspaceId,
       idempotencyKey,
@@ -243,7 +296,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         transactionSignature: prepared.signature,
         feeLamports: prepared.feeLamports,
         lastValidBlockHeight: String(prepared.lastValidBlockHeight),
-        operationData: { runId, claimIds, authorityAddress: session.session.walletAddress, programId, allocationCommitment: run.run.allocationCommitment, claims: prepared.claims, blockhash: prepared.blockhash }
+        operationData: { runId, claimIds, authorityAddress: session.session.walletAddress, programId, allocationCommitment: run.run.allocationCommitment, claims: prepared.claims, blockhash: prepared.blockhash, transactionBase64: prepared.transactionBase64 }
       });
       if (!saved) throw new GasTankSponsorshipPolicyError("sponsorship_operation_state_changed");
       operationForFailure = null;
