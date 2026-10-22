@@ -498,9 +498,31 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
   });
 
+  it("does not cancel a preparation that changed after the operation was read", async () => {
+    const updatedAt = new Date("2026-10-22T08:30:00.000Z");
+    mocks.getWorkspaceGasTankOperation.mockResolvedValue({
+      id: "operation-a", status: "preparing", transactionSignature: null, updatedAt
+    });
+    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+    const response = await POST(request({
+      action: "cancel",
+      operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671"
+    }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_operation_not_cancellable" });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a", operationId: "operation-a", status: "cancelled",
+      failureCode: "wallet_user_cancelled", expectedUpdatedAt: updatedAt
+    }));
+  });
+
   it("does not release a prepared transaction while its blockhash remains valid", async () => {
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
-      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
+      id: "operation-a",
+      status: "prepared",
+      transactionSignature: "5".repeat(64),
+      lastValidBlockHeight: "120",
+      updatedAt: new Date("2026-10-22T08:30:00.000Z")
     });
     mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 120);
     const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
@@ -517,7 +539,32 @@ describe("payroll sponsor route", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: "cancelled", reason: "recent_blockhash_expired" });
     expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
-      workspaceId: "workspace-a", operationId: "operation-a", status: "cancelled", failureCode: "recent_blockhash_expired"
+      workspaceId: "workspace-a",
+      operationId: "operation-a",
+      status: "cancelled",
+      transactionSignature: "5".repeat(64),
+      failureCode: "recent_blockhash_expired",
+      expectedUpdatedAt: new Date("2026-10-22T08:30:00.000Z")
+    }));
+  });
+
+  it("does not release a prepared reservation when the operation changed after expiry reconciliation", async () => {
+    const updatedAt = new Date("2026-10-22T08:30:00.000Z");
+    mocks.getWorkspaceGasTankOperation.mockResolvedValue({
+      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64),
+      lastValidBlockHeight: "120", updatedAt
+    });
+    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+    const response = await POST(request({
+      action: "cancel",
+      operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671"
+    }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_operation_state_changed" });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a", operationId: "operation-a", status: "cancelled",
+      transactionSignature: "5".repeat(64), failureCode: "recent_blockhash_expired",
+      expectedUpdatedAt: updatedAt
     }));
   });
 

@@ -162,7 +162,11 @@ export async function POST(request: Request, { params }: RouteContext) {
       }
       if (operation.status === "preparing" && !operation.transactionSignature) {
         const cancelled = await updateGasTankOperationAttempt(db, {
-          workspaceId, operationId: operation.id, status: "cancelled", failureCode: "wallet_user_cancelled"
+          workspaceId,
+          operationId: operation.id,
+          status: "cancelled",
+          failureCode: "wallet_user_cancelled",
+          expectedUpdatedAt: operation.updatedAt
         });
         return cancelled
           ? NextResponse.json({ status: "cancelled" }, { headers: { "Cache-Control": "no-store" } })
@@ -190,7 +194,12 @@ export async function POST(request: Request, { params }: RouteContext) {
         }, { status: 409, headers: { "Cache-Control": "no-store" } });
       }
       const cancelled = await updateGasTankOperationAttempt(db, {
-        workspaceId, operationId: operation.id, status: "cancelled", failureCode: "recent_blockhash_expired"
+        workspaceId,
+        operationId: operation.id,
+        status: "cancelled",
+        transactionSignature: operation.transactionSignature,
+        failureCode: "recent_blockhash_expired",
+        expectedUpdatedAt: operation.updatedAt
       });
       return cancelled
         ? NextResponse.json({ status: "cancelled", reason: "recent_blockhash_expired" }, { headers: { "Cache-Control": "no-store" } })
