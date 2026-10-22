@@ -157,6 +157,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (parsed.data.action === "cancel") {
       const operation = await getWorkspaceGasTankOperation(db, workspaceId, parsed.data.operationId);
       if (!operation) return NextResponse.json({ error: "sponsorship_operation_not_found" }, { status: 404 });
+      if (operation.operationType !== "payroll_claim_commitment") {
+        return NextResponse.json({ error: "sponsorship_operation_not_cancellable" }, { status: 409 });
+      }
       if (operation.status === "cancelled") {
         return NextResponse.json({ status: "cancelled" }, { headers: { "Cache-Control": "no-store" } });
       }

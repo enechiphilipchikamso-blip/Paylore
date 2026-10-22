@@ -78,6 +78,7 @@ function currentRequestDigest() {
 function preparedOperation(overrides: Record<string, unknown> = {}) {
   return {
     id: "operation-a",
+    operationType: "payroll_claim_commitment",
     requestDigest: currentRequestDigest(),
     status: "prepared",
     transactionSignature: "5".repeat(64),
@@ -498,10 +499,34 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
   });
 
+  it.each(["cancelled", "preparing", "prepared"])(
+    "does not cancel or replay a non-payroll Gas Tank operation in the payroll route (%s)",
+    async (status) => {
+      mocks.getWorkspaceGasTankOperation.mockResolvedValue({
+        id: "operation-other",
+        operationType: "confidential_account_setup",
+        status,
+        transactionSignature: status === "prepared" ? "5".repeat(64) : null,
+        lastValidBlockHeight: status === "prepared" ? "120" : null,
+        updatedAt: new Date("2026-10-22T08:30:00.000Z")
+      });
+      const response = await POST(request({
+        action: "cancel",
+        operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671"
+      }), context);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "sponsorship_operation_not_cancellable"
+      });
+      expect(mocks.updateGasTankOperationAttempt).not.toHaveBeenCalled();
+      expect(mocks.readSolanaRpc).not.toHaveBeenCalled();
+    }
+  );
+
   it("does not cancel a preparation that changed after the operation was read", async () => {
     const updatedAt = new Date("2026-10-22T08:30:00.000Z");
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
-      id: "operation-a", status: "preparing", transactionSignature: null, updatedAt
+      id: "operation-a", operationType: "payroll_claim_commitment", status: "preparing", transactionSignature: null, updatedAt
     });
     mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
     const response = await POST(request({
@@ -519,6 +544,7 @@ describe("payroll sponsor route", () => {
   it("does not release a prepared transaction while its blockhash remains valid", async () => {
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
       id: "operation-a",
+      operationType: "payroll_claim_commitment",
       status: "prepared",
       transactionSignature: "5".repeat(64),
       lastValidBlockHeight: "120",
@@ -533,7 +559,7 @@ describe("payroll sponsor route", () => {
 
   it("releases a prepared reservation only after signature absence and blockhash expiry", async () => {
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
-      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
+      id: "operation-a", operationType: "payroll_claim_commitment", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
     });
     const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
     expect(response.status).toBe(200);
