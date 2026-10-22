@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   assertSameOrigin: vi.fn(), clearSessionCookie: vi.fn(), getDatabase: vi.fn(),
   getSessionState: vi.fn(), getWorkspaceForUser: vi.fn(), findWorkspaceContributorByWallet: vi.fn(),
-  recordContributorConfidentialAccountSetup: vi.fn(), verifyConfidentialAccountSetup: vi.fn(), loadPayloreConfig: vi.fn()
+  recordContributorConfidentialAccountSetup: vi.fn(),
+  finalizeGasTankConfidentialAccountSetupForVerifiedAccount: vi.fn(),
+  verifyConfidentialAccountSetup: vi.fn(), loadPayloreConfig: vi.fn()
 }));
 vi.mock("@paylore/database", () => ({
   findWorkspaceContributorByWallet: mocks.findWorkspaceContributorByWallet,
   recordContributorConfidentialAccountSetup: mocks.recordContributorConfidentialAccountSetup,
+  finalizeGasTankConfidentialAccountSetupForVerifiedAccount: mocks.finalizeGasTankConfidentialAccountSetupForVerifiedAccount,
   getContributorConfidentialAccount: vi.fn(), getContributorOffboardingStatus: vi.fn(),
   getWorkspaceForUser: mocks.getWorkspaceForUser, hasOpenContributorPayrollAllocations: vi.fn()
 }));
@@ -48,6 +51,7 @@ describe("contributor confidential-account setup route", () => {
     mocks.recordContributorConfidentialAccountSetup.mockResolvedValue({
       contributorId: "contributor-a", tokenAccountAddress: "token-account-a", status: "ready"
     });
+    mocks.finalizeGasTankConfidentialAccountSetupForVerifiedAccount.mockResolvedValue(true);
   });
   it("denies confidential-account access after workspace membership has been removed", async () => {
     mocks.getWorkspaceForUser.mockResolvedValue(null);
@@ -73,6 +77,13 @@ describe("contributor confidential-account setup route", () => {
       ownerWalletAddress: "contributor-wallet", tokenAccountAddress: "token-account-a",
       transactionSignature: signature
     }));
+    expect(mocks.finalizeGasTankConfidentialAccountSetupForVerifiedAccount).toHaveBeenCalledWith({}, {
+      workspaceId: "workspace-a",
+      transactionSignature: signature,
+      ownerAddress: "contributor-wallet",
+      mintAddress: "wrapped-mint",
+      tokenAccountAddress: "token-account-a"
+    });
   });
   it("does not persist ready when the confidential extension is not ready", async () => {
     mocks.verifyConfidentialAccountSetup.mockRejectedValue(

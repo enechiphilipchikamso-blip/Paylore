@@ -111,6 +111,7 @@ describe("confidential account sponsorship transaction authorization", () => {
   it("reserves the policy-approved rent and network fee for a contributor-authorized message", async () => {
     const result = await inspectSponsoredConfidentialSetupTransaction(input);
     expect(result).toMatchObject({
+      recentBlockhash: "recent-blockhash",
       feeLamports: 5_000n,
       reservedRentLamports: 10_000_000n,
       transactionBytes: 1
@@ -125,5 +126,18 @@ describe("confidential account sponsorship transaction authorization", () => {
       feeLamports: 5_000n,
       balanceLamports: 50_000_000n
     }));
+  });
+
+  it("retains the signed blockhash when an expired message cannot be priced for reconciliation", async () => {
+    mocks.readSolanaRpc.mockResolvedValue({ value: null });
+    const result = await inspectSponsoredConfidentialSetupTransaction({
+      ...input,
+      deferCostCheck: true
+    });
+    expect(result).toMatchObject({
+      recentBlockhash: "recent-blockhash",
+      feeLamports: null
+    });
+    expect(mocks.assertSponsoredCost).not.toHaveBeenCalled();
   });
 });

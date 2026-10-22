@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceGasTankSnapshot: vi.fn(),
   getWorkspaceGasTankOperationByIdempotencyKey: vi.fn(),
   getWorkspaceGasTankSponsorshipUsage: vi.fn(),
+  listPreparedGasTankConfidentialSetupOperations: vi.fn(),
   beginGasTankOperationAttempt: vi.fn(),
   updateGasTankOperationAttempt: vi.fn(),
   withWorkspaceGasTankKey: vi.fn(),
@@ -20,7 +21,8 @@ const mocks = vi.hoisted(() => ({
   inspectSponsoredConfidentialSetupTransaction: vi.fn(),
   submitSponsoredConfidentialSetupTransaction: vi.fn(),
   findAssociatedTokenPda: vi.fn(),
-  readSolanaRpc: vi.fn()
+  readSolanaRpc: vi.fn(),
+  assertSponsoredCost: vi.fn()
 }));
 vi.mock("@paylore/database", () => ({
   beginGasTankOperationAttempt: mocks.beginGasTankOperationAttempt,
@@ -31,6 +33,7 @@ vi.mock("@paylore/database", () => ({
   getWorkspaceGasTankOperationByIdempotencyKey: mocks.getWorkspaceGasTankOperationByIdempotencyKey,
   getWorkspaceGasTankSponsorshipUsage: mocks.getWorkspaceGasTankSponsorshipUsage,
   getWorkspaceSubscription: mocks.getWorkspaceSubscription,
+  listPreparedGasTankConfidentialSetupOperations: mocks.listPreparedGasTankConfidentialSetupOperations,
   updateGasTankOperationAttempt: mocks.updateGasTankOperationAttempt
 }));
 vi.mock("@solana/kit", () => ({ address: (value: string) => value }));
@@ -59,7 +62,8 @@ vi.mock("../../../../../../../../server/gas-tank-sponsorship-policy", () => ({
   },
   MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS: 10_000_000n,
   MAX_DAILY_SPONSORED_FEE_LAMPORTS: 5_000_000n,
-  MAX_DAILY_SPONSORED_OPERATIONS: 100
+  MAX_DAILY_SPONSORED_OPERATIONS: 100,
+  assertSponsoredCost: mocks.assertSponsoredCost
 }));
 vi.mock("../../../../../../../../server/confidential-account-sponsorship", () => ({
   inspectSponsoredConfidentialSetupTransaction: mocks.inspectSponsoredConfidentialSetupTransaction,
@@ -98,11 +102,13 @@ describe("contributor confidential-account sponsorship relay", () => {
     mocks.getWorkspaceGasTankSponsorshipUsage.mockResolvedValue({
       feeLamports: 0n, operationCount: 0, reservedFeesLamports: 0n
     });
+    mocks.listPreparedGasTankConfidentialSetupOperations.mockResolvedValue([]);
     mocks.findAssociatedTokenPda.mockResolvedValue(["token-account"]);
     mocks.loadPayloreConfig.mockReturnValue({ PAYLORE_WRAPPED_USDC_MINT: "wrapped-mint" });
     mocks.inspectSponsoredConfidentialSetupTransaction.mockResolvedValue({
       transaction: { messageBytes: Uint8Array.of(1), signatures: {} },
       messageBytes: Uint8Array.of(1),
+      recentBlockhash: "recent-blockhash",
       feeLamports: 5_000n,
       reservedRentLamports: 10_000_000n,
       transactionBytes: 100
@@ -169,10 +175,60 @@ describe("contributor confidential-account sponsorship relay", () => {
     expect(mocks.submitSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
   });
 
-  it("does not allow an already-ready account to use sponsorship", async () => {
+  it("releases an expired prepared reservation and requires a fresh blockhash", async () => {
+    const operation = {
+      id: "operation-expired",
+      status: "prepared",
+      transactionSignature: "5".repeat(88),
+      feeLamports: "5000",
+      failureCode: null,
+      updatedAt: new Date("2026-10-22T00:00:00.000Z"),
+      operationData: {
+        ownerAddress: "contributor-wallet",
+        mintAddress: "wrapped-mint",
+        tokenAccountAddress: "token-account",
+        recentBlockhash: "recent-blockhash",
+        reservedRentLamports: "10000000"
+      }
+    };
+    mocks.listPreparedGasTankConfidentialSetupOperations.mockResolvedValue([operation]);
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
+      ...operation,
+      status: "cancelled",
+      failureCode: "recent_blockhash_expired"
+    });
+    mocks.readSolanaRpc.mockImplementation(async (method: string) =>
+      method === "getSignatureStatuses"
+        ? { value: [null] }
+        : method === "isBlockhashValid"
+          ? { value: false }
+          : method === "getTransaction"
+            ? null
+            : { value: [] }
+    );
+
+    const response = await POST(request({ transactionBase64: "AQ==" }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "confidential_setup_blockhash_expired",
+      action: "prepare_fresh_transaction"
+    });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      operationId: "operation-expired",
+      status: "cancelled",
+      failureCode: "recent_blockhash_expired",
+      transactionSignature: "5".repeat(88)
+    }));
+    expect(mocks.submitSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not allow an already-ready account to create a new sponsored setup", async () => {
     mocks.getContributorConfidentialAccount.mockResolvedValue({ status: "ready" });
     const response = await POST(request({ transactionBase64: "AQ==" }), context);
     expect(response.status).toBe(409);
-    expect(mocks.inspectSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      error: "confidential_account_already_ready"
+    });
+    expect(mocks.submitSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
   });
 });

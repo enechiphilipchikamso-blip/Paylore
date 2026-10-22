@@ -25,7 +25,8 @@ import { readSolanaRpc } from "./solana/rpc";
 export type InspectedConfidentialSetupTransaction = {
   transaction: Transaction;
   messageBytes: Uint8Array;
-  feeLamports: bigint;
+  recentBlockhash: string;
+  feeLamports: bigint | null;
   reservedRentLamports: bigint;
   transactionBytes: number;
 };
@@ -41,6 +42,7 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   balanceLamports: string;
   dailyBookedFeesLamports: bigint;
   dailyOperationCount: number;
+  deferCostCheck?: boolean;
 }): Promise<InspectedConfidentialSetupTransaction> {
   if (
     !input.transactionBase64 ||
@@ -102,20 +104,26 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
     Buffer.from(transaction.messageBytes).toString("base64"),
     { commitment: "confirmed" }
   ]);
-  if (fee.value === null || !Number.isSafeInteger(fee.value) || fee.value < 0) {
+  if (fee.value !== null && (!Number.isSafeInteger(fee.value) || fee.value < 0)) {
     throw new GasTankSponsorshipPolicyError("sponsored_fee_unavailable");
   }
-  assertSponsoredCost({
-    transactionBytes: wireBytes.length,
-    feeLamports: BigInt(fee.value),
-    balanceLamports: BigInt(input.balanceLamports),
-    dailyBookedFeesLamports: input.dailyBookedFeesLamports,
-    dailyOperationCount: input.dailyOperationCount
-  });
+  if (fee.value === null && !input.deferCostCheck) {
+    throw new GasTankSponsorshipPolicyError("sponsored_fee_unavailable");
+  }
+  if (fee.value !== null && !input.deferCostCheck) {
+    assertSponsoredCost({
+      transactionBytes: wireBytes.length,
+      feeLamports: BigInt(fee.value),
+      balanceLamports: BigInt(input.balanceLamports),
+      dailyBookedFeesLamports: input.dailyBookedFeesLamports,
+      dailyOperationCount: input.dailyOperationCount
+    });
+  }
   return {
     transaction,
     messageBytes: new Uint8Array(transaction.messageBytes),
-    feeLamports: BigInt(fee.value),
+    recentBlockhash: message.recentBlockhash,
+    feeLamports: fee.value === null ? null : BigInt(fee.value),
     reservedRentLamports,
     transactionBytes: wireBytes.length
   };

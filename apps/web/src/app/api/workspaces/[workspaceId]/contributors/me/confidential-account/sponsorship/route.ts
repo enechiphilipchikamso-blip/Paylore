@@ -10,6 +10,7 @@ import {
   getWorkspaceGasTankOperationByIdempotencyKey,
   getWorkspaceGasTankSponsorshipUsage,
   getWorkspaceSubscription,
+  listPreparedGasTankConfidentialSetupOperations,
   updateGasTankOperationAttempt
 } from "@paylore/database";
 import { address } from "@solana/kit";
@@ -21,6 +22,7 @@ import { loadPayloreConfig } from "../../../../../../../../server/config";
 import { getWorkspaceGasTankSnapshot, withWorkspaceGasTankKey } from "../../../../../../../../server/gas-tank";
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
 import {
+  assertSponsoredCost,
   GasTankSponsorshipPolicyError,
   MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS,
   MAX_DAILY_SPONSORED_FEE_LAMPORTS,
@@ -67,7 +69,7 @@ async function currentPolicy(workspaceId: string, context: {
   db: ReturnType<typeof getDatabase>;
   contributor: { id: string };
   session: { walletAddress: string };
-}) {
+}, allowReadyAccount = false) {
   const [deletion, subscription, account] = await Promise.all([
     getWorkspaceDeletionState(context.db, workspaceId),
     getWorkspaceSubscription(context.db, workspaceId),
@@ -79,7 +81,7 @@ async function currentPolicy(workspaceId: string, context: {
   if (subscription?.status !== "active" && subscription?.status !== "cancel_scheduled") {
     return { response: NextResponse.json({ error: "workspace_read_only" }, { status: 409 }) };
   }
-  if (account?.status === "ready") {
+  if (account?.status === "ready" && !allowReadyAccount) {
     return { response: NextResponse.json({ error: "confidential_account_already_ready" }, { status: 409 }) };
   }
   const config = loadPayloreConfig();
@@ -99,8 +101,118 @@ async function currentPolicy(workspaceId: string, context: {
     config,
     gasTank,
     tokenAccountAddress,
-    feePayerAddress: gasTank.address
+    feePayerAddress: gasTank.address,
+    accountReady: account?.status === "ready"
   };
+}
+
+export async function GET(
+function readRecentBlockhashFromTransaction(value: unknown): string | null {
+  if (value === null || typeof value !== "object") return null;
+  const transaction = (value as Record<string, unknown>).transaction;
+  if (transaction === null || typeof transaction !== "object") return null;
+  const message = (transaction as Record<string, unknown>).message;
+  if (message === null || typeof message !== "object") return null;
+  const recentBlockhash = (message as Record<string, unknown>).recentBlockhash;
+  return typeof recentBlockhash === "string" && recentBlockhash.length > 0
+    ? recentBlockhash
+    : null;
+}
+
+function readFinalizedTransactionError(value: unknown): { found: boolean; error: unknown } {
+  if (value === null || typeof value !== "object") return { found: false, error: null };
+  const meta = (value as Record<string, unknown>).meta;
+  if (meta === null || typeof meta !== "object" || !("err" in meta)) {
+    return { found: false, error: null };
+  }
+  return { found: true, error: (meta as Record<string, unknown>).err };
+}
+
+/** Releases a reservation only after status history and finalized transaction lookup agree it is absent. */
+async function reconcilePreparedConfidentialSetupOperations(
+  db: ReturnType<typeof getDatabase>,
+  workspaceId: string,
+  ownerAddress: string
+): Promise<void> {
+  const operations = await listPreparedGasTankConfidentialSetupOperations(db, workspaceId, ownerAddress);
+  for (const operation of operations) {
+    const signature = operation.transactionSignature;
+    if (!signature) continue;
+
+    const statuses = await readSolanaRpc<{
+      value: Array<{ confirmationStatus?: string | null; err?: unknown } | null>
+    }>("getSignatureStatuses", [[signature], { searchTransactionHistory: true }]);
+    const status = Array.isArray(statuses.value) ? statuses.value[0] ?? null : null;
+    if (status?.confirmationStatus === "finalized" && status.err === null) {
+      await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId: operation.id,
+        status: "finalized",
+        transactionSignature: signature,
+        feeLamports: operation.feeLamports,
+        expectedUpdatedAt: operation.updatedAt
+      });
+      continue;
+    }
+    if (status?.confirmationStatus === "finalized" && status.err !== null) {
+      await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId: operation.id,
+        status: "failed",
+        transactionSignature: signature,
+        feeLamports: operation.feeLamports,
+        failureCode: "finalized_chain_failure",
+        expectedUpdatedAt: operation.updatedAt
+      });
+      continue;
+    }
+    if (status !== null) continue;
+
+    const transaction = await readSolanaRpc<unknown>("getTransaction", [
+      signature,
+      { commitment: "finalized", maxSupportedTransactionVersion: 0 }
+    ]);
+    const finalResult = readFinalizedTransactionError(transaction);
+    if (finalResult.found) {
+      await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId: operation.id,
+        status: finalResult.error === null ? "finalized" : "failed",
+        transactionSignature: signature,
+        feeLamports: operation.feeLamports,
+        ...(finalResult.error === null ? {} : { failureCode: "finalized_chain_failure" }),
+        expectedUpdatedAt: operation.updatedAt
+      });
+      continue;
+    }
+    if (transaction !== null) continue;
+
+    const operationData = operation.operationData !== null &&
+      typeof operation.operationData === "object" &&
+      !Array.isArray(operation.operationData)
+      ? operation.operationData as Record<string, unknown>
+      : {};
+    const recentBlockhash = typeof operationData.recentBlockhash === "string"
+      ? operationData.recentBlockhash
+      : readRecentBlockhashFromTransaction(transaction);
+    if (!recentBlockhash) continue;
+
+    const validity = await readSolanaRpc<{ value: boolean }>("isBlockhashValid", [
+      recentBlockhash,
+      { commitment: "confirmed" }
+    ]);
+    if (validity.value !== false) continue;
+
+    await updateGasTankOperationAttempt(db, {
+      workspaceId,
+      operationId: operation.id,
+      status: "cancelled",
+      transactionSignature: signature,
+      feeLamports: operation.feeLamports,
+      failureCode: "recent_blockhash_expired",
+      expectedUpdatedAt: operation.updatedAt
+    });
+  }
 }
 
 export async function GET(
@@ -111,6 +223,9 @@ export async function GET(
   const context = await contributorContext(workspaceId);
   if ("response" in context) return context.response;
   try {
+    await reconcilePreparedConfidentialSetupOperations(
+      context.db, workspaceId, context.session.walletAddress
+    );
     const policy = await currentPolicy(workspaceId, context);
     if ("response" in policy) return policy.response;
     if (BigInt(policy.gasTank.balanceLamports) < MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS) {
@@ -153,8 +268,11 @@ export async function POST(
     const { workspaceId } = await params;
     const context = await contributorContext(workspaceId);
     if ("response" in context) return context.response;
-    const policy = await currentPolicy(workspaceId, context);
+    const policy = await currentPolicy(workspaceId, context, true);
     if ("response" in policy) return policy.response;
+    await reconcilePreparedConfidentialSetupOperations(
+      context.db, workspaceId, context.session.walletAddress
+    );
 
     const since = new Date(Date.now() - idempotencyWindowMs);
     const usage = await getWorkspaceGasTankSponsorshipUsage(context.db, workspaceId, since);
@@ -167,7 +285,8 @@ export async function POST(
       gasTankAddress: policy.gasTank.address,
       balanceLamports: policy.gasTank.balanceLamports,
       dailyBookedFeesLamports: usage.feeLamports,
-      dailyOperationCount: usage.operationCount
+      dailyOperationCount: usage.operationCount,
+      deferCostCheck: true
     });
     const digest = createHash("sha256")
       .update(workspaceId)
@@ -183,8 +302,23 @@ export async function POST(
     if (existing && existing.requestDigest !== digest) {
       return NextResponse.json({ error: "confidential_setup_sponsorship_conflict" }, { status: 409 });
     }
+    if (
+      existing?.status === "cancelled" &&
+      existing.failureCode === "recent_blockhash_expired"
+    ) {
+      return NextResponse.json({
+        error: "confidential_setup_blockhash_expired",
+        action: "prepare_fresh_transaction"
+      }, { status: 409 });
+    }
     if (existing?.status === "finalized" && existing.transactionSignature) {
       return NextResponse.json({ signature: existing.transactionSignature, status: "finalized" });
+    }
+    if (
+      existing?.status === "failed" &&
+      existing.failureCode === "finalized_chain_failure"
+    ) {
+      return NextResponse.json({ error: "confidential_setup_transaction_failed" }, { status: 409 });
     }
     if (existing?.status === "prepared" && existing.transactionSignature) {
       const statuses = await readSolanaRpc<{ value: Array<{ confirmationStatus?: string | null; err?: unknown } | null> }>(
@@ -201,14 +335,67 @@ export async function POST(
         return NextResponse.json({ signature: existing.transactionSignature, status: "finalized" });
       }
       if (status?.confirmationStatus === "finalized" && status.err !== null) {
-        await updateGasTankOperationAttempt(context.db, {
+        const failed = await updateGasTankOperationAttempt(context.db, {
           workspaceId, operationId: existing.id, status: "failed",
           transactionSignature: existing.transactionSignature,
           feeLamports: existing.feeLamports,
           failureCode: "finalized_chain_failure",
           expectedUpdatedAt: existing.updatedAt
         });
-        return NextResponse.json({ error: "confidential_setup_transaction_failed" }, { status: 409 });
+        return failed
+          ? NextResponse.json({ error: "confidential_setup_transaction_failed" }, { status: 409 })
+          : NextResponse.json({ signature: existing.transactionSignature, status: "pending", error: "confidential_setup_sponsorship_pending" }, { status: 202 });
+      }
+      if (status === null) {
+        const transaction = await readSolanaRpc<unknown>("getTransaction", [
+          existing.transactionSignature,
+          { commitment: "finalized", maxSupportedTransactionVersion: 0 }
+        ]);
+        const finalResult = readFinalizedTransactionError(transaction);
+        if (finalResult.found) {
+          const updated = await updateGasTankOperationAttempt(context.db, {
+            workspaceId,
+            operationId: existing.id,
+            status: finalResult.error === null ? "finalized" : "failed",
+            transactionSignature: existing.transactionSignature,
+            feeLamports: existing.feeLamports,
+            ...(finalResult.error === null ? {} : { failureCode: "finalized_chain_failure" }),
+            expectedUpdatedAt: existing.updatedAt
+          });
+          if (updated && finalResult.error === null) {
+            return NextResponse.json({ signature: existing.transactionSignature, status: "finalized" });
+          }
+          if (updated && finalResult.error !== null) {
+            return NextResponse.json({ error: "confidential_setup_transaction_failed" }, { status: 409 });
+          }
+        }
+        if (transaction === null) {
+          const validity = await readSolanaRpc<{ value: boolean }>("isBlockhashValid", [
+            inspected.recentBlockhash,
+            { commitment: "confirmed" }
+          ]);
+          if (validity.value === false) {
+            const cancelled = await updateGasTankOperationAttempt(context.db, {
+              workspaceId,
+              operationId: existing.id,
+              status: "cancelled",
+              transactionSignature: existing.transactionSignature,
+              feeLamports: existing.feeLamports,
+              failureCode: "recent_blockhash_expired",
+              expectedUpdatedAt: existing.updatedAt
+            });
+            return cancelled
+              ? NextResponse.json({
+                  error: "confidential_setup_blockhash_expired",
+                  action: "prepare_fresh_transaction"
+                }, { status: 409 })
+              : NextResponse.json({
+                  signature: existing.transactionSignature,
+                  status: "pending",
+                  error: "confidential_setup_sponsorship_pending"
+                }, { status: 202 });
+          }
+        }
       }
       return NextResponse.json({
         signature: existing.transactionSignature,
@@ -219,6 +406,19 @@ export async function POST(
     if (existing?.status === "preparing") {
       return NextResponse.json({ error: "confidential_setup_sponsorship_pending" }, { status: 409 });
     }
+    if (policy.accountReady) {
+      return NextResponse.json({ error: "confidential_account_already_ready" }, { status: 409 });
+    }
+    if (inspected.feeLamports === null) {
+      return NextResponse.json({ error: "sponsored_fee_unavailable" }, { status: 409 });
+    }
+    assertSponsoredCost({
+      transactionBytes: inspected.transactionBytes,
+      feeLamports: inspected.feeLamports,
+      balanceLamports: BigInt(policy.gasTank.balanceLamports),
+      dailyBookedFeesLamports: usage.feeLamports,
+      dailyOperationCount: usage.operationCount
+    });
 
     const reservedRentLamports = String(inspected.reservedRentLamports);
     const started = await beginGasTankOperationAttempt(context.db, {
@@ -235,6 +435,7 @@ export async function POST(
         ownerAddress: context.session.walletAddress,
         mintAddress: policy.config.PAYLORE_WRAPPED_USDC_MINT,
         tokenAccountAddress: policy.tokenAccountAddress,
+        recentBlockhash: inspected.recentBlockhash,
         reservedRentLamports
       }
     });
@@ -269,6 +470,7 @@ export async function POST(
         ownerAddress: context.session.walletAddress,
         mintAddress: policy.config.PAYLORE_WRAPPED_USDC_MINT,
         tokenAccountAddress: policy.tokenAccountAddress,
+        recentBlockhash: inspected.recentBlockhash,
         reservedRentLamports
       },
       expectedUpdatedAt: operation.updatedAt

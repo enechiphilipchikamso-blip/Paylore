@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   findWorkspaceContributorByWallet,
+  finalizeGasTankConfidentialAccountSetupForVerifiedAccount,
   getContributorConfidentialAccount,
   getContributorOffboardingStatus,
   getWorkspaceForUser,
@@ -143,6 +144,13 @@ export async function POST(
         transactionSignature: parsed.data.signature
       }
     );
+    await finalizeGasTankConfidentialAccountSetupForVerifiedAccount(context.db, {
+      workspaceId,
+      transactionSignature: parsed.data.signature,
+      ownerAddress: context.session.walletAddress,
+      mintAddress: mint,
+      tokenAccountAddress
+    });
     return NextResponse.json(
       { account },
       { headers: { "Cache-Control": "no-store" } }

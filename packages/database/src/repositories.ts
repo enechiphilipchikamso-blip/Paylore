@@ -4684,6 +4684,93 @@ export async function listWorkspaceGasTankOperations(
 }
 
 export async function beginGasTankOperationAttempt(
+/** Finds only prepared confidential-account sponsorships owned by this contributor. */
+export async function listPreparedGasTankConfidentialSetupOperations(
+  db: Database,
+  workspaceId: string,
+  ownerAddress: string
+) {
+  return db
+    .select({
+      id: gasTankOperations.id,
+      transactionSignature: gasTankOperations.transactionSignature,
+      feeLamports: gasTankOperations.feeLamports,
+      operationData: gasTankOperations.operationData,
+      updatedAt: gasTankOperations.updatedAt
+    })
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.workspaceId, workspaceId),
+      eq(gasTankOperations.operationType, "confidential_account_setup"),
+      eq(gasTankOperations.status, "prepared"),
+      isNotNull(gasTankOperations.transactionSignature),
+      sql`${gasTankOperations.operationData}->>'ownerAddress' = ${ownerAddress}`
+    ))
+    .orderBy(asc(gasTankOperations.createdAt))
+    .limit(101);
+}
+
+/** Reconciles a sponsored setup only when finalized owner, mint, ATA, and transaction identity agree. */
+export async function finalizeGasTankConfidentialAccountSetupForVerifiedAccount(
+  db: Database,
+  input: {
+    workspaceId: string;
+    transactionSignature: string;
+    ownerAddress: string;
+    mintAddress: string;
+    tokenAccountAddress: string;
+  }
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(gasTankOperations)
+      .where(and(
+        eq(gasTankOperations.workspaceId, input.workspaceId),
+        eq(gasTankOperations.operationType, "confidential_account_setup"),
+        eq(gasTankOperations.transactionSignature, input.transactionSignature)
+      ))
+      .for("update")
+      .limit(1);
+    const operation = rows[0];
+    if (!operation) return false;
+
+    const data = operation.operationData !== null &&
+      typeof operation.operationData === "object" &&
+      !Array.isArray(operation.operationData)
+      ? operation.operationData as Record<string, unknown>
+      : {};
+    if (
+      data.ownerAddress !== input.ownerAddress ||
+      data.mintAddress !== input.mintAddress ||
+      data.tokenAccountAddress !== input.tokenAccountAddress
+    ) {
+      return false;
+    }
+    if (operation.status === "finalized") return true;
+    if (operation.status !== "prepared") return false;
+
+    const now = new Date();
+    const updated = await tx
+      .update(gasTankOperations)
+      .set({ status: "finalized", updatedAt: now })
+      .where(and(
+        eq(gasTankOperations.id, operation.id),
+        eq(gasTankOperations.workspaceId, input.workspaceId),
+        eq(gasTankOperations.transactionSignature, input.transactionSignature),
+        eq(gasTankOperations.status, "prepared")
+      ))
+      .returning({ id: gasTankOperations.id });
+    if (!updated[0]) return false;
+
+    await tx.update(workspaceGasTanks)
+      .set({ lastActivityAt: now, updatedAt: now })
+      .where(eq(workspaceGasTanks.workspaceId, input.workspaceId));
+    return true;
+  });
+}
+
+
   db: Database,
   input: {
     workspaceId: string;
