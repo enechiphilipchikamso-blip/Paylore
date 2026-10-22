@@ -10,3 +10,4 @@ export type {
 export * from "./schema";
 export * from "./repositories";
 export * from "./retention-policy";
+export * from "./gas-tank-operation-history";

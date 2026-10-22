@@ -84,7 +84,7 @@ function secretCandidates(environment) {
           if (decoded.length >= 8) secrets.push({ key: key + " " + partName, value: decoded });
         }
         for (const [paramName, paramValue] of url.searchParams) {
-          if (sensitiveNamePattern.test(paramName) && paramValue.length >= 8) {
+          if (sensitiveNamePattern.test(paramName.replace(/[-.]/g, "_")) && paramValue.length >= 8) {
             secrets.push({ key: key + " " + paramName, value: paramValue });
           }
         }

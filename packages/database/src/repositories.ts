@@ -20,6 +20,7 @@ import {
 import type {
   Database
 } from "./client";
+import { operationDataForGasTankRetry, summarizeGasTankSponsorshipBudget } from "./gas-tank-operation-history";
 import {
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   hasReachedInactivityThreshold,
@@ -4676,7 +4677,8 @@ export async function beginGasTankOperationAttempt(
       .select({
         status: gasTankOperations.status,
         feeLamports: gasTankOperations.feeLamports,
-        failureCode: gasTankOperations.failureCode
+        failureCode: gasTankOperations.failureCode,
+        operationData: gasTankOperations.operationData
       })
       .from(gasTankOperations)
       .where(and(
@@ -4687,23 +4689,14 @@ export async function beginGasTankOperationAttempt(
     if (recent.length > 1000) {
       return { status: "gas_tank_daily_sponsorship_limit" as const, operation: existing ?? null };
     }
-    let dailyFees = 0n;
-    let dailyOperations = 0;
-    let reservedFees = 0n;
-    for (const row of recent) {
-      if (!["preparing", "prepared", "finalized"].includes(row.status) &&
-          !(row.status === "failed" && row.failureCode === "finalized_chain_failure")) continue;
-      dailyOperations += 1;
-      const amount = row.feeLamports && positiveInteger(row.feeLamports)
-        ? BigInt(row.feeLamports)
-        : row.status === "preparing" || row.status === "prepared"
-          ? BigInt(input.reservedFeeLamports)
-          : 0n;
-      dailyFees += amount;
-      if (row.status === "preparing" || row.status === "prepared") {
-        reservedFees += amount;
-      }
-    }
+    const usage = summarizeGasTankSponsorshipBudget({
+      rows: recent,
+      reservedFeeLamports: input.reservedFeeLamports,
+      since: input.since
+    });
+    const dailyFees = usage.feeLamports;
+    const dailyOperations = usage.operationCount;
+    const reservedFees = usage.reservedFeesLamports;
 
     const available = BigInt(input.availableBalanceLamports);
     const requestedReservation = BigInt(input.reservedFeeLamports);
@@ -4726,7 +4719,11 @@ export async function beginGasTankOperationAttempt(
           feeLamports: input.reservedFeeLamports,
           failureCode: null,
           lastValidBlockHeight: null,
-          operationData: input.operationData ?? null,
+          operationData: operationDataForGasTankRetry({
+            nextOperationData: input.operationData,
+            previousOperation: existing,
+            since: input.since
+          }),
           createdAt: now,
           updatedAt: now
         })
@@ -4869,7 +4866,8 @@ export async function getWorkspaceGasTankSponsorshipUsage(
     .select({
       status: gasTankOperations.status,
       feeLamports: gasTankOperations.feeLamports,
-      failureCode: gasTankOperations.failureCode
+      failureCode: gasTankOperations.failureCode,
+      operationData: gasTankOperations.operationData
     })
     .from(gasTankOperations)
     .where(and(
@@ -4877,18 +4875,9 @@ export async function getWorkspaceGasTankSponsorshipUsage(
       gte(gasTankOperations.createdAt, since)
     ))
     .limit(1001);
-  const overflow = rows.length > 1000;
-  let feeLamports = 0n;
-  let operationCount = 0;
-  for (const row of rows) {
-    if (!["preparing", "prepared", "finalized"].includes(row.status) &&
-        !(row.status === "failed" && row.failureCode === "finalized_chain_failure")) continue;
-    operationCount += 1;
-    if (row.feeLamports && /^(0|[1-9][0-9]*)$/.test(row.feeLamports)) {
-      feeLamports += BigInt(row.feeLamports);
-    } else if (row.status === "preparing" || row.status === "prepared") {
-      feeLamports += 100_000n;
-    }
-  }
-  return { feeLamports, operationCount, overflow };
+  return summarizeGasTankSponsorshipBudget({
+    rows,
+    reservedFeeLamports: "100000",
+    since
+  });
 }

@@ -124,6 +124,9 @@ export function PayrollClaimCommitAction({
           if (reason === "previous_sponsored_transaction_failed_retry_allowed") {
             throw new Error("The earlier sponsored transaction finalized with an on-chain failure. Its actual network fee was recorded; you can safely retry the same payroll batch.");
           }
+          if (reason === "payroll_run_already_committed") {
+            throw new Error("This payroll run is already committed. Refresh to view its recorded state; Paylore will not prepare another transaction.");
+          }
           if (reason === "gas_tank_operation_already_prepared" || reason === "gas_tank_operation_already_finalized") {
             throw new Error("An earlier sponsored attempt exists for this payroll batch. Refresh and reconcile that attempt before submitting another transaction.");
           }
