@@ -515,14 +515,9 @@ export function ContributorCompensation({
       ) : null}
 
       {!currentAccount || currentAccount.status !== "ready" ? (
-        <>
         <p className="notice">
-          Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Setup occurs when you request it here, not when payroll creates a Claim PDA.
+          Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Start from Claim &amp; Cash Out when an allocation is available. Payroll creation alone never creates or funds a confidential account.
         </p>
-        <button className="button" disabled={busy || !mint} onClick={() => void runSetup()} type="button">
-          {busy ? "Preparing account…" : "Set up confidential account"}
-        </button>
-        </>
       ) : (
         <div className="hero__actions">
           <button className="button button--secondary" disabled={busy} onClick={() => void runBalanceAction("refresh")} type="button">
