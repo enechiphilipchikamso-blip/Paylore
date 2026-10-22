@@ -37,10 +37,7 @@ vi.mock("@solana/kit", async (importOriginal) => {
   };
 });
 
-import {
-  prepareSponsoredInstructionTransaction,
-  prepareSponsoredPayrollClaimTransaction
-} from "./gas-tank-sponsorship";
+import { prepareSponsoredPayrollClaimTransaction } from "./gas-tank-sponsorship";
 
 const wireTransaction = Buffer.concat([
   Buffer.from([1]),
@@ -48,11 +45,25 @@ const wireTransaction = Buffer.concat([
   Buffer.from([9, 8, 7])
 ]);
 const wireBase64 = wireTransaction.toString("base64");
-const instructions = [{
-  programAddress: "payroll-program" as never,
-  accounts: [],
-  data: new Uint8Array([1, 2, 3])
-}];
+const claimId = "01".repeat(32);
+const allocationCommitment = "ab".repeat(32);
+const privateKey = () => new Uint8Array(64).fill(8);
+
+function prepare(overrides: Partial<Parameters<typeof prepareSponsoredPayrollClaimTransaction>[0]> = {}) {
+  return prepareSponsoredPayrollClaimTransaction({
+    workspaceId: "workspace-a",
+    authorityAddress: "manager-wallet",
+    programId: "payroll-program",
+    gasTankAddress: "gas-tank-address",
+    gasTankPrivateKey: privateKey(),
+    balanceLamports: "100000",
+    allocationCommitment,
+    claims: [{ claimId, contributorAddress: "contributor-wallet" }],
+    dailyBookedFeesLamports: 0n,
+    dailyOperationCount: 0,
+    ...overrides
+  });
+}
 
 describe("server-built Gas Tank sponsored transactions", () => {
   beforeEach(() => {
@@ -80,6 +91,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
     mocks.getBase64EncodedWireTransaction.mockReturnValue(wireBase64);
     mocks.getSignatureFromTransaction.mockReturnValue("prepared-signature");
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getMultipleAccounts") return { value: [null, null] };
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }
@@ -89,23 +101,17 @@ describe("server-built Gas Tank sponsored transactions", () => {
     });
   });
 
-  it("validates the plan, sets the Gas Tank as fee payer, signs, simulates and returns bounded public metadata", async () => {
-    const validateInstructions = vi.fn();
-    const privateKey = new Uint8Array(64).fill(8);
-    const result = await prepareSponsoredInstructionTransaction({
-      instructions: instructions as never,
-      validateInstructions,
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: privateKey,
-      balanceLamports: "100000",
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    });
-    expect(validateInstructions).toHaveBeenCalledWith(instructions);
+  it("reconstructs the approved payroll claim plan and returns only public signing metadata", async () => {
+    const sourceKey = privateKey();
+    const result = await prepare({ gasTankPrivateKey: sourceKey });
+
+    expect(mocks.readSolanaRpc).toHaveBeenCalledWith("getMultipleAccounts", [
+      ["workspace-pda", "claim-pda"],
+      { commitment: "finalized", encoding: "base64" }
+    ]);
     expect(mocks.setTransactionMessageFeePayerSigner).toHaveBeenCalledWith(
       { address: "gas-tank-address" }, expect.anything()
     );
-    expect(mocks.getSignatureFromTransaction).toHaveBeenCalledOnce();
     expect(mocks.readSolanaRpc).toHaveBeenCalledWith("getFeeForMessage", [
       Buffer.from([9, 8, 7]).toString("base64"),
       { commitment: "confirmed" }
@@ -115,113 +121,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
       signature: "prepared-signature",
       feeLamports: "5000",
       gasTankAddress: "gas-tank-address",
-      blockhash: "11111111111111111111111111111111",
-      lastValidBlockHeight: 123
-    });
-    expect(Object.keys(result).sort()).toEqual([
-      "blockhash", "feeLamports", "gasTankAddress", "lastValidBlockHeight", "signature", "transactionBase64"
-    ]);
-    expect([...privateKey].every((byte) => byte === 8)).toBe(true);
-  });
-
-  it("rejects a malformed plan before using the Gas Tank key", async () => {
-    const validateInstructions = vi.fn(() => {
-      throw new Error("instruction plan denied");
-    });
-    await expect(prepareSponsoredInstructionTransaction({
-      instructions: instructions as never,
-      validateInstructions,
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100000",
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toThrow("instruction plan denied");
-    expect(mocks.createKeyPairSignerFromBytes).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when the decrypted key does not match the configured Gas Tank address", async () => {
-    mocks.createKeyPairSignerFromBytes.mockResolvedValue({ address: "other-address" });
-    await expect(prepareSponsoredInstructionTransaction({
-      instructions: instructions as never,
-      validateInstructions: vi.fn(),
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100000",
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toMatchObject({ code: "gas_tank_key_identity_mismatch" });
-    expect(mocks.readSolanaRpc).not.toHaveBeenCalled();
-  });
-
-  it("does not simulate or return a transaction when the available fee budget is insufficient", async () => {
-    await expect(prepareSponsoredInstructionTransaction({
-      instructions: instructions as never,
-      validateInstructions: vi.fn(),
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100",
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toMatchObject({ code: "gas_tank_insufficient_balance" });
-    expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("simulateTransaction", expect.anything());
-  });
-
-  it("fails closed if transaction simulation reports an error", async () => {
-    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
-      if (method === "getLatestBlockhash") {
-        return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
-      }
-      if (method === "getFeeForMessage") return { value: 5_000 };
-      if (method === "simulateTransaction") return { value: { err: { InstructionError: [0, "Custom"] } } };
-      throw new Error("Unexpected RPC method");
-    });
-    await expect(prepareSponsoredInstructionTransaction({
-      instructions: instructions as never,
-      validateInstructions: vi.fn(),
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100000",
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toMatchObject({ code: "sponsored_simulation_failed" });
-  });
-  it("reconstructs the approved payroll claim plan and returns only public signing metadata", async () => {
-    const sourceKey = new Uint8Array(64).fill(8);
-    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
-      if (method === "getMultipleAccounts") return { value: [null, null] };
-      if (method === "getLatestBlockhash") {
-        return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
-      }
-      if (method === "getFeeForMessage") return { value: 5_000 };
-      if (method === "simulateTransaction") return { value: { err: null, unitsConsumed: 20_000 } };
-      throw new Error("Unexpected RPC method");
-    });
-    const result = await prepareSponsoredPayrollClaimTransaction({
-      workspaceId: "workspace-a",
-      authorityAddress: "manager-wallet",
-      programId: "payroll-program",
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: sourceKey,
-      balanceLamports: "100000",
-      allocationCommitment: "ab".repeat(32),
-      claims: [{ claimId: "01".repeat(32), contributorAddress: "contributor-wallet" }],
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    });
-    expect(mocks.readSolanaRpc).toHaveBeenCalledWith("getMultipleAccounts", [
-      ["workspace-pda", "claim-pda"],
-      { commitment: "finalized", encoding: "base64" }
-    ]);
-    expect(mocks.setTransactionMessageFeePayerSigner).toHaveBeenCalledWith(
-      { address: "gas-tank-address" }, expect.anything()
-    );
-    expect(result).toMatchObject({
-      transactionBase64: wireBase64,
-      signature: "prepared-signature",
-      feeLamports: "5000",
-      gasTankAddress: "gas-tank-address",
-      claims: [{ claimId: "01".repeat(32), claimAddress: "claim-pda" }],
+      claims: [{ claimId, claimAddress: "claim-pda" }],
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 123
     });
@@ -231,48 +131,70 @@ describe("server-built Gas Tank sponsored transactions", () => {
     expect([...sourceKey].every((byte) => byte === 8)).toBe(true);
   });
 
+  it("fails closed when finalized account state cannot be read before sponsor signing", async () => {
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getMultipleAccounts") return { value: [] };
+      throw new Error("Unexpected RPC method");
+    });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_claim_state_unavailable" });
+    expect(mocks.createKeyPairSignerFromBytes).not.toHaveBeenCalled();
+    expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("getLatestBlockhash", expect.anything());
+  });
+
   it("fails closed when the finalized workspace PDA is owned by a different program", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [{ owner: "other-program" }, null] };
       throw new Error("Unexpected RPC method");
     });
-    await expect(prepareSponsoredPayrollClaimTransaction({
-      workspaceId: "workspace-a",
-      authorityAddress: "manager-wallet",
-      programId: "payroll-program",
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100000",
-      allocationCommitment: "ab".repeat(32),
-      claims: [{ claimId: "01".repeat(32), contributorAddress: "contributor-wallet" }],
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toMatchObject({ code: "sponsored_workspace_pda_owner_mismatch" });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_workspace_pda_owner_mismatch" });
     expect(mocks.createKeyPairSignerFromBytes).not.toHaveBeenCalled();
     expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("getLatestBlockhash", expect.anything());
   });
 
   it("does not sponsor a claim when its PDA already exists on finalized state", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
-      if (method === "getMultipleAccounts") {
-        return { value: [null, { owner: "payroll-program", data: "AA==" }] };
-      }
+      if (method === "getMultipleAccounts") return { value: [null, { owner: "payroll-program", data: "AA==" }] };
       throw new Error("Unexpected RPC method");
     });
-    await expect(prepareSponsoredPayrollClaimTransaction({
-      workspaceId: "workspace-a",
-      authorityAddress: "manager-wallet",
-      programId: "payroll-program",
-      gasTankAddress: "gas-tank-address",
-      gasTankPrivateKey: new Uint8Array(64).fill(8),
-      balanceLamports: "100000",
-      allocationCommitment: "ab".repeat(32),
-      claims: [{ claimId: "01".repeat(32), contributorAddress: "contributor-wallet" }],
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0
-    })).rejects.toMatchObject({ code: "sponsored_claim_already_exists" });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_claim_already_exists" });
     expect(mocks.createKeyPairSignerFromBytes).not.toHaveBeenCalled();
     expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("getLatestBlockhash", expect.anything());
   });
 
+  it("checks that the decrypted Gas Tank key matches the configured address", async () => {
+    mocks.createKeyPairSignerFromBytes.mockResolvedValue({ address: "another-address" });
+    await expect(prepare()).rejects.toMatchObject({ code: "gas_tank_key_identity_mismatch" });
+    expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("getFeeForMessage", expect.anything());
+  });
+
+  it("rejects a fee budget that cannot cover the measured transaction fee", async () => {
+    await expect(prepare({ balanceLamports: "100" })).rejects.toMatchObject({ code: "gas_tank_insufficient_balance" });
+    expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("simulateTransaction", expect.anything());
+  });
+
+  it("fails closed when simulation reports a transaction error", async () => {
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getLatestBlockhash") {
+        return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
+      }
+      if (method === "getFeeForMessage") return { value: 5_000 };
+      if (method === "simulateTransaction") return { value: { err: { InstructionError: [0, "Custom"] } } };
+      throw new Error("Unexpected RPC method");
+    });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_simulation_failed" });
+  });
+
+  it("rejects an unavailable network fee estimate without presenting a prepared transaction", async () => {
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getLatestBlockhash") {
+        return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
+      }
+      if (method === "getFeeForMessage") return { value: null };
+      throw new Error("Unexpected RPC method");
+    });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_fee_unavailable" });
+    expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("simulateTransaction", expect.anything());
+  });
 });

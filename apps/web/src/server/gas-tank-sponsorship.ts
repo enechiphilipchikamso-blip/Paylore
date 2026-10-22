@@ -103,7 +103,7 @@ function serializedMessageFromTransaction(wire: Uint8Array): Uint8Array {
 type SponsoredInstructionPlan = Parameters<typeof appendTransactionMessageInstructions>[0];
 
 /** Shares the sponsor-signing boundary while requiring each caller to validate its server-built plan. */
-export async function prepareSponsoredInstructionTransaction(input: {
+async function prepareSponsoredInstructionTransaction(input: {
   instructions: SponsoredInstructionPlan;
   validateInstructions: (instructions: readonly unknown[]) => void;
   gasTankAddress: string;
