@@ -298,6 +298,48 @@ describe("payroll sponsor route", () => {
     expect(mocks.getSessionState).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized declared body before reading or authenticating it", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode("{}"));
+      }
+    });
+    const response = await POST(new Request("https://paylore.test/api/sponsor", {
+      method: "POST",
+      headers: {
+        origin: "https://paylore.test",
+        "content-type": "application/json",
+        "content-length": "4097"
+      },
+      body,
+      duplex: "half"
+    } as RequestInit & { duplex: "half" }), context);
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({ error: "request_too_large" });
+    expect(mocks.getSessionState).not.toHaveBeenCalled();
+  });
+
+  it("cancels a streamed body as soon as UTF-8 bytes exceed the limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify("💵".repeat(1_100))));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const response = await POST(new Request("https://paylore.test/api/sponsor", {
+      method: "POST",
+      headers: { origin: "https://paylore.test", "content-type": "application/json" },
+      body,
+      duplex: "half"
+    } as RequestInit & { duplex: "half" }), context);
+    expect(response.status).toBe(413);
+    expect(cancelled).toBe(true);
+    expect(mocks.getSessionState).not.toHaveBeenCalled();
+  });
+
   it("does not prepare a sponsorship for a workspace without manager membership", async () => {
     mocks.getWorkspaceForUser.mockResolvedValue(null);
     const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);

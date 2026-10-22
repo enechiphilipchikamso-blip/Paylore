@@ -19,7 +19,8 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "keys:rotate": "node scripts/rotate-envelope-keys.mjs",
-    "anchor:build": "anchor build"
+    "anchor:build": "anchor build",
+    "audit:client-secrets": "node scripts/audit-client-secret-exposure.mjs apps/web/.next/static"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
