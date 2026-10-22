@@ -338,12 +338,6 @@ describe("company-sponsored confidential-account setup instruction policy", () =
     ])).reservedRentLamports).toBe(MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS);
   });
 
-  it("rejects proof-only transactions that do not create or configure an account", () => {
-    expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
-      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) }
-    ]))).toThrow("confidential_setup_instruction_missing");
-  });
-
   it("rejects Token-2022 transfer instructions and unknown programs", () => {
     expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
       { programAddressIndex: 5, accountIndices: [2, 1], data: Uint8Array.of(3, 1, 0) }

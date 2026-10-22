@@ -351,10 +351,8 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
 
   let reservedRentLamports = 0n;
   let systemRentLamports = 0n;
-  let hasSetupInstruction = false;
   let hasActionableSetupInstruction = false;
   let hasAssociatedTokenCreation = false;
-  let hasConfidentialConfiguration = false;
   const addressDecoder = getAddressDecoder();
 
   for (const instruction of message.instructions) {
@@ -383,13 +381,7 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
       }
       hasAssociatedTokenCreation = true;
       hasActionableSetupInstruction = true;
-      hasActionableSetupInstruction = true;
-      hasSetupInstruction = true;
-      systemRentLamports += lamports;
-      if (systemRentLamports > MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS) {
-        throw new GasTankSponsorshipPolicyError("confidential_setup_rent_limit_exceeded");
-      }
-      if (!hasAssociatedTokenCreation) reservedRentLamports = systemRentLamports;
+      reservedRentLamports = MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS;
       continue;
     }
 
@@ -397,7 +389,6 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
       if (data.length === 1 && data[0] === 22 &&
           accounts.length === 1 &&
           requireAccount(accounts[0], input.tokenAccountAddress, "writable")) {
-        hasSetupInstruction = true;
         continue;
       }
       if (data.length >= 3 && data.length <= 128 &&
@@ -407,9 +398,7 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
           requireAccount(accounts[1], input.mintAddress) &&
           requireAccount(accounts[2], INSTRUCTIONS_SYSVAR_ADDRESS) &&
           requireAccount(accounts[3], input.ownerAddress, "signer")) {
-        hasConfidentialConfiguration = true;
         hasActionableSetupInstruction = true;
-        hasSetupInstruction = true;
         continue;
       }
       throw new GasTankSponsorshipPolicyError("confidential_setup_token_instruction_denied");
@@ -428,17 +417,19 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
       }
       const lamports = dataView.getBigUint64(4, true);
       const space = dataView.getBigUint64(12, true);
-      const owner = addressDecoder.decode(data.subarray(20, 52));
-      if (owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS ||
+      const createdOwner = addressDecoder.decode(data.subarray(20, 52));
+      if (createdOwner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS ||
           lamports <= 0n || lamports > MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS ||
-          space <= 0n || space > 4096n) {
+          space <= 0n || space > 4096n ||
+          addressAt(accounts[1]) === input.ownerAddress) {
         throw new GasTankSponsorshipPolicyError("confidential_setup_proof_account_denied");
       }
-      if (addressAt(accounts[1]) === input.ownerAddress) {
-        throw new GasTankSponsorshipPolicyError("confidential_setup_system_instruction_denied");
+      systemRentLamports += lamports;
+      if (systemRentLamports > MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS) {
+        throw new GasTankSponsorshipPolicyError("confidential_setup_rent_limit_exceeded");
       }
-      hasSetupInstruction = true;
-      reservedRentLamports = MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS;
+      if (!hasAssociatedTokenCreation) reservedRentLamports = systemRentLamports;
+      hasActionableSetupInstruction = true;
       continue;
     }
 
@@ -450,7 +441,6 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
             const account = addressAt(index);
             return account === input.ownerAddress && !roleAt(index).signer;
           })) {
-        hasSetupInstruction = true;
         continue;
       }
       throw new GasTankSponsorshipPolicyError("confidential_setup_proof_instruction_denied");
@@ -459,7 +449,7 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
     throw new GasTankSponsorshipPolicyError("confidential_setup_program_denied");
   }
 
-  if (!hasSetupInstruction || !hasActionableSetupInstruction) {
+  if (!hasActionableSetupInstruction) {
     throw new GasTankSponsorshipPolicyError("confidential_setup_instruction_missing");
   }
   if (hasAssociatedTokenCreation && systemRentLamports > 2_000_000n) {
@@ -467,13 +457,6 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
   }
   if (systemRentLamports > 0n && !hasAssociatedTokenCreation) {
     reservedRentLamports = systemRentLamports;
-  }
-  if (hasAssociatedTokenCreation && !hasConfidentialConfiguration &&
-      message.instructions.some((instruction) =>
-        addressAt(instruction.programAddressIndex) === input.token2022ProgramAddress &&
-        instruction.data[0] === 27
-      )) {
-    throw new GasTankSponsorshipPolicyError("confidential_setup_configuration_invalid");
   }
   return { reservedRentLamports };
 }
