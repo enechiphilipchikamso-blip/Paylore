@@ -13,6 +13,7 @@ import { clearSessionCookie, getSessionState } from "../../../../../../../server
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
 import { loadPayloreConfig } from "../../../../../../../server/config";
 import {
+  ConfidentialAccountVerificationError,
   verifyConfidentialAccountSetup
 } from "../../../../../../../server/solana/confidential-account-verification";
 
@@ -147,6 +148,9 @@ export async function POST(
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
+    if (error instanceof ConfidentialAccountVerificationError) {
+      return NextResponse.json({ error: error.code }, { status: 409 });
+    }
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }

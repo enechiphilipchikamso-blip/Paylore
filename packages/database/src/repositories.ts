@@ -1421,6 +1421,42 @@ export async function getContributorConfidentialAccount(
   return rows[0] ?? null;
 }
 
+export async function getCompletedContributorOffboardingByWallet(
+  db: Database,
+  input: { workspaceId: string; userId: string; walletAddress: string }
+) {
+  const rows = await db
+    .select({
+      manualAccountClose: contributorOffboarding.manualAccountClose,
+      completedAt: contributorOffboarding.completedAt
+    })
+    .from(contributorOffboarding)
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, contributorOffboarding.contributorId),
+        eq(contributors.workspaceId, contributorOffboarding.workspaceId)
+      )
+    )
+    .innerJoin(
+      walletIdentities,
+      and(
+        eq(walletIdentities.address, contributors.identityWalletAddress),
+        eq(walletIdentities.userId, input.userId)
+      )
+    )
+    .where(and(
+      eq(contributorOffboarding.workspaceId, input.workspaceId),
+      eq(contributors.identityWalletAddress, input.walletAddress),
+      eq(contributors.role, "contributor"),
+      eq(contributors.lifecycle, "left"),
+      eq(contributorOffboarding.status, "completed"),
+      isNotNull(contributorOffboarding.associationRemovedAt)
+    ))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getContributorOffboardingStatus(
   db: Database,
   workspaceId: string,
@@ -1636,11 +1672,11 @@ export async function completeContributorOffboarding(
     closeTransactionSignature: string | null;
     now?: Date;
   }
-): Promise<"completed" | "outstanding_obligations" | "not_found"> {
+): Promise<"completed" | "already_completed" | "outstanding_obligations" | "not_found"> {
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
     const matchingContributor = await tx
-      .select({ id: contributors.id })
+      .select({ id: contributors.id, lifecycle: contributors.lifecycle })
       .from(contributors)
       .where(
         and(
@@ -1652,7 +1688,24 @@ export async function completeContributorOffboarding(
       )
       .for("update")
       .limit(1);
-    if (matchingContributor.length === 0) return "not_found";
+    const matchedContributor = matchingContributor[0];
+    if (!matchedContributor) return "not_found";
+    if (matchedContributor.lifecycle === "left") {
+      const completedRows = await tx
+        .select({
+          status: contributorOffboarding.status,
+          associationRemovedAt: contributorOffboarding.associationRemovedAt
+        })
+        .from(contributorOffboarding)
+        .where(and(
+          eq(contributorOffboarding.workspaceId, input.workspaceId),
+          eq(contributorOffboarding.contributorId, input.contributorId)
+        ))
+        .limit(1);
+      return completedRows[0]?.status === "completed" && completedRows[0].associationRemovedAt
+        ? "already_completed"
+        : "not_found";
+    }
 
     const openAllocations = await tx
       .select({ id: payrollAllocations.id })
@@ -1755,7 +1808,10 @@ export async function completeContributorOffboarding(
       referenceId: input.contributorId,
       transactionSignature: input.closeTransactionSignature,
       metadata: {
-        manualAccountClose: Boolean(input.closeTransactionSignature)
+        manualAccountClose: Boolean(input.closeTransactionSignature),
+        departureMode: input.closeTransactionSignature
+          ? "manual_close_and_leave"
+          : "leave_without_account_close"
       },
       createdAt: now
       })
@@ -1773,7 +1829,9 @@ export async function completeContributorOffboarding(
       eventKey: `contributor-offboarding-completed:${input.contributorId}`,
       category: "Recovery & Offboarding",
       title: "You have left the workspace",
-      body: "Workspace access has been removed. Your confidential account remains under your control.",
+      body: input.closeTransactionSignature
+        ? "Workspace access has been removed. Your wallet closed the confidential account; any eligible account rent was returned to your wallet."
+        : "Workspace access has been removed. Your confidential account remains under your control and was not closed by Paylore.",
       destination: "/notifications",
       createdAt: now
       })
@@ -1962,7 +2020,10 @@ export async function cleanupEligibleContributorAssociations(
           status: "finalized",
           referenceType: "contributor_offboarding",
           referenceId: contributor.id,
-          metadata: { manualAccountClose: false },
+          metadata: {
+            manualAccountClose: false,
+            departureMode: "automatic_association_cleanup"
+          },
           createdAt: now
         })
         .onConflictDoNothing({

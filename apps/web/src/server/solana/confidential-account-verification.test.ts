@@ -193,6 +193,15 @@ describe("confidential account transaction verification", () => {
     })).rejects.toMatchObject({ code: "confidential_account_close_mismatch" });
   });
 
+  it("rejects a close that targets another owner's derived token account", async () => {
+    vi.mocked(readSolanaRpc).mockResolvedValueOnce(finalizedTransaction({
+      programId: TOKEN_2022_PROGRAM_ADDRESS,
+      parsed: { type: "closeAccount", info: { account: mintAddress, destination: walletAddress, owner: walletAddress } }
+    }));
+    await expect(verifyConfidentialAccountClose({ signature, walletAddress, mintAddress }))
+      .rejects.toMatchObject({ code: "confidential_account_close_mismatch" });
+  });
+
   it("rejects close confirmation if the token account still exists on-chain", async () => {
     const tokenAccount = await expectedAccount();
     vi.mocked(readSolanaRpc)
