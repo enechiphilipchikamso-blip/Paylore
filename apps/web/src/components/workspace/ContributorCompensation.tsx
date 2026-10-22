@@ -13,6 +13,7 @@ import {
 } from "./confidential-account-transaction";
 
 type AccountState = {
+  ownerWalletAddress: string;
   tokenAccountAddress: string;
   status: string;
   setupTransactionSignature: string | null;
@@ -124,9 +125,11 @@ export function ContributorCompensation({
     const result = await response.json();
     if (!response.ok || !result.account) {
       throw new Error(
-        response.status === 503
-          ? "The confidential account is not available on the configured USDC mint. No account status was recorded."
-          : "The account transaction has not been verified as finalized. Keep its transaction reference and retry verification."
+        result.error === "confidential_account_not_ready"
+          ? "The finalized transaction did not leave an approved confidential account enabled for incoming confidential credits. Paylore has not marked the account ready."
+          : response.status === 503
+            ? "The confidential account is not available on the configured USDC mint. No account status was recorded."
+            : "The account transaction has not been verified as finalized. Keep its transaction reference and retry verification."
       );
     }
     setCurrentAccount(result.account);
@@ -296,6 +299,23 @@ export function ContributorCompensation({
         : "Leaving workspace…"
     });
     try {
+      const preflightResponse = await fetch(
+        `/api/workspaces/${workspaceId}/contributors/me/offboarding`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "preflight" })
+        }
+      );
+      const preflight = await preflightResponse.json();
+      if (!preflightResponse.ok) {
+        throw new Error(
+          preflight.error === "outstanding_compensation_obligation"
+            ? "Workspace access cannot be removed while qualifying compensation obligations remain. No account-close transaction was sent."
+            : "Paylore could not confirm that workspace departure is safe. No account-close transaction was sent."
+        );
+      }
       let transactionSignature = closeSignature;
       const wallet = await findAuthenticatedWallet(walletAddress);
       if (currentAccount?.status === "ready" && !transactionSignature) {
@@ -303,7 +323,12 @@ export function ContributorCompensation({
         const signatures = await closeConfidentialAccount(
           wallet,
           mint,
-          currentAccount.tokenAccountAddress
+          currentAccount.tokenAccountAddress,
+          {
+            ownerWalletAddress: currentAccount.ownerWalletAddress,
+            accountStatus: currentAccount.status,
+            hasOpenAllocations
+          }
         );
         transactionSignature = signatures.at(-1) ?? null;
         setCloseSignature(transactionSignature);
@@ -335,9 +360,12 @@ export function ContributorCompensation({
           // The post-leave view tells the contributor how to disconnect manually.
         }
       }
+      const accountClosed = result.manualAccountClose === true;
       setMessage({
         state: "success",
-        text: "You have left the workspace. Your confidential account remains under your control."
+        text: accountClosed
+          ? "You have left the workspace and closed your confidential account through your wallet. Eligible rent was returned to your wallet."
+          : "You have left the workspace. Your confidential account remains under your control and was not closed by Paylore."
       });
       router.replace(`/workspace/${workspaceId}/contributors/left`);
     } catch (error) {
@@ -428,9 +456,14 @@ export function ContributorCompensation({
       ) : null}
 
       {!currentAccount || currentAccount.status !== "ready" ? (
+        <>
+        <p className="notice">
+          Company-sponsored confidential-account setup is not integrated yet. Your wallet currently pays the network fee and authorizes the account configuration; Paylore never takes ownership of your confidential keys.
+        </p>
         <button className="button" disabled={busy || !mint} onClick={() => void runSetup()} type="button">
           {busy ? "Preparing account…" : "Set up confidential account"}
         </button>
+        </>
       ) : (
         <div className="hero__actions">
           <button className="button button--secondary" disabled={busy} onClick={() => void runBalanceAction("refresh")} type="button">
@@ -535,14 +568,16 @@ export function ContributorCompensation({
       ) : null}
       {currentAccount?.status === "ready" && (
         <p className="notice">
-          {balance?.availableBalance === 0n && balance.pendingBalance === 0n
-            ? "This confidential account has no balance available for transfer. Review the closure details before signing CloseAccount. Any eligible account rent is returned to the contributor-controlled destination."
-            : "This account cannot be closed yet. Resolve the displayed balance or pending operation before trying again."}
+          {balance?.publicBalance === 0n &&
+          balance.pendingBalance === 0n &&
+          balance.availableBalance === 0n
+            ? "This confidential account has zero public, pending and available balances. Review the closure details before signing CloseAccount. Any eligible account rent is returned to the contributor-controlled destination."
+            : "This account cannot be closed yet. Resolve every displayed public, pending and available balance before trying again."}
         </p>
       )}
       <button
         className="button button--secondary"
-        disabled={busy || hasOpenAllocations || (currentAccount?.status === "ready" && (!balance || balance.availableBalance !== 0n || balance.pendingBalance !== 0n))}
+        disabled={busy || hasOpenAllocations || (currentAccount?.status === "ready" && (!balance || balance.publicBalance !== 0n || balance.availableBalance !== 0n || balance.pendingBalance !== 0n))}
         onClick={() => void leaveWorkspace()}
         type="button"
       >

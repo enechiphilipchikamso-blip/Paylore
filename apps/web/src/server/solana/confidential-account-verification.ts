@@ -18,6 +18,26 @@ type ParsedInstruction = {
   };
 };
 
+export class ConfidentialAccountVerificationError extends Error {
+  constructor(readonly code: "confidential_account_not_ready" | "confidential_account_close_mismatch") {
+    super(code);
+    this.name = "ConfidentialAccountVerificationError";
+  }
+}
+
+function accountExtensionState(info: Record<string, unknown>, expectedExtension: string): Record<string, unknown> | null {
+  if (!Array.isArray(info.extensions)) return null;
+  for (const value of info.extensions) {
+    const extension = object(value);
+    if (!extension) continue;
+    const name = extension.extension;
+    if (typeof name !== "string" || name.replace(/[^a-z]/gi, "").toLowerCase() !== expectedExtension) continue;
+    return object(extension.state);
+  }
+  return null;
+}
+
+
 type ParsedTransaction = {
   slot?: unknown;
   transaction?: {
@@ -120,11 +140,9 @@ export async function verifyConfidentialAccountSetup(
     return (
       instruction.programId === TOKEN_2022_PROGRAM_ADDRESS &&
       parsed?.type === "configureConfidentialTransferAccount" &&
-      (info?.token === tokenAccount || info?.account === tokenAccount) &&
-      (info?.mint === input.mintAddress || isAddressInAccountKeys(
-        transaction.accountKeys,
-        input.mintAddress
-      )) &&
+      info?.token === tokenAccount &&
+      info?.mint === input.mintAddress &&
+      (info?.authority === input.walletAddress || info?.owner === input.walletAddress) &&
       isAddressInAccountKeys(transaction.accountKeys, input.walletAddress)
     );
   });
@@ -136,23 +154,31 @@ export async function verifyConfidentialAccountSetup(
   const accountInfo = await readSolanaRpc<{
     value: {
       owner?: unknown;
-      data?: unknown;
+      data?: { parsed?: { type?: unknown; info?: Record<string, unknown> } };
     } | null;
   }>("getAccountInfo", [
     tokenAccount,
-    { commitment: "finalized", encoding: "base64" }
+    { commitment: "finalized", encoding: "jsonParsed" }
   ]);
+  const value = object(accountInfo.value);
+  const data = object(value?.data);
+  const parsed = object(data?.parsed);
+  const info = object(parsed?.info);
+  const confidentialState = info ? accountExtensionState(info, "confidentialtransferaccount") : null;
+  const approved = confidentialState?.approved === true;
+  const confidentialCreditsAllowed =
+    confidentialState?.allowConfidentialCredits === true ||
+    confidentialState?.allow_confidential_credits === true;
   if (
-    !accountInfo.value ||
-    accountInfo.value.owner !== TOKEN_2022_PROGRAM_ADDRESS ||
-    !Array.isArray(accountInfo.value.data) ||
-    typeof accountInfo.value.data[0] !== "string" ||
-    accountInfo.value.data[0].length === 0 ||
-    accountInfo.value.data[1] !== "base64"
+    value?.owner !== TOKEN_2022_PROGRAM_ADDRESS ||
+    parsed?.type !== "account" ||
+    info?.owner !== input.walletAddress ||
+    info?.mint !== input.mintAddress ||
+    !confidentialState ||
+    !approved ||
+    !confidentialCreditsAllowed
   ) {
-    throw new Error(
-      "The finalized confidential-account setup could not be reconciled to an existing Token-2022 account."
-    );
+    throw new ConfidentialAccountVerificationError("confidential_account_not_ready");
   }
   return tokenAccount;
 }
@@ -183,9 +209,7 @@ export async function verifyConfidentialAccountClose(
     );
   });
   if (!hasCloseInstruction) {
-    throw new Error(
-      "The finalized transaction does not close this wallet's confidential Token-2022 account to its owner."
-    );
+    throw new ConfidentialAccountVerificationError("confidential_account_close_mismatch");
   }
   const accountInfo = await readSolanaRpc<{
     value: unknown | null;

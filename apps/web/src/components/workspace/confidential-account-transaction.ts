@@ -7,6 +7,7 @@ import {
   getEmptyConfidentialTransferAccountInstructionPlan,
   getConfidentialWithdrawInstructionPlan
 } from "@solana-program/token-2022/confidential";
+import { getConfidentialAccountClosureBlocker } from "./confidential-account-closure-policy";
 import { buildWrappedUsdcUnwrapPlan } from "./token-wrap-transaction";
 import {
   TOKEN_2022_PROGRAM_ADDRESS,
@@ -254,7 +255,8 @@ export async function getConfidentialBalances(
 export async function closeConfidentialAccount(
   wallet: Wallet,
   mintAddress: string,
-  tokenAccountAddress: string
+  tokenAccountAddress: string,
+  eligibility: { ownerWalletAddress: string; accountStatus: string; hasOpenAllocations: boolean }
 ): Promise<string[]> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const owner = address(wallet.account.address);
@@ -281,14 +283,24 @@ export async function closeConfidentialAccount(
       elgamalSecretKey: secretKey,
       aesKey: aeKey
     });
-    if (
-      tokenAccount.data.amount !== 0n ||
-      balance.pendingBalance !== 0n ||
-      balance.availableBalance !== 0n
-    ) {
-      throw new Error(
-        "This account cannot be closed yet. Resolve the displayed balance or pending operation before trying again."
-      );
+    const blocker = getConfidentialAccountClosureBlocker({
+      connectedWalletAddress: owner,
+      ownerWalletAddress: eligibility.ownerWalletAddress,
+      accountStatus: eligibility.accountStatus,
+      hasOpenAllocations: eligibility.hasOpenAllocations,
+      publicBalance: tokenAccount.data.amount,
+      pendingBalance: balance.pendingBalance,
+      availableBalance: balance.availableBalance
+    });
+    if (blocker) {
+      const messages: Record<typeof blocker, string> = {
+        confidential_account_owner_mismatch: "The connected wallet does not own this confidential account.",
+        confidential_account_not_ready: "This confidential account is not verified as ready to close.",
+        outstanding_compensation_obligation: "This account cannot be closed while qualifying compensation obligations remain.",
+        confidential_balance_unavailable: "The account balances could not be verified. Refresh the balance and try again.",
+        confidential_account_balance_not_zero: "This account cannot be closed yet. Resolve all public, pending and available balances before trying again."
+      };
+      throw new Error(messages[blocker]);
     }
 
     const emptyPlan = await getEmptyConfidentialTransferAccountInstructionPlan({

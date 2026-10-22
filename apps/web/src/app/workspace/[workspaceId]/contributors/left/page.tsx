@@ -15,8 +15,7 @@ export default function ContributorLeftWorkspacePage() {
         </div>
         <h1>Workspace access has been removed.</h1>
         <p>
-          The confidential account remains under your control. Refresh to
-          return to the Paylore public portal.
+          Workspace access has been removed. Check your durable in-app notification for whether you closed the account during departure or left it open under your control. Refresh to return to the Paylore public portal.
         </p>
         <p className="notice">
           If your wallet remains connected, disconnect it using your wallet
