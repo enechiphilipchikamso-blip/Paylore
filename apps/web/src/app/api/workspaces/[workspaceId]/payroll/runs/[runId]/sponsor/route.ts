@@ -261,7 +261,8 @@ export async function POST(request: Request, { params }: RouteContext) {
     const reconcileVerifiedSponsorship = async (
       operationId: string,
       signature: string,
-      data: PreparedSponsorshipData
+      data: PreparedSponsorshipData,
+      operationAlreadyFinalized = false
     ) => {
       if (
         data.runId !== runId ||
@@ -297,7 +298,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           contributorAddress: string;
         }>
       });
-      const markedFinal = await updateGasTankOperationAttempt(db, {
+      const markedFinal = operationAlreadyFinalized || await updateGasTankOperationAttempt(db, {
         workspaceId,
         operationId,
         status: "finalized",
@@ -358,7 +359,8 @@ export async function POST(request: Request, { params }: RouteContext) {
             const reconciled = await reconcileVerifiedSponsorship(
               priorOperation.id,
               priorOperation.transactionSignature,
-              data
+              data,
+              true
             );
             if (!reconciled) {
               return NextResponse.json({ error: "sponsorship_operation_reconciliation_conflict" }, { status: 409 });

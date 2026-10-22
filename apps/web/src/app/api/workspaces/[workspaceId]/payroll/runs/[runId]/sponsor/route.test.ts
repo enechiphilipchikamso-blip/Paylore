@@ -237,6 +237,7 @@ describe("payroll sponsor route", () => {
       signature: "5".repeat(64)
     });
     expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+    expect(mocks.updateGasTankOperationAttempt).not.toHaveBeenCalled();
     expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
   });
 
@@ -307,6 +308,12 @@ describe("payroll sponsor route", () => {
       allocationCommitment: commitment,
       claims: [{ claimId, claimAddress: "claim-pda", contributorAddress: "contributor-wallet" }]
     });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a",
+      operationId: "operation-a",
+      status: "finalized",
+      transactionSignature: "5".repeat(64)
+    }));
     expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
   });
 
