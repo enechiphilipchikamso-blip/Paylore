@@ -210,6 +210,80 @@ describe("payroll sponsor route", () => {
     expect(mocks.recordPayrollClaimSubmission).not.toHaveBeenCalled();
   });
 
+  it("reconciles a finalized sponsor operation after a retry sees an already committed run", async () => {
+    mocks.getWorkspacePayrollRun.mockResolvedValue({
+      run: {
+        id: "run-a",
+        status: "committed",
+        managerConfirmedAt: new Date("2026-10-20T00:00:00Z"),
+        allocationCommitment: commitment
+      },
+      allocations: [{
+        id: "allocation-a",
+        claimId,
+        contributorWalletAddress: "contributor-wallet",
+        claimAddress: "claim-pda",
+        status: "unclaimed"
+      }]
+    });
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(
+      preparedOperation({ status: "finalized" })
+    );
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "reconciled",
+      replayed: true,
+      signature: "5".repeat(64)
+    });
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+    expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
+  });
+
+  it("never replays a still-live prepared transaction for an already committed run", async () => {
+    mocks.getWorkspacePayrollRun.mockResolvedValue({
+      run: {
+        id: "run-a",
+        status: "committed",
+        managerConfirmedAt: new Date("2026-10-20T00:00:00Z"),
+        allocationCommitment: commitment
+      },
+      allocations: [{
+        id: "allocation-a",
+        claimId,
+        contributorWalletAddress: "contributor-wallet",
+        claimAddress: "claim-pda",
+        status: "unclaimed"
+      }]
+    });
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(preparedOperation());
+    mocks.readSolanaRpc.mockImplementation(async (method: string) =>
+      method === "getSignatureStatuses" ? { value: [null] } : 120
+    );
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "payroll_run_already_committed" });
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects repeated claim IDs before reserving sponsorship budget", async () => {
+    const response = await POST(request({ action: "prepare", claimIds: [claimId, claimId] }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "sponsored_claims_duplicate" });
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+  });
+
+  it("scopes payroll run lookup to the workspace from the authorized route", async () => {
+    mocks.getWorkspacePayrollRun.mockResolvedValue(null);
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: "payroll_run_not_found" });
+    expect(mocks.getWorkspacePayrollRun).toHaveBeenCalledWith({}, "workspace-a", "run-a");
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+  });
+
   it("reconciles a finalized sponsored transaction before returning success", async () => {
     mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(preparedOperation());
     mocks.readSolanaRpc.mockImplementation(async (method: string) =>
@@ -275,9 +349,9 @@ describe("payroll sponsor route", () => {
         address: "gas-tank-wallet", balanceLamports: "500000000", lowBalance: false,
         lastActivityAt: null, updatedAt: "2026-10-20T00:05:00Z"
       });
-    mocks.beginGasTankOperationAttempt.mockResolvedValueOnce({
-      status: "started", operation: { id: "operation-retry" }
-    });
+    mocks.beginGasTankOperationAttempt
+      .mockResolvedValueOnce({ status: "gas_tank_insufficient_balance", operation: null })
+      .mockResolvedValueOnce({ status: "started", operation: { id: "operation-retry" } });
     const first = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
     expect(first.status).toBe(409);
     await expect(first.json()).resolves.toMatchObject({ error: "gas_tank_insufficient_balance" });
@@ -366,10 +440,12 @@ describe("payroll sponsor route", () => {
 
   it("does not create a second operation while a previous preparation is in flight", async () => {
     mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
-      id: "operation-a", requestDigest: expect.any(String), status: "preparing"
+      id: "operation-a", requestDigest: currentRequestDigest(), status: "preparing",
+      updatedAt: new Date()
     });
     const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
     expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_operation_preparing" });
     expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
   });
 

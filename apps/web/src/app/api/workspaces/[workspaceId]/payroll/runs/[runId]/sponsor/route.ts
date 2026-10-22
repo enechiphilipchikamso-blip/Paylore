@@ -212,7 +212,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const run = await getWorkspacePayrollRun(db, workspaceId, runId);
     if (!run) return NextResponse.json({ error: "payroll_run_not_found" }, { status: 404 });
     if (!run.run.managerConfirmedAt || !run.run.allocationCommitment ||
-        !["commit_pending", "submitting"].includes(run.run.status)) {
+        !["commit_pending", "submitting", "committed"].includes(run.run.status)) {
       return NextResponse.json({ error: "payroll_run_not_confirmed" }, { status: 409 });
     }
     const claimIds = parsed.data.claimIds.map((id) => id.toLowerCase()).sort();
@@ -387,6 +387,13 @@ export async function POST(request: Request, { params }: RouteContext) {
           signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
         });
 
+        if (state === "live" && run.run.status === "committed") {
+          return NextResponse.json(
+            { error: "payroll_run_already_committed" },
+            { status: 409, headers: { "Cache-Control": "no-store" } }
+          );
+        }
+
         if (
           state === "live" &&
           data.runId === runId &&
@@ -461,7 +468,9 @@ export async function POST(request: Request, { params }: RouteContext) {
             return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
           }
           return NextResponse.json({
-            error: "previous_sponsored_transaction_failed_retry_allowed",
+            error: run.run.status === "committed"
+              ? "payroll_run_already_committed"
+              : "previous_sponsored_transaction_failed_retry_allowed",
             signature: priorOperation.transactionSignature,
             feeLamports: String(transaction.meta.fee)
           }, { status: 409, headers: { "Cache-Control": "no-store" } });
@@ -483,6 +492,13 @@ export async function POST(request: Request, { params }: RouteContext) {
       } else {
         return NextResponse.json({ error: "gas_tank_operation_already_prepared" }, { status: 409 });
       }
+    }
+
+    if (run.run.status === "committed") {
+      return NextResponse.json(
+        { error: "payroll_run_already_committed" },
+        { status: 409, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     if (selected.some((allocation) => allocation?.status !== "draft")) {

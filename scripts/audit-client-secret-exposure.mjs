@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, readdir, stat } from "node:fs/promises";
-import { resolve, relative, isAbsolute, extname } from "node:path";
+import { resolve, relative, isAbsolute } from "node:path";
 
 const defaultTargets = ["apps/web/.next/static"];
 const sensitiveNamePattern = /(?:SECRET|ENVELOPE_KEY|API_KEY|DATABASE_URL|PRIVATE_KEY|ACCESS_TOKEN|PASSWORD|COOKIE)/i;
@@ -70,20 +70,36 @@ async function loadEnvironment() {
 function secretCandidates(environment) {
   const secrets = [];
   for (const [key, rawValue] of environment) {
-    if (!sensitiveNamePattern.test(key) && !sensitiveUrlKeys.has(key)) continue;
     const value = rawValue.trim();
-    if (value.length >= 8) secrets.push({ key, value });
     if (sensitiveUrlKeys.has(key)) {
       try {
         const url = new URL(value);
+        const isPublicSolanaRpc =
+          ["api.devnet.solana.com", "api.mainnet-beta.solana.com", "api.testnet.solana.com"].includes(url.hostname) &&
+          url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash;
+        if (isPublicSolanaRpc) continue;
+        if (value.length >= 8) secrets.push({ key, value });
         for (const [partName, part] of [["username", url.username], ["password", url.password]]) {
           const decoded = decodeURIComponent(part);
           if (decoded.length >= 8) secrets.push({ key: key + " " + partName, value: decoded });
         }
+        for (const [paramName, paramValue] of url.searchParams) {
+          if (sensitiveNamePattern.test(paramName) && paramValue.length >= 8) {
+            secrets.push({ key: key + " " + paramName, value: paramValue });
+          }
+        }
+        if (/quiknode/i.test(url.hostname)) {
+          for (const segment of url.pathname.split("/").filter(Boolean)) {
+            if (segment.length >= 8) secrets.push({ key: key + " path", value: segment });
+          }
+        }
       } catch {
-        // Invalid provider URLs are validated by application configuration; scanning remains conservative.
+        if (value.length >= 8) secrets.push({ key, value });
       }
+      continue;
     }
+    if (!sensitiveNamePattern.test(key)) continue;
+    if (value.length >= 8) secrets.push({ key, value });
   }
   return secrets.filter((entry, index, all) =>
     all.findIndex((candidate) => candidate.key === entry.key && candidate.value === entry.value) === index
