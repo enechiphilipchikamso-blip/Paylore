@@ -17,11 +17,10 @@ import {
   assertSponsoredCost,
   assertSimulationSucceeded,
   GasTankSponsorshipPolicyError,
-  MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS
+  MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS,
+  MAX_SPONSORED_TRANSACTION_BYTES
 } from "./gas-tank-sponsorship-policy";
 import { readSolanaRpc } from "./solana/rpc";
-
-const MAX_TRANSACTION_BYTES = 1_232;
 
 export type InspectedConfidentialSetupTransaction = {
   transaction: Transaction;
@@ -52,7 +51,7 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   }
   const wireBytes = Buffer.from(input.transactionBase64, "base64");
   if (wireBytes.toString("base64") !== input.transactionBase64 ||
-      wireBytes.length < 1 || wireBytes.length > MAX_TRANSACTION_BYTES) {
+      wireBytes.length < 1 || wireBytes.length > MAX_SPONSORED_TRANSACTION_BYTES) {
     throw new GasTankSponsorshipPolicyError("sponsored_transaction_encoding_invalid");
   }
 
