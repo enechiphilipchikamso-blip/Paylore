@@ -165,6 +165,32 @@ describe("Gas Tank sponsorship policy", () => {
     })).toThrow("sponsored_claim_instruction_denied");
   });
 
+  it("rejects an authority account whose signer role was downgraded", () => {
+    const built = instructions();
+    const altered = built.values.map((instruction, index) => index === 1
+      ? {
+          ...instruction,
+          accounts: [
+            { address: authority, role: AccountRole.READONLY },
+            ...instruction.accounts.slice(1)
+          ]
+        }
+      : instruction);
+    expect(() => assertAllowedPayrollInstructionSet({
+      instructions: altered,
+      programId,
+      authorityAddress: authority,
+      workspaceId,
+      workspaceAddress: workspace,
+      allocationCommitment: commitment,
+      workspaceSeed: built.workspaceSeed,
+      claims: [claim],
+      initializeDiscriminator: built.initDiscriminator,
+      createClaimDiscriminator: built.createDiscriminator,
+      systemProgramAddress: system
+    })).toThrow("sponsored_claim_instruction_denied");
+  });
+
   it("validates claim-only sponsored batches when the workspace PDA already exists", () => {
     const built = instructions();
     const claimOnly = built.values.slice(1);

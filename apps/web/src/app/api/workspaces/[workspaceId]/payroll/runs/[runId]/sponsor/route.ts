@@ -30,6 +30,7 @@ import {
 } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../../server/gas-tank-sponsorship";
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
+import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 
@@ -48,6 +49,39 @@ const requestSchema = z.discriminatedUnion("action", [
   }).strict()
 ]);
 const MAX_REQUEST_BYTES = 4_096;
+
+type PreparedSponsorshipData = {
+  runId: string;
+  claimIds: string[];
+  authorityAddress: string;
+  programId: string;
+  allocationCommitment: string;
+  claims: Array<{ claimId: string; claimAddress: string }>;
+  blockhash: string;
+  transactionBase64: string;
+};
+
+function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  if (
+    typeof data.runId !== "string" ||
+    !Array.isArray(data.claimIds) ||
+    !data.claimIds.every((id) => typeof id === "string") ||
+    typeof data.authorityAddress !== "string" ||
+    typeof data.programId !== "string" ||
+    typeof data.allocationCommitment !== "string" ||
+    !Array.isArray(data.claims) ||
+    !data.claims.every((claim) => {
+      if (!claim || typeof claim !== "object") return false;
+      const record = claim as Record<string, unknown>;
+      return typeof record.claimId === "string" && typeof record.claimAddress === "string";
+    }) ||
+    typeof data.blockhash !== "string" ||
+    typeof data.transactionBase64 !== "string"
+  ) return null;
+  return data as unknown as PreparedSponsorshipData;
+}
 
 type PreparedSponsorshipData = {
   runId: string;
@@ -232,8 +266,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const selected = claimIds.map((claimId) =>
       run.allocations.find((allocation) => allocation.claimId?.toLowerCase() === claimId)
     );
-    if (selected.some((allocation) => !allocation || allocation.status !== "draft" ||
-        !allocation.contributorWalletAddress)) {
+    if (selected.some((allocation) => !allocation || !allocation.contributorWalletAddress)) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
     const claims = selected.map((allocation) => ({
@@ -269,37 +302,143 @@ export async function POST(request: Request, { params }: RouteContext) {
     })).digest("hex");
     const idempotencyKey = "payroll-claim:" + runId + ":" + createHash("sha256")
       .update(claimIds.join(":")).digest("hex");
+    const reconcileVerifiedSponsorship = async (
+      operationId: string,
+      signature: string,
+      data: PreparedSponsorshipData
+    ) => {
+      if (
+        data.runId !== runId ||
+        data.claimIds.join(":") !== claimIds.join(":") ||
+        data.authorityAddress !== session.session.walletAddress ||
+        data.programId !== programId ||
+        data.allocationCommitment !== run.run.allocationCommitment ||
+        data.claims.length !== claimIds.length ||
+        data.claims.some((claim, index) => claim.claimId.toLowerCase() !== claimIds[index])
+      ) {
+        return null;
+      }
+      const expectedClaims = data.claims.map((claim) => {
+        const allocation = run.allocations.find((item) =>
+          item.claimId?.toLowerCase() === claim.claimId.toLowerCase()
+        );
+        if (!allocation?.contributorWalletAddress) return null;
+        return {
+          claimId: claim.claimId,
+          claimAddress: claim.claimAddress,
+          contributorAddress: allocation.contributorWalletAddress
+        };
+      });
+      if (expectedClaims.some((claim) => claim === null)) return null;
+      await verifyPayrollClaimTransaction({
+        signature,
+        authorityAddress: data.authorityAddress,
+        workspaceId,
+        allocationCommitment: data.allocationCommitment,
+        claims: expectedClaims as Array<{
+          claimId: string;
+          claimAddress: string;
+          contributorAddress: string;
+        }>
+      });
+      const markedFinal = await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId,
+        status: "finalized",
+        transactionSignature: signature
+      });
+      if (!markedFinal) return null;
+      const recorded = await recordPayrollClaimSubmission(db, {
+        workspaceId,
+        runId,
+        signature,
+        claims: data.claims
+      });
+      if (recorded.status !== "committed" && recorded.status !== "submitting") return null;
+      return recorded;
+    };
+
     const priorOperation = await getWorkspaceGasTankOperationByIdempotencyKey(db, workspaceId, idempotencyKey);
     if (priorOperation) {
       if (priorOperation.requestDigest !== requestDigest) {
         return NextResponse.json({ error: "sponsorship_idempotency_conflict" }, { status: 409 });
       }
       if (priorOperation.status === "preparing") {
-        return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
-      }
-      if (priorOperation.status === "prepared" || priorOperation.status === "finalized") {
-        const data = preparedSponsorshipData(priorOperation.operationData);
-        if (!priorOperation.transactionSignature || !priorOperation.lastValidBlockHeight || !data ||
-            data.runId !== runId || data.programId !== programId ||
-            data.authorityAddress !== session.session.walletAddress ||
-            data.allocationCommitment !== run.run.allocationCommitment ||
-            data.claimIds.join(":") !== claimIds.join(":")) {
+        const staleAfterMs = 2 * 60 * 1000;
+        const updatedAt = priorOperation.updatedAt instanceof Date
+          ? priorOperation.updatedAt.getTime()
+          : new Date(priorOperation.updatedAt).getTime();
+        if (
+          !priorOperation.transactionSignature &&
+          Number.isFinite(updatedAt) &&
+          Date.now() - updatedAt > staleAfterMs
+        ) {
+          const expiredPreparation = await updateGasTankOperationAttempt(db, {
+            workspaceId,
+            operationId: priorOperation.id,
+            status: "failed",
+            failureCode: "preparation_expired_without_submission",
+            feeLamports: "0"
+          });
+          if (!expiredPreparation) {
+            return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
+          }
+        } else {
+          return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
+        }
+      } else if (priorOperation.status === "prepared" || priorOperation.status === "finalized") {
+        const data = parsePreparedSponsorshipData(priorOperation.operationData);
+        if (
+          !priorOperation.transactionSignature ||
+          !priorOperation.lastValidBlockHeight ||
+          !data
+        ) {
           return NextResponse.json({ error: "sponsorship_operation_reconciliation_data_missing" }, { status: 409 });
         }
+
+        if (priorOperation.status === "finalized") {
+          try {
+            const reconciled = await reconcileVerifiedSponsorship(
+              priorOperation.id,
+              priorOperation.transactionSignature,
+              data
+            );
+            if (!reconciled) {
+              return NextResponse.json({ error: "sponsorship_operation_reconciliation_conflict" }, { status: 409 });
+            }
+            return NextResponse.json({
+              status: "reconciled",
+              signature: priorOperation.transactionSignature,
+              replayed: true,
+              submittedCount: reconciled.submittedCount,
+              totalCount: reconciled.totalCount
+            }, { headers: { "Cache-Control": "no-store" } });
+          } catch {
+            return NextResponse.json({ error: "sponsorship_finalized_transaction_verification_failed" }, { status: 409 });
+          }
+        }
+
         const [statuses, blockHeight] = await Promise.all([
           readSolanaRpc<{ value: Array<{ confirmationStatus?: string | null; err?: unknown } | null> }>(
-            "getSignatureStatuses", [[priorOperation.transactionSignature], { searchTransactionHistory: true }]
+            "getSignatureStatuses",
+            [[priorOperation.transactionSignature], { searchTransactionHistory: true }]
           ),
           readSolanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }])
         ]);
-        const state = priorOperation.status === "finalized"
-          ? "finalized_success"
-          : classifyPreparedSponsorshipState({
-              currentBlockHeight: blockHeight,
-              lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
-              signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
-            });
-        if (state === "live" && priorOperation.status === "prepared") {
+        const state = classifyPreparedSponsorshipState({
+          currentBlockHeight: blockHeight,
+          lastValidBlockHeight: Number(priorOperation.lastValidBlockHeight),
+          signatureStatus: Array.isArray(statuses.value) ? statuses.value[0] ?? null : null
+        });
+
+        if (
+          state === "live" &&
+          data.runId === runId &&
+          data.claimIds.join(":") === claimIds.join(":") &&
+          data.authorityAddress === session.session.walletAddress &&
+          data.programId === programId &&
+          data.allocationCommitment === run.run.allocationCommitment
+        ) {
           return NextResponse.json({
             status: "prepared",
             operationId: priorOperation.id,
@@ -314,63 +453,84 @@ export async function POST(request: Request, { params }: RouteContext) {
             replayed: true
           }, { headers: { "Cache-Control": "no-store" } });
         }
-        if (state === "submitted_pending" && priorOperation.status === "prepared") {
+        if (state === "submitted_pending") {
           return NextResponse.json({ error: "sponsorship_transaction_pending_finality" }, { status: 409, headers: { "Cache-Control": "no-store" } });
         }
         if (state === "finalized_success") {
-          const reconciled = await reconcileFinalizedSponsorship({
-            db, workspaceId, runId, signature: priorOperation.transactionSignature,
-            operationId: priorOperation.id, data, run
-          });
-          return NextResponse.json({
-            status: "reconciled",
-            signature: priorOperation.transactionSignature,
-            replayed: true,
-            submittedCount: reconciled.submittedCount,
-            totalCount: reconciled.totalCount
-          }, { headers: { "Cache-Control": "no-store" } });
+          try {
+            const reconciled = await reconcileVerifiedSponsorship(
+              priorOperation.id,
+              priorOperation.transactionSignature,
+              data
+            );
+            if (!reconciled) {
+              return NextResponse.json({ error: "sponsorship_operation_reconciliation_conflict" }, { status: 409 });
+            }
+            return NextResponse.json({
+              status: "reconciled",
+              signature: priorOperation.transactionSignature,
+              replayed: true,
+              submittedCount: reconciled.submittedCount,
+              totalCount: reconciled.totalCount
+            }, { headers: { "Cache-Control": "no-store" } });
+          } catch {
+            return NextResponse.json({ error: "sponsorship_finalized_transaction_verification_failed" }, { status: 409 });
+          }
         }
         if (state === "finalized_failure") {
-          const transaction = await readSolanaRpc<{ meta?: { fee?: unknown } | null } | null>(
-            "getTransaction",
-            [priorOperation.transactionSignature, { commitment: "finalized", maxSupportedTransactionVersion: 0, encoding: "jsonParsed" }]
-          );
-          if (!transaction?.meta || typeof transaction.meta.fee !== "number" ||
-              !Number.isSafeInteger(transaction.meta.fee) || transaction.meta.fee < 0) {
+          const transaction = await readSolanaRpc<{
+            meta?: { err?: unknown; fee?: unknown } | null;
+          } | null>("getTransaction", [
+            priorOperation.transactionSignature,
+            { commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }
+          ]);
+          if (
+            !transaction?.meta ||
+            transaction.meta.err === null ||
+            typeof transaction.meta.fee !== "number" ||
+            !Number.isSafeInteger(transaction.meta.fee) ||
+            transaction.meta.fee < 0
+          ) {
             return NextResponse.json({ error: "sponsorship_failed_transaction_fee_unavailable" }, { status: 503 });
           }
           const released = await updateGasTankOperationAttempt(db, {
-            workspaceId, operationId: priorOperation.id, status: "failed",
+            workspaceId,
+            operationId: priorOperation.id,
+            status: "failed",
             transactionSignature: priorOperation.transactionSignature,
             feeLamports: String(transaction.meta.fee),
             failureCode: "finalized_chain_failure"
           });
-          if (!released) return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+          if (!released) {
+            return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+          }
           return NextResponse.json({
             error: "previous_sponsored_transaction_failed_retry_allowed",
             signature: priorOperation.transactionSignature,
             feeLamports: String(transaction.meta.fee)
           }, { status: 409, headers: { "Cache-Control": "no-store" } });
         }
-        if (state === "expired" && priorOperation.status === "prepared") {
+        if (state === "expired") {
           const released = await updateGasTankOperationAttempt(db, {
-            workspaceId, operationId: priorOperation.id, status: "cancelled",
+            workspaceId,
+            operationId: priorOperation.id,
+            status: "cancelled",
             transactionSignature: priorOperation.transactionSignature,
             failureCode: "recent_blockhash_expired"
           });
-          if (!released) return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
-        } else {
-          return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+          if (!released) {
+            return NextResponse.json({ error: "sponsorship_operation_state_changed" }, { status: 409 });
+          }
         }
+      } else if (priorOperation.status === "cancelled" || priorOperation.status === "failed") {
+        // A new preparation is permitted only for an operation proven not to have finalized successfully.
+      } else {
+        return NextResponse.json({ error: "gas_tank_operation_already_prepared" }, { status: 409 });
       }
     }
 
-    if (usage.overflow || usage.operationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
-        usage.feeLamports + MAX_SPONSORED_FEE_LAMPORTS > MAX_DAILY_SPONSORED_FEE_LAMPORTS) {
-      return NextResponse.json({ error: "gas_tank_daily_sponsorship_limit" }, { status: 429 });
-    }
-    if (BigInt(tank.balanceLamports) < MAX_SPONSORED_FEE_LAMPORTS) {
-      return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
+    if (selected.some((allocation) => allocation?.status !== "draft")) {
+      return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
 
     const begun = await beginGasTankOperationAttempt(db, {

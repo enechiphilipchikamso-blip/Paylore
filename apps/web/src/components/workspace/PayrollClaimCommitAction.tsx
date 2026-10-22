@@ -83,6 +83,8 @@ export function PayrollClaimCommitAction({
         const sponsorship = await sponsorshipResponse.json().catch(() => null) as {
           status?: string;
           error?: string;
+          submittedCount?: number;
+          totalCount?: number;
           operationId?: string;
           transactionBase64?: string;
           signature?: string;
@@ -90,6 +92,15 @@ export function PayrollClaimCommitAction({
           gasTankAddress?: string;
           claims?: Array<{ claimId: string; claimAddress: string }>;
         } | null;
+        if (sponsorshipResponse.ok && sponsorship?.status === "reconciled") {
+          if (!sponsorship.signature) {
+            throw new Error("A prior sponsored transaction was reconciled without a transaction reference. Refresh the payroll run before continuing.");
+          }
+          setProgress(
+            `Previously submitted transaction ${sponsorship.signature} is finalized and reconciled. No new transaction was sent for this batch.`
+          );
+          continue;
+        }
         if (!sponsorshipResponse.ok || !sponsorship?.transactionBase64 ||
             !sponsorship.operationId || !sponsorship.signature ||
             !Array.isArray(sponsorship.claims) ||
@@ -103,6 +114,15 @@ export function PayrollClaimCommitAction({
           }
           if (reason === "gas_tank_daily_sponsorship_limit") {
             throw new Error("The workspace Gas Tank sponsorship limit has been reached for the last 24 hours. Try again after the budget window resets.");
+          }
+          if (reason === "sponsorship_transaction_pending_finality") {
+            throw new Error("An earlier sponsored transaction has been submitted and is awaiting finality. Paylore will not create another transaction while that attempt is unresolved.");
+          }
+          if (reason === "sponsorship_transaction_still_live" || reason === "gas_tank_operation_preparing") {
+            throw new Error("A prepared Gas Tank transaction is still active. Do not retry or approve another transaction until the existing attempt is reconciled.");
+          }
+          if (reason === "previous_sponsored_transaction_failed_retry_allowed") {
+            throw new Error("The earlier sponsored transaction finalized with an on-chain failure. Its actual network fee was recorded; you can safely retry the same payroll batch.");
           }
           if (reason === "gas_tank_operation_already_prepared" || reason === "gas_tank_operation_already_finalized") {
             throw new Error("An earlier sponsored attempt exists for this payroll batch. Refresh and reconcile that attempt before submitting another transaction.");

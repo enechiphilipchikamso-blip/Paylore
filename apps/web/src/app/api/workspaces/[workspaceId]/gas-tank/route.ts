@@ -86,9 +86,12 @@ export async function GET(
     return NextResponse.json({
       gasTank: gasTank
         ? {
-            ...gasTank,
+            address: gasTank.address,
+            balanceLamports: gasTank.balanceLamports,
             lowBalance:
-              BigInt(gasTank.balanceLamports) < LOW_BALANCE_LAMPORTS
+              BigInt(gasTank.balanceLamports) < LOW_BALANCE_LAMPORTS,
+            lastActivityAt: gasTank.lastActivityAt,
+            updatedAt: gasTank.updatedAt
           }
         : null
     });
@@ -162,14 +165,22 @@ export async function POST(
 
     if (parsed.data.action === "initialize") {
       const result = await initializeWorkspaceGasTank(access.db, workspaceId);
-      return NextResponse.json({ status: "ready", ...result });
+      return NextResponse.json({
+        status: "ready",
+        address: result.address,
+        created: result.created
+      });
     }
     if (parsed.data.action === "restore") {
       const result = await verifyAndRestoreWorkspaceGasTank(
         access.db,
         workspaceId
       );
-      return NextResponse.json({ status: "ready", ...result });
+      return NextResponse.json({
+        status: "ready",
+        address: result.address,
+        restoredAt: result.restoredAt
+      });
     }
     if (parsed.data.action === "prepare_funding") {
       const gasTank = await getWorkspaceGasTankSnapshot(

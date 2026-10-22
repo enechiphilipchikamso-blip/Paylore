@@ -4592,6 +4592,31 @@ export async function getWorkspaceGasTankOperationByIdempotencyKey(
   return rows[0] ?? null;
 }
 
+export async function listWorkspaceGasTankOperations(
+  db: Database,
+  workspaceId: string,
+  requestedLimit = 20
+) {
+  const limit = Number.isSafeInteger(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), 50)
+    : 20;
+  return db
+    .select({
+      id: gasTankOperations.id,
+      operationType: gasTankOperations.operationType,
+      status: gasTankOperations.status,
+      transactionSignature: gasTankOperations.transactionSignature,
+      feeLamports: gasTankOperations.feeLamports,
+      failureCode: gasTankOperations.failureCode,
+      createdAt: gasTankOperations.createdAt,
+      updatedAt: gasTankOperations.updatedAt
+    })
+    .from(gasTankOperations)
+    .where(eq(gasTankOperations.workspaceId, workspaceId))
+    .orderBy(desc(gasTankOperations.createdAt))
+    .limit(limit);
+}
+
 export async function beginGasTankOperationAttempt(
   db: Database,
   input: {
@@ -4786,12 +4811,30 @@ export async function updateGasTankOperationAttempt(
       eq(gasTankOperations.id, input.operationId),
       eq(gasTankOperations.workspaceId, input.workspaceId),
       inArray(gasTankOperations.status, previousStatuses),
-      ...(input.status === "finalized" && input.transactionSignature !== undefined
+      ...((input.status === "finalized" ||
+          (input.status === "failed" && input.failureCode === "finalized_chain_failure") ||
+          (input.status === "cancelled" && input.failureCode === "recent_blockhash_expired")) &&
+          input.transactionSignature !== undefined
         ? [eq(gasTankOperations.transactionSignature, input.transactionSignature)]
         : [])
     ))
     .returning({ id: gasTankOperations.id });
-  if (update[0]) return true;
+  if (update[0]) {
+    if (
+      input.status === "finalized" ||
+      input.failureCode === "finalized_chain_failure" ||
+      input.failureCode === "recent_blockhash_expired"
+    ) {
+      try {
+        await db.update(workspaceGasTanks)
+          .set({ lastActivityAt: new Date(), updatedAt: new Date() })
+          .where(eq(workspaceGasTanks.workspaceId, input.workspaceId));
+      } catch {
+        // The operation state remains authoritative if the activity timestamp cannot be refreshed.
+      }
+    }
+    return true;
+  }
 
   const rows = await db
     .select({
@@ -4820,7 +4863,8 @@ export async function getWorkspaceGasTankSponsorshipUsage(
   const rows = await db
     .select({
       status: gasTankOperations.status,
-      feeLamports: gasTankOperations.feeLamports
+      feeLamports: gasTankOperations.feeLamports,
+      failureCode: gasTankOperations.failureCode
     })
     .from(gasTankOperations)
     .where(and(
@@ -4832,7 +4876,8 @@ export async function getWorkspaceGasTankSponsorshipUsage(
   let feeLamports = 0n;
   let operationCount = 0;
   for (const row of rows) {
-    if (!["preparing", "prepared", "finalized"].includes(row.status)) continue;
+    if (!["preparing", "prepared", "finalized"].includes(row.status) &&
+        !(row.status === "failed" && row.failureCode === "finalized_chain_failure")) continue;
     operationCount += 1;
     if (row.feeLamports && /^(0|[1-9][0-9]*)$/.test(row.feeLamports)) {
       feeLamports += BigInt(row.feeLamports);
