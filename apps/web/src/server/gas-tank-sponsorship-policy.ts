@@ -199,6 +199,14 @@ export function assertSponsoredCost(input: {
   dailyOperationCount: number;
 }): void {
   if (
+    input.balanceLamports < 0n ||
+    input.dailyBookedFeesLamports < 0n ||
+    !Number.isSafeInteger(input.dailyOperationCount) ||
+    input.dailyOperationCount < 0
+  ) {
+    throw new GasTankSponsorshipPolicyError("sponsored_budget_evidence_invalid");
+  }
+  if (
     !Number.isInteger(input.transactionBytes) ||
     input.transactionBytes < 1 ||
     input.transactionBytes > MAX_SPONSORED_TRANSACTION_BYTES

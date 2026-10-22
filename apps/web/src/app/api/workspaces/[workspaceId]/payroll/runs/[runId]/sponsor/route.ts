@@ -30,7 +30,6 @@ import {
 } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../../server/gas-tank-sponsorship";
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
-import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 
@@ -83,90 +82,6 @@ function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData |
   return data as unknown as PreparedSponsorshipData;
 }
 
-type PreparedSponsorshipData = {
-  runId: string;
-  claimIds: string[];
-  authorityAddress: string;
-  programId: string;
-  allocationCommitment: string;
-  claims: Array<{ claimId: string; claimAddress: string }>;
-  blockhash: string;
-  transactionBase64: string;
-};
-
-function preparedSponsorshipData(value: unknown): PreparedSponsorshipData | null {
-  if (!value || typeof value !== "object") return null;
-  const data = value as Record<string, unknown>;
-  if (
-    typeof data.runId !== "string" ||
-    !Array.isArray(data.claimIds) ||
-    !data.claimIds.every((id) => typeof id === "string") ||
-    typeof data.authorityAddress !== "string" ||
-    typeof data.programId !== "string" ||
-    typeof data.allocationCommitment !== "string" ||
-    !Array.isArray(data.claims) ||
-    !data.claims.every((claim) => claim && typeof claim === "object" &&
-      typeof (claim as Record<string, unknown>).claimId === "string" &&
-      typeof (claim as Record<string, unknown>).claimAddress === "string") ||
-    typeof data.blockhash !== "string" ||
-    typeof data.transactionBase64 !== "string"
-  ) return null;
-  return data as unknown as PreparedSponsorshipData;
-}
-
-async function reconcileFinalizedSponsorship(input: {
-  db: ReturnType<typeof getDatabase>;
-  workspaceId: string;
-  runId: string;
-  signature: string;
-  operationId: string;
-  data: PreparedSponsorshipData;
-  run: Awaited<ReturnType<typeof getWorkspacePayrollRun>>;
-}) {
-  if (!input.run || input.data.runId !== input.runId ||
-      input.data.claimIds.length !== input.data.claims.length ||
-      input.data.claimIds.some((id, index) => id.toLowerCase() !== input.data.claims[index]?.claimId.toLowerCase())) {
-    throw new GasTankSponsorshipPolicyError("sponsorship_operation_reconciliation_data_invalid");
-  }
-  const claims = input.data.claims.map((claim) => {
-    const allocation = input.run!.allocations.find((item) =>
-      item.claimId?.toLowerCase() === claim.claimId.toLowerCase()
-    );
-    if (!allocation?.contributorWalletAddress) {
-      throw new GasTankSponsorshipPolicyError("sponsorship_operation_allocation_missing");
-    }
-    return {
-      claimId: claim.claimId,
-      claimAddress: claim.claimAddress,
-      contributorAddress: allocation.contributorWalletAddress
-    };
-  });
-  await verifyPayrollClaimTransaction({
-    signature: input.signature,
-    authorityAddress: input.data.authorityAddress,
-    workspaceId: input.workspaceId,
-    allocationCommitment: input.data.allocationCommitment,
-    claims
-  });
-  const saved = await updateGasTankOperationAttempt(input.db, {
-    workspaceId: input.workspaceId,
-    operationId: input.operationId,
-    status: "finalized",
-    transactionSignature: input.signature
-  });
-  if (!saved) throw new GasTankSponsorshipPolicyError("sponsorship_operation_signature_mismatch");
-  const recorded = await recordPayrollClaimSubmission(input.db, {
-    workspaceId: input.workspaceId,
-    runId: input.runId,
-    signature: input.signature,
-    claims: input.data.claims
-  });
-  if (recorded.status !== "committed" && recorded.status !== "submitting") {
-    throw new GasTankSponsorshipPolicyError("sponsorship_claim_persistence_conflict");
-  }
-  return recorded;
-}
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -175,7 +90,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   try {
     assertSameOrigin(request);
     const text = await request.text();
-    if (text.length > MAX_REQUEST_BYTES) {
+    if (new TextEncoder().encode(text).byteLength > MAX_REQUEST_BYTES) {
       return NextResponse.json({ error: "request_too_large" }, { status: 413 });
     }
     let raw: unknown;

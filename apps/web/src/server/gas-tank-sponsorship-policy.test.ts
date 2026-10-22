@@ -191,6 +191,32 @@ describe("Gas Tank sponsorship policy", () => {
     })).toThrow("sponsored_claim_instruction_denied");
   });
 
+  it("rejects a payroll instruction that substitutes another signer address", () => {
+    const built = instructions();
+    const altered = built.values.map((instruction, index) => index === 1
+      ? {
+          ...instruction,
+          accounts: [
+            { address: "attacker-wallet", role: AccountRole.WRITABLE_SIGNER },
+            ...instruction.accounts.slice(1)
+          ]
+        }
+      : instruction);
+    expect(() => assertAllowedPayrollInstructionSet({
+      instructions: altered,
+      programId,
+      authorityAddress: authority,
+      workspaceId,
+      workspaceAddress: workspace,
+      allocationCommitment: commitment,
+      workspaceSeed: built.workspaceSeed,
+      claims: [claim],
+      initializeDiscriminator: built.initDiscriminator,
+      createClaimDiscriminator: built.createDiscriminator,
+      systemProgramAddress: system
+    })).toThrow("sponsored_claim_instruction_denied");
+  });
+
   it("validates claim-only sponsored batches when the workspace PDA already exists", () => {
     const built = instructions();
     const claimOnly = built.values.slice(1);
@@ -229,6 +255,22 @@ describe("Gas Tank sponsorship policy", () => {
       dailyBookedFeesLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS,
       dailyOperationCount: 100
     })).toThrow("gas_tank_daily_sponsorship_limit");
+  });
+
+  it.each([
+    { balanceLamports: -1n },
+    { dailyBookedFeesLamports: -1n },
+    { dailyOperationCount: -1 },
+    { dailyOperationCount: 0.5 }
+  ])("rejects invalid sponsorship budget evidence: %o", (partial) => {
+    expect(() => assertSponsoredCost({
+      transactionBytes: 500,
+      feeLamports: 5_000n,
+      balanceLamports: 1_000_000n,
+      dailyBookedFeesLamports: 0n,
+      dailyOperationCount: 0,
+      ...partial
+    })).toThrow("sponsored_budget_evidence_invalid");
   });
 
   it("releases sponsorship only when signature history is absent beyond blockhash expiry", () => {

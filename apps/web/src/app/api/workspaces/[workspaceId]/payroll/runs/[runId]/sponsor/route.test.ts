@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -62,6 +63,39 @@ import { POST } from "./route";
 const context = { params: Promise.resolve({ workspaceId: "workspace-a", runId: "run-a" }) };
 const claimId = "01".repeat(32);
 const commitment = "ab".repeat(32);
+
+function currentRequestDigest() {
+  return createHash("sha256").update(JSON.stringify({
+    workspaceId: "workspace-a",
+    runId: "run-a",
+    authorityAddress: "manager-wallet",
+    programId: "payroll-program",
+    allocationCommitment: commitment,
+    claimIds: [claimId]
+  })).digest("hex");
+}
+
+function preparedOperation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "operation-a",
+    requestDigest: currentRequestDigest(),
+    status: "prepared",
+    transactionSignature: "5".repeat(64),
+    feeLamports: "5000",
+    lastValidBlockHeight: "120",
+    operationData: {
+      runId: "run-a",
+      claimIds: [claimId],
+      authorityAddress: "manager-wallet",
+      programId: "payroll-program",
+      allocationCommitment: commitment,
+      claims: [{ claimId, claimAddress: "claim-pda" }],
+      blockhash: "blockhash",
+      transactionBase64: "AQIDBA=="
+    },
+    ...overrides
+  };
+}
 
 function request(body: unknown) {
   return new Request("https://paylore.test/api/sponsor", {
@@ -150,7 +184,7 @@ describe("payroll sponsor route", () => {
 
   it("replays the same transaction while its blockhash remains valid", async () => {
     mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
-      id: "operation-a", requestDigest: expect.any(String), status: "prepared",
+      id: "operation-a", requestDigest: currentRequestDigest(), status: "prepared",
       transactionSignature: "5".repeat(64), feeLamports: "5000", lastValidBlockHeight: "120",
       operationData: {
         runId: "run-a", claimIds: [claimId], authorityAddress: "manager-wallet",
@@ -166,7 +200,7 @@ describe("payroll sponsor route", () => {
     expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
   });
 
-  it("reconciles a finalized sponsored transaction before returning success", async () => {
+  it("rejects an idempotency record created for a different request digest", async () => {
     mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
       id: "operation-a", requestDigest: "wrong"
     });
@@ -174,6 +208,118 @@ describe("payroll sponsor route", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: "sponsorship_idempotency_conflict" });
     expect(mocks.recordPayrollClaimSubmission).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a finalized sponsored transaction before returning success", async () => {
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(preparedOperation());
+    mocks.readSolanaRpc.mockImplementation(async (method: string) =>
+      method === "getSignatureStatuses"
+        ? { value: [{ confirmationStatus: "finalized", err: null }] }
+        : 121
+    );
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "reconciled",
+      signature: "5".repeat(64),
+      replayed: true,
+      submittedCount: 1,
+      totalCount: 1
+    });
+    expect(mocks.verifyPayrollClaimTransaction).toHaveBeenCalledWith({
+      signature: "5".repeat(64),
+      authorityAddress: "manager-wallet",
+      workspaceId: "workspace-a",
+      allocationCommitment: commitment,
+      claims: [{ claimId, claimAddress: "claim-pda", contributorAddress: "contributor-wallet" }]
+    });
+    expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
+  });
+
+  it("records the actual chain fee before allowing a failed sponsored transaction to retry", async () => {
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(preparedOperation());
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getSignatureStatuses") {
+        return { value: [{ confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } }] };
+      }
+      if (method === "getTransaction") {
+        return { meta: { err: { InstructionError: [0, "Custom"] }, fee: 7_000 } };
+      }
+      return 121;
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "previous_sponsored_transaction_failed_retry_allowed",
+      signature: "5".repeat(64),
+      feeLamports: "7000"
+    });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a",
+      operationId: "operation-a",
+      status: "failed",
+      transactionSignature: "5".repeat(64),
+      feeLamports: "7000",
+      failureCode: "finalized_chain_failure"
+    }));
+    expect(mocks.recordPayrollClaimSubmission).not.toHaveBeenCalled();
+  });
+
+  it("allows a fresh preparation after the manager funds an insufficient Gas Tank", async () => {
+    mocks.getWorkspaceGasTankSnapshot
+      .mockResolvedValueOnce({
+        address: "gas-tank-wallet", balanceLamports: "0", lowBalance: true,
+        lastActivityAt: null, updatedAt: "2026-10-20T00:00:00Z"
+      })
+      .mockResolvedValueOnce({
+        address: "gas-tank-wallet", balanceLamports: "500000000", lowBalance: false,
+        lastActivityAt: null, updatedAt: "2026-10-20T00:05:00Z"
+      });
+    mocks.beginGasTankOperationAttempt.mockResolvedValueOnce({
+      status: "started", operation: { id: "operation-retry" }
+    });
+    const first = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(first.status).toBe(409);
+    await expect(first.json()).resolves.toMatchObject({ error: "gas_tank_insufficient_balance" });
+    const second = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(second.status).toBe(200);
+    await expect(second.json()).resolves.toMatchObject({ status: "prepared", operationId: "operation-retry" });
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a request exceeding the UTF-8 byte limit before parsing JSON", async () => {
+    const response = await POST(new Request("https://paylore.test/api/sponsor", {
+      method: "POST",
+      headers: { origin: "https://paylore.test", "content-type": "application/json" },
+      body: JSON.stringify("💵".repeat(1_100))
+    }), context);
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({ error: "request_too_large" });
+    expect(mocks.getSessionState).not.toHaveBeenCalled();
+  });
+
+  it("does not prepare a sponsorship for a workspace without manager membership", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(403);
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+    expect(mocks.getWorkspaceGasTankSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("does not leak internal exception text when sponsorship preparation fails", async () => {
+    const secret = "internal-private-key-marker";
+    mocks.withWorkspaceGasTankKey.mockRejectedValue(new Error(secret));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+      expect(response.status).toBe(503);
+      const body = await response.text();
+      expect(body).not.toContain(secret);
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "gas_tank_sponsorship_failed" }));
+      expect(log.mock.calls.flat().join(" ")).not.toContain(secret);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("does not create a second operation while a previous preparation is in flight", async () => {

@@ -498,5 +498,35 @@ test.describe(
         });
       }
     );
+
+  test("Gas Tank sponsorship APIs reject unauthenticated callers without exposing transaction or key material", async ({ request }) => {
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const runId = "00000000-0000-4000-8000-000000000002";
+    const gasTankResponse = await request.get(
+      `/api/workspaces/${workspaceId}/gas-tank`
+    );
+    expect(gasTankResponse.status()).toBe(401);
+    const gasTankBody = await gasTankResponse.json();
+    expect(gasTankBody.error).toBe("authentication_required");
+    expect(JSON.stringify(gasTankBody)).not.toMatch(/privateKey|envelopeKey|transactionBase64/i);
+
+    const sponsorResponse = await request.post(
+      `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
+      {
+        headers: {
+          origin: "http://localhost:3100",
+          "content-type": "application/json"
+        },
+        data: {
+          action: "prepare",
+          claimIds: ["01".repeat(32)]
+        }
+      }
+    );
+    expect(sponsorResponse.status()).toBe(401);
+    const sponsorBody = await sponsorResponse.json();
+    expect(sponsorBody.error).toBe("authentication_required");
+    expect(JSON.stringify(sponsorBody)).not.toMatch(/privateKey|envelopeKey|transactionBase64/i);
+  });
   }
 );

@@ -100,6 +100,93 @@ function serializedMessageFromTransaction(wire: Uint8Array): Uint8Array {
   return wire.subarray(messageOffset);
 }
 
+type SponsoredInstructionPlan = Parameters<typeof appendTransactionMessageInstructions>[0];
+
+/** Shares the sponsor-signing boundary while requiring each caller to validate its server-built plan. */
+export async function prepareSponsoredInstructionTransaction(input: {
+  instructions: SponsoredInstructionPlan;
+  validateInstructions: (instructions: readonly unknown[]) => void;
+  gasTankAddress: string;
+  gasTankPrivateKey: Uint8Array;
+  balanceLamports: string;
+  dailyBookedFeesLamports: bigint;
+  dailyOperationCount: number;
+}): Promise<{
+  transactionBase64: string;
+  signature: string;
+  feeLamports: string;
+  gasTankAddress: string;
+  blockhash: string;
+  lastValidBlockHeight: number;
+}> {
+  if (!Array.isArray(input.instructions) || input.instructions.length === 0) {
+    throw new GasTankSponsorshipPolicyError("sponsored_instruction_plan_empty");
+  }
+  input.validateInstructions(input.instructions);
+  const secretCopy = new Uint8Array(input.gasTankPrivateKey);
+  try {
+    const sponsor = await createKeyPairSignerFromBytes(secretCopy);
+    if (sponsor.address !== input.gasTankAddress) {
+      throw new GasTankSponsorshipPolicyError("gas_tank_key_identity_mismatch");
+    }
+    const latest = await readSolanaRpc<{
+      value: { blockhash: string; lastValidBlockHeight: number }
+    }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    const message = appendTransactionMessageInstructions(
+      input.instructions,
+      setTransactionMessageLifetimeUsingBlockhash(
+        {
+          blockhash: blockhash(latest.value.blockhash),
+          lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
+        },
+        setTransactionMessageFeePayerSigner(
+          sponsor,
+          createTransactionMessage({ version: 0 })
+        )
+      )
+    );
+    const partiallySigned = await partiallySignTransactionMessageWithSigners(message);
+    const wireBase64 = getBase64EncodedWireTransaction(partiallySigned);
+    const wireBytes = Uint8Array.from(Buffer.from(wireBase64, "base64"));
+    const serializedMessage = serializedMessageFromTransaction(wireBytes);
+    const fee = await readSolanaRpc<{ value: number | null }>(
+      "getFeeForMessage",
+      [Buffer.from(serializedMessage).toString("base64"), { commitment: "confirmed" }]
+    );
+    if (fee.value === null || !Number.isSafeInteger(fee.value) || fee.value < 0) {
+      throw new GasTankSponsorshipPolicyError("sponsored_fee_unavailable");
+    }
+    assertSponsoredCost({
+      transactionBytes: wireBytes.length,
+      feeLamports: BigInt(fee.value),
+      balanceLamports: BigInt(input.balanceLamports),
+      dailyBookedFeesLamports: input.dailyBookedFeesLamports,
+      dailyOperationCount: input.dailyOperationCount
+    });
+    const simulation = await readSolanaRpc<unknown>("simulateTransaction", [
+      wireBase64,
+      {
+        encoding: "base64",
+        commitment: "confirmed",
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        innerInstructions: false
+      }
+    ]);
+    assertSimulationSucceeded(simulation);
+    return {
+      transactionBase64: wireBase64,
+      signature: String(getSignatureFromTransaction(partiallySigned)),
+      feeLamports: String(fee.value),
+      gasTankAddress: input.gasTankAddress,
+      blockhash: latest.value.blockhash,
+      lastValidBlockHeight: latest.value.lastValidBlockHeight
+    };
+  } finally {
+    secretCopy.fill(0);
+  }
+}
+
 export async function prepareSponsoredPayrollClaimTransaction(input: {
   workspaceId: string;
   authorityAddress: string;
@@ -122,10 +209,6 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
 }> {
   const secretCopy = new Uint8Array(input.gasTankPrivateKey);
   try {
-    const sponsor = await createKeyPairSignerFromBytes(secretCopy);
-    if (sponsor.address !== input.gasTankAddress) {
-      throw new GasTankSponsorshipPolicyError("gas_tank_key_identity_mismatch");
-    }
     const authority = address(input.authorityAddress);
     const programId = address(input.programId);
     const workspaceSeed = new Uint8Array(
@@ -200,8 +283,8 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       ...(!existingWorkspace ? [initializeInstruction] : []),
       ...derivedClaims.map((claim) => claim.instruction)
     ];
-    assertAllowedPayrollInstructionSet({
-      instructions: instructionPlan,
+    const validateInstructionPlan = (instructions: readonly unknown[]) => assertAllowedPayrollInstructionSet({
+      instructions,
       programId,
       authorityAddress: authority,
       workspaceId: input.workspaceId,
@@ -219,61 +302,18 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       systemProgramAddress: SYSTEM_PROGRAM_ADDRESS
     });
 
-    const latest = await readSolanaRpc<{
-      value: { blockhash: string; lastValidBlockHeight: number }
-    }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
-    const message = appendTransactionMessageInstructions(
-      instructionPlan,
-      setTransactionMessageLifetimeUsingBlockhash(
-        {
-          blockhash: blockhash(latest.value.blockhash),
-          lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
-        },
-        setTransactionMessageFeePayerSigner(
-          sponsor,
-          createTransactionMessage({ version: 0 })
-        )
-      )
-    );
-    const partiallySigned = await partiallySignTransactionMessageWithSigners(message);
-    const wireBase64 = getBase64EncodedWireTransaction(partiallySigned);
-    const wireBytes = Uint8Array.from(Buffer.from(wireBase64, "base64"));
-    const serializedMessage = serializedMessageFromTransaction(wireBytes);
-    const fee = await readSolanaRpc<{ value: number | null }>(
-      "getFeeForMessage",
-      [Buffer.from(serializedMessage).toString("base64"), { commitment: "confirmed" }]
-    );
-    if (fee.value === null || !Number.isSafeInteger(fee.value) || fee.value < 0) {
-      throw new GasTankSponsorshipPolicyError("sponsored_fee_unavailable");
-    }
-    assertSponsoredCost({
-      transactionBytes: wireBytes.length,
-      feeLamports: BigInt(fee.value),
-      balanceLamports: BigInt(input.balanceLamports),
+    const prepared = await prepareSponsoredInstructionTransaction({
+      instructions: instructionPlan,
+      validateInstructions: validateInstructionPlan,
+      gasTankAddress: input.gasTankAddress,
+      gasTankPrivateKey: secretCopy,
+      balanceLamports: input.balanceLamports,
       dailyBookedFeesLamports: input.dailyBookedFeesLamports,
       dailyOperationCount: input.dailyOperationCount
     });
-
-    const simulation = await readSolanaRpc<unknown>("simulateTransaction", [
-      wireBase64,
-      {
-        encoding: "base64",
-        commitment: "confirmed",
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-        innerInstructions: false
-      }
-    ]);
-    assertSimulationSucceeded(simulation);
-    const signature = String(getSignatureFromTransaction(partiallySigned));
     return {
-      transactionBase64: wireBase64,
-      signature,
-      feeLamports: String(fee.value),
-      gasTankAddress: input.gasTankAddress,
-      claims: derivedClaims.map(({ claimId, claimAddress }) => ({ claimId, claimAddress })),
-      blockhash: latest.value.blockhash,
-      lastValidBlockHeight: latest.value.lastValidBlockHeight
+      ...prepared,
+      claims: derivedClaims.map(({ claimId, claimAddress }) => ({ claimId, claimAddress }))
     };
   } finally {
     secretCopy.fill(0);
