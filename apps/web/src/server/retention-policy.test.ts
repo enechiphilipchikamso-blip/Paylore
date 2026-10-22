@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  getAutomaticContributorCleanupDisposition,
+  getContributorDepartureDisposition,
   hasReachedInactivityThreshold,
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   isContributorAssociationCleanupEligible,
@@ -72,6 +74,24 @@ describe("workspace retention policy", () => {
         outstandingObligations: true
       })
     ).toBe(false);
+  });
+
+  it("records manual closure, leave-without-close, and automatic cleanup as distinct dispositions", () => {
+    expect(getContributorDepartureDisposition(true)).toEqual({
+      manualAccountClose: true,
+      departureMode: "manual_close_and_leave",
+      notificationBody: "Workspace access has been removed. Your wallet closed the confidential account; any eligible account rent was returned to your wallet."
+    });
+    expect(getContributorDepartureDisposition(false)).toEqual({
+      manualAccountClose: false,
+      departureMode: "leave_without_account_close",
+      notificationBody: "Workspace access has been removed. Your confidential account remains under your control and was not closed by Paylore."
+    });
+    expect(getAutomaticContributorCleanupDisposition()).toEqual({
+      manualAccountClose: false,
+      departureMode: "automatic_association_cleanup",
+      notificationBody: "Workspace access has been removed after the retention period. Your confidential account has not been closed by Paylore."
+    });
   });
 
   it("waits 365 days after workspace closure and while compensation is unresolved", () => {

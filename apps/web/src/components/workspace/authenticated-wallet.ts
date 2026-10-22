@@ -3,9 +3,11 @@
 import {
   SolanaSignAndSendTransaction,
   SolanaSignMessage,
+  SolanaSignTransaction,
   type SolanaSignAndSendTransactionInput,
   type SolanaSignAndSendTransactionMethod,
-  type SolanaSignMessageMethod
+  type SolanaSignMessageMethod,
+  type SolanaSignTransactionMethod
 } from "@solana/wallet-standard-features";
 
 type WalletAccount = SolanaSignAndSendTransactionInput["account"];
@@ -34,6 +36,11 @@ type SignMessageFeature = {
   signMessage: SolanaSignMessageMethod;
 };
 
+type SignTransactionFeature = {
+  supportedTransactionVersions: readonly (number | "legacy")[];
+  signTransaction: SolanaSignTransactionMethod;
+};
+
 type DisconnectFeature = {
   disconnect: () => Promise<void>;
 };
@@ -55,6 +62,17 @@ function isSignMessageFeature(value: unknown): value is SignMessageFeature {
       typeof value === "object" &&
       "signMessage" in value &&
       typeof value.signMessage === "function"
+  );
+}
+
+function isSignTransactionFeature(value: unknown): value is SignTransactionFeature {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "signTransaction" in value &&
+      typeof value.signTransaction === "function" &&
+      "supportedTransactionVersions" in value &&
+      Array.isArray(value.supportedTransactionVersions)
   );
 }
 
@@ -85,6 +103,7 @@ export async function findAuthenticatedWallet(walletAddress: string): Promise<{
   account: WalletAccount;
   signAndSendTransaction: SolanaSignAndSendTransactionMethod;
   signMessage: SolanaSignMessageMethod | null;
+  signTransaction: SolanaSignTransactionMethod | null;
   disconnect: (() => Promise<void>) | null;
 }> {
   const { getWallets } = await import("@wallet-standard/app");
@@ -105,6 +124,7 @@ export async function findAuthenticatedWallet(walletAddress: string): Promise<{
 
   const feature = wallet.features[SolanaSignAndSendTransaction];
   const messageFeature = wallet.features[SolanaSignMessage];
+  const transactionFeature = wallet.features[SolanaSignTransaction];
   if (
     !isSignAndSendFeature(feature) ||
     !feature.supportedTransactionVersions.includes(0)
@@ -143,6 +163,11 @@ export async function findAuthenticatedWallet(walletAddress: string): Promise<{
     signMessage: isSignMessageFeature(messageFeature)
       ? messageFeature.signMessage
       : null,
+    signTransaction:
+      isSignTransactionFeature(transactionFeature) &&
+      transactionFeature.supportedTransactionVersions.includes(0)
+        ? transactionFeature.signTransaction
+        : null,
     disconnect: isDisconnectFeature(disconnectFeature)
       ? () => disconnectFeature.disconnect()
       : null

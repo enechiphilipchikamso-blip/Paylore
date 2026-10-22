@@ -154,7 +154,28 @@ export function ContributorCompensation({
     setMessage({ state: "partial", text: "Preparing account… Approve the confidential-key derivation and account transaction in your wallet." });
     try {
       const wallet = await findAuthenticatedWallet(walletAddress);
-      const setup = await setupConfidentialAccount(wallet, mint);
+      setMessage({
+        state: "partial",
+        text: "Checking the workspace Gas Tank and sponsorship policy… Your wallet remains the account owner."
+      });
+      const sponsorshipResponse = await fetch(
+        `/api/workspaces/${workspaceId}/contributors/me/confidential-account/sponsorship`,
+        { credentials: "same-origin", cache: "no-store" }
+      );
+      const sponsorshipResult = await sponsorshipResponse.json();
+      if (!sponsorshipResponse.ok ||
+          typeof sponsorshipResult.feePayerAddress !== "string" ||
+          sponsorshipResult.mintAddress !== mint) {
+        throw new Error(
+          sponsorshipResult.error === "gas_tank_insufficient_balance"
+            ? "The workspace Gas Tank needs funding before company-sponsored account setup can proceed."
+            : "Company-sponsored account setup is unavailable under the current workspace policy. Paylore did not fall back to charging your wallet."
+        );
+      }
+      const setup = await setupConfidentialAccount(wallet, mint, {
+        feePayerAddress: sponsorshipResult.feePayerAddress,
+        relayUrl: `/api/workspaces/${workspaceId}/contributors/me/confidential-account/sponsorship`
+      });
       setSetupSignature(setup.signature);
       setMessage({
         state: "partial",
@@ -458,7 +479,7 @@ export function ContributorCompensation({
       {!currentAccount || currentAccount.status !== "ready" ? (
         <>
         <p className="notice">
-          Company-sponsored confidential-account setup is not integrated yet. Your wallet currently pays the network fee and authorizes the account configuration; Paylore never takes ownership of your confidential keys.
+          Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Setup occurs when you request it here, not when payroll creates a Claim PDA.
         </p>
         <button className="button" disabled={busy || !mint} onClick={() => void runSetup()} type="button">
           {busy ? "Preparing account…" : "Set up confidential account"}

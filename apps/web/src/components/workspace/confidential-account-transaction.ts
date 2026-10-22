@@ -26,6 +26,7 @@ import {
   blockhash,
   createNoopSigner,
   createSolanaRpc,
+  getTransactionDecoder,
   createTransactionMessage,
   createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner,
@@ -91,10 +92,16 @@ async function deriveWalletKeys(wallet: Wallet) {
   ) };
 }
 
-async function executePlan(wallet: Wallet, plan: InstructionPlan): Promise<string[]> {
+async function executePlan(
+  wallet: Wallet,
+  plan: InstructionPlan,
+  sponsorship?: { feePayerAddress: string; relayUrl: string }
+): Promise<string[]> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const owner = address(wallet.account.address);
-  const feePayer = createNoopSigner(owner);
+  const feePayer = createNoopSigner(
+    sponsorship ? address(sponsorship.feePayerAddress) : owner
+  );
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
       setTransactionMessageFeePayerSigner(
@@ -122,6 +129,67 @@ async function executePlan(wallet: Wallet, plan: InstructionPlan): Promise<strin
       const transaction = Uint8Array.from(atob(encoded), (character) =>
         character.charCodeAt(0)
       );
+      if (sponsorship) {
+        if (!wallet.signTransaction) {
+          throw new Error(
+            "This wallet cannot partially authorize company-sponsored confidential-account setup. No sponsored transaction was sent."
+          );
+        }
+        const [signed] = await wallet.signTransaction({
+          account: wallet.account,
+          chain: "solana:devnet",
+          transaction,
+          options: { preflightCommitment: "confirmed" }
+        });
+        const originalDecoded = getTransactionDecoder().decode(transaction);
+        const signedDecoded = getTransactionDecoder().decode(signed.signedTransaction);
+        if (!sameBytes(originalDecoded.messageBytes, signedDecoded.messageBytes)) {
+          throw new Error(
+            "The wallet changed the sponsored transaction after authorization. No transaction was submitted."
+          );
+        }
+        if (!signedDecoded.signatures[owner] ||
+            signedDecoded.signatures[owner]!.every((byte) => byte === 0)) {
+          throw new Error(
+            "The wallet did not authorize the confidential-account setup transaction."
+          );
+        }
+        const transactionBase64 = btoa(
+          Array.from(signed.signedTransaction, (byte) =>
+            String.fromCharCode(byte)
+          ).join("")
+        );
+        const submit = async () => fetch(sponsorship.relayUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transactionBase64 })
+        });
+        let response = await submit();
+        let result = await response.json();
+        if ((response.ok || response.status === 202) &&
+            typeof result.signature === "string") {
+          const submittedSignature = signature(getBase58Decoder().decode(result.signature));
+          await waitForFinality(rpc, submittedSignature);
+          response = await submit();
+          result = await response.json();
+        }
+        if (!response.ok || typeof result.signature !== "string" || result.status !== "finalized") {
+          throw new Error(
+            result.error === "gas_tank_insufficient_balance"
+              ? "The workspace Gas Tank cannot cover the sponsored setup cost. Ask the workspace administrator to fund it; your wallet was not charged for setup."
+              : result.error === "confidential_setup_sponsorship_unavailable"
+                ? "Company-sponsored setup is unavailable under the workspace's current sponsorship policy. No contributor-paid fallback was used."
+                : result.error === "confidential_setup_sponsorship_pending" || response.status === 202
+                  ? "The sponsored transaction is still awaiting network finality. Refresh this account's status before trying setup again."
+                  : "Company-sponsored account setup could not be reconciled. Keep the setup screen open and retry verification before starting another setup."
+          );
+        }
+        const encodedSignature = getBase58Decoder().decode(result.signature);
+        const transactionSignature = signature(encodedSignature);
+        signatures.push(result.signature);
+        return { signature: transactionSignature };
+      }
       const [result] = await wallet.signAndSendTransaction({
         account: wallet.account,
         chain: "solana:devnet",
@@ -173,7 +241,8 @@ function requireConfidentialMintExtensions(
 
 export async function setupConfidentialAccount(
   wallet: Wallet,
-  mintAddress: string
+  mintAddress: string,
+  sponsorship: { feePayerAddress: string; relayUrl: string }
 ): Promise<{ tokenAccountAddress: string; signature: string }> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const mint = address(mintAddress);
@@ -194,7 +263,7 @@ export async function setupConfidentialAccount(
       tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
     });
     const plan = await getCreateConfidentialTransferAccountInstructionPlan({
-      payer: createNoopSigner(owner),
+      payer: createNoopSigner(address(sponsorship.feePayerAddress)),
       owner: createNoopSigner(owner),
       mint,
       token: tokenAccount,
@@ -203,7 +272,11 @@ export async function setupConfidentialAccount(
       aesKey: aeKey,
       includeConfidentialTransferFeeAmount
     });
-    const [signature] = await executePlan(wallet, plan);
+    const signatures = await executePlan(wallet, plan, sponsorship);
+    const signature = signatures.at(-1);
+    if (!signature) {
+      throw new Error("Company-sponsored setup did not produce a transaction signature.");
+    }
     return { tokenAccountAddress: tokenAccount, signature };
   } finally {
     secretKey.free();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AccountRole } from "@solana/kit";
+import { AccountRole, address, getAddressEncoder } from "@solana/kit";
 import {
   assertAllowedPayrollInstructionSet,
   classifyPreparedSponsorshipState,
@@ -8,7 +8,9 @@ import {
   assertSponsoredCost,
   GasTankSponsorshipPolicyError,
   MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-  MAX_SPONSORED_FEE_LAMPORTS
+  MAX_SPONSORED_FEE_LAMPORTS,
+  MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS,
+  assertAllowedConfidentialAccountSetupMessage
 } from "./gas-tank-sponsorship-policy";
 
 const programId = "payroll-program";
@@ -297,5 +299,93 @@ describe("Gas Tank sponsorship policy", () => {
     expect(() => assertSimulationSucceeded({ value: { err: null, unitsConsumed: 1_500_000 } }))
       .toThrow("sponsored_compute_limit_exceeded");
     expect(() => assertSimulationSucceeded({ value: { err: null, unitsConsumed: 80_000 } })).not.toThrow();
+  });
+});
+
+
+describe("company-sponsored confidential-account setup instruction policy", () => {
+  const gasTank = "gas-tank";
+  const owner = "contributor";
+  const token = "derived-associated-token";
+  const mint = "wrapped-usdc-mint";
+  const system = "11111111111111111111111111111111";
+  const token2022 = "token-2022";
+  const associated = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsJJA8knL";
+  const instructionsSysvar = "Sysvar1nstructions1111111111111111111111111";
+  const proof = "ZkE1Gama1Proof11111111111111111111111111111";
+  const message = (instructions: Array<{programAddressIndex:number;accountIndices:number[];data:Uint8Array}>) => ({
+    version: 0,
+    staticAccounts: [gasTank, owner, token, mint, system, token2022, associated, instructionsSysvar, proof],
+    header: { numSignerAccounts: 2, numReadonlySignerAccounts: 1, numReadonlyNonSignerAccounts: 6 },
+    instructions,
+    addressTableLookups: []
+  });
+  const setupInput = (instructions: Array<{programAddressIndex:number;accountIndices:number[];data:Uint8Array}>) => ({
+    message: message(instructions),
+    feePayerAddress: gasTank,
+    ownerAddress: owner,
+    mintAddress: mint,
+    tokenAccountAddress: token,
+    token2022ProgramAddress: token2022
+  });
+
+  it("permits the contributor-owned associated account and confidential configuration", () => {
+    expect(assertAllowedConfidentialAccountSetupMessage(setupInput([
+      { programAddressIndex: 6, accountIndices: [0, 2, 1, 3, 4, 5], data: Uint8Array.of(1) },
+      { programAddressIndex: 5, accountIndices: [2, 3, 7, 1], data: Uint8Array.of(27, 2, 0, 0) },
+      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) },
+      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(1, 1, 2) }
+    ])).reservedRentLamports).toBe(MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS);
+  });
+
+  it("rejects proof-only transactions that do not create or configure an account", () => {
+    expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
+      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) }
+    ]))).toThrow("confidential_setup_instruction_missing");
+  });
+
+  it("rejects Token-2022 transfer instructions and unknown programs", () => {
+    expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
+      { programAddressIndex: 5, accountIndices: [2, 1], data: Uint8Array.of(3, 1, 0) }
+    ]))).toThrow("confidential_setup_token_instruction_denied");
+    expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
+      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(0) }
+    ]))).toThrow("confidential_setup_proof_instruction_denied");
+  });
+
+  it("rejects a transaction without contributor signer authorization or with a different fee payer", () => {
+    const noOwnerSigner = setupInput([
+      { programAddressIndex: 6, accountIndices: [0, 2, 1, 3, 4, 5], data: Uint8Array.of(1) }
+    ]);
+    noOwnerSigner.message.header.numSignerAccounts = 1;
+    noOwnerSigner.message.header.numReadonlySignerAccounts = 0;
+    expect(() => assertAllowedConfidentialAccountSetupMessage(noOwnerSigner))
+      .toThrow("confidential_setup_owner_signature_required");
+    expect(() => assertAllowedConfidentialAccountSetupMessage({
+      ...setupInput([
+        { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1) }
+      ]),
+      feePayerAddress: "attacker"
+    })).toThrow("confidential_setup_transaction_invalid");
+  });
+
+  it("rejects excessive proof-account rent and address-table transactions", () => {
+    const systemCreate = new Uint8Array(52);
+    new DataView(systemCreate.buffer).setUint32(0, 0, true);
+    new DataView(systemCreate.buffer).setBigUint64(4, MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS + 1n, true);
+    new DataView(systemCreate.buffer).setBigUint64(12, 128n, true);
+    systemCreate.set(getAddressEncoder().encode(address(proof)), 20);
+    const excessiveRent = setupInput([
+      { programAddressIndex: 4, accountIndices: [0, 1], data: systemCreate }
+    ]);
+    excessiveRent.message.header.numReadonlySignerAccounts = 0;
+    expect(() => assertAllowedConfidentialAccountSetupMessage(excessiveRent))
+      .toThrow("confidential_setup_proof_account_denied");
+    const withLookup = setupInput([
+      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1) }
+    ]);
+    withLookup.message.addressTableLookups = [{}];
+    expect(() => assertAllowedConfidentialAccountSetupMessage(withLookup))
+      .toThrow("confidential_setup_transaction_invalid");
   });
 });

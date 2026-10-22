@@ -20,12 +20,18 @@ import {
 import type {
   Database
 } from "./client";
-import { operationDataForGasTankRetry, summarizeGasTankSponsorshipBudget } from "./gas-tank-operation-history";
+import {
+  operationDataForGasTankRetry,
+  summarizeGasTankSponsorshipBudget,
+  sumPreparedSponsoredRentReservations
+} from "./gas-tank-operation-history";
 import {
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   hasReachedInactivityThreshold,
   isContributorAssociationCleanupEligible,
   isWorkspaceRetentionEligible,
+  getContributorDepartureDisposition,
+  getAutomaticContributorCleanupDisposition,
   scheduleWorkspaceDeletion
 } from "./retention-policy";
 import {
@@ -1674,6 +1680,7 @@ export async function completeContributorOffboarding(
   }
 ): Promise<"completed" | "already_completed" | "outstanding_obligations" | "not_found"> {
   const now = input.now ?? new Date();
+  const disposition = getContributorDepartureDisposition(Boolean(input.closeTransactionSignature));
   return db.transaction(async (tx) => {
     const matchingContributor = await tx
       .select({ id: contributors.id, lifecycle: contributors.lifecycle })
@@ -1753,7 +1760,7 @@ export async function completeContributorOffboarding(
         contributorId: input.contributorId,
         workspaceId: input.workspaceId,
         completedAt: now,
-        manualAccountClose: Boolean(input.closeTransactionSignature),
+        manualAccountClose: disposition.manualAccountClose,
         closeTransactionSignature: input.closeTransactionSignature,
         associationRemovedAt: now,
         status: "completed"
@@ -1762,7 +1769,7 @@ export async function completeContributorOffboarding(
         target: contributorOffboarding.contributorId,
         set: {
           completedAt: now,
-          manualAccountClose: Boolean(input.closeTransactionSignature),
+          manualAccountClose: disposition.manualAccountClose,
           closeTransactionSignature: input.closeTransactionSignature,
           automaticCleanupEligibleAt: null,
           associationRemovedAt: now,
@@ -1808,10 +1815,8 @@ export async function completeContributorOffboarding(
       referenceId: input.contributorId,
       transactionSignature: input.closeTransactionSignature,
       metadata: {
-        manualAccountClose: Boolean(input.closeTransactionSignature),
-        departureMode: input.closeTransactionSignature
-          ? "manual_close_and_leave"
-          : "leave_without_account_close"
+        manualAccountClose: disposition.manualAccountClose,
+        departureMode: disposition.departureMode
       },
       createdAt: now
       })
@@ -1829,9 +1834,7 @@ export async function completeContributorOffboarding(
       eventKey: `contributor-offboarding-completed:${input.contributorId}`,
       category: "Recovery & Offboarding",
       title: "You have left the workspace",
-      body: input.closeTransactionSignature
-        ? "Workspace access has been removed. Your wallet closed the confidential account; any eligible account rent was returned to your wallet."
-        : "Workspace access has been removed. Your confidential account remains under your control and was not closed by Paylore.",
+      body: disposition.notificationBody,
       destination: "/notifications",
       createdAt: now
       })
@@ -1966,6 +1969,7 @@ export async function cleanupEligibleContributorAssociations(
         )
         .limit(1);
       const recipient = recipients[0]?.userId;
+      const disposition = getAutomaticContributorCleanupDisposition();
       if (recipient) {
         await tx
           .insert(workspaceNotifications)
@@ -1975,7 +1979,7 @@ export async function cleanupEligibleContributorAssociations(
             eventKey: `contributor-association-cleanup:${contributor.id}`,
             category: "Recovery & Offboarding",
             title: "Workspace association removed",
-            body: "Workspace access has been removed after the retention period. Your confidential account has not been closed by Paylore.",
+            body: disposition.notificationBody,
             destination: "/",
             createdAt: now
           })
@@ -1994,7 +1998,7 @@ export async function cleanupEligibleContributorAssociations(
           contributorId: contributor.id,
           workspaceId: candidate.workspaceId,
           completedAt: now,
-          manualAccountClose: false,
+          manualAccountClose: disposition.manualAccountClose,
           automaticCleanupEligibleAt: eligibleAt,
           associationRemovedAt: now,
           status: "completed"
@@ -2003,7 +2007,7 @@ export async function cleanupEligibleContributorAssociations(
           target: contributorOffboarding.contributorId,
           set: {
             completedAt: now,
-            manualAccountClose: false,
+            manualAccountClose: disposition.manualAccountClose,
             closeTransactionSignature: null,
             automaticCleanupEligibleAt: eligibleAt,
             associationRemovedAt: now,
@@ -2021,8 +2025,8 @@ export async function cleanupEligibleContributorAssociations(
           referenceType: "contributor_offboarding",
           referenceId: contributor.id,
           metadata: {
-            manualAccountClose: false,
-            departureMode: "automatic_association_cleanup"
+            manualAccountClose: disposition.manualAccountClose,
+            departureMode: disposition.departureMode
           },
           createdAt: now
         })
@@ -4761,10 +4765,16 @@ export async function beginGasTankOperationAttempt(
     const dailyFees = usage.feeLamports;
     const dailyOperations = usage.operationCount;
     const reservedFees = usage.reservedFeesLamports;
+    const reservedRent = sumPreparedSponsoredRentReservations(recent);
+    const requestedRentValue = input.operationData?.reservedRentLamports ?? "0";
+    if (typeof requestedRentValue !== "string" || !/^(0|[1-9][0-9]*)$/.test(requestedRentValue)) {
+      throw new Error("Invalid Gas Tank sponsored rent reservation.");
+    }
+    const requestedRent = BigInt(requestedRentValue);
 
     const available = BigInt(input.availableBalanceLamports);
     const requestedReservation = BigInt(input.reservedFeeLamports);
-    if (available < reservedFees + requestedReservation) {
+    if (available < reservedFees + requestedReservation + reservedRent + requestedRent) {
       return { status: "gas_tank_insufficient_balance" as const, operation: existing ?? null };
     }
     if (

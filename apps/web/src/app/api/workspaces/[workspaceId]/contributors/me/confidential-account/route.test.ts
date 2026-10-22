@@ -24,7 +24,7 @@ vi.mock("../../../../../../../server/solana/confidential-account-verification", 
   },
   verifyConfidentialAccountSetup: mocks.verifyConfidentialAccountSetup
 }));
-import { POST } from "./route";
+import { GET, POST } from "./route";
 const context = { params: Promise.resolve({ workspaceId: "workspace-a" }) };
 const signature = "5".repeat(88);
 function request(body: unknown) {
@@ -49,6 +49,16 @@ describe("contributor confidential-account setup route", () => {
       contributorId: "contributor-a", tokenAccountAddress: "token-account-a", status: "ready"
     });
   });
+  it("denies confidential-account access after workspace membership has been removed", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const response = await GET(
+      new Request("https://paylore.test/api/confidential-account"),
+      context
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.findWorkspaceContributorByWallet).not.toHaveBeenCalled();
+  });
+
   it("records ready only after owner-bound finalized setup and extension readiness are verified", async () => {
     const response = await POST(request({ signature }), context);
     expect(response.status).toBe(200);

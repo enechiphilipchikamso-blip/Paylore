@@ -151,3 +151,20 @@ export function summarizeGasTankSponsorshipBudget(input: {
     overflow: input.rows.length > 1000
   };
 }
+
+
+/** Counts only rent held by active setup reservations; finalized rent is reflected in the live balance. */
+export function sumPreparedSponsoredRentReservations(
+  rows: Array<{ status: string; operationData: unknown }>
+): bigint {
+  let reserved = 0n;
+  for (const row of rows) {
+    if (row.status !== "preparing" && row.status !== "prepared") continue;
+    const data = dataRecord(row.operationData);
+    if (data.reservedRentLamports === undefined) continue;
+    const amount = readLamports(data.reservedRentLamports);
+    if (amount === null) throw new Error("Persisted Gas Tank rent reservation is invalid.");
+    reserved += amount;
+  }
+  return reserved;
+}

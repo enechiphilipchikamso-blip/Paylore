@@ -152,6 +152,15 @@ describe("confidential account transaction verification", () => {
     })).rejects.toMatchObject({ code: "confidential_account_not_ready" });
   });
 
+  it("rejects a close transaction without finalized success evidence", async () => {
+    vi.mocked(readSolanaRpc).mockResolvedValueOnce(null);
+    await expect(verifyConfidentialAccountClose({
+      signature,
+      walletAddress,
+      mintAddress
+    })).rejects.toThrow("not finalized successfully");
+  });
+
   it("accepts an account close only when rent returns to its owner", async () => {
     const tokenAccount = await expectedAccount();
     vi.mocked(readSolanaRpc)
