@@ -4769,6 +4769,7 @@ export async function updateGasTankOperationAttempt(
     workspaceId: string;
     operationId: string;
     status: "prepared" | "finalized" | "failed" | "cancelled";
+    expectedUpdatedAt?: Date;
     transactionSignature?: string | null;
     feeLamports?: string | null;
     failureCode?: string | null;
@@ -4811,6 +4812,7 @@ export async function updateGasTankOperationAttempt(
       eq(gasTankOperations.id, input.operationId),
       eq(gasTankOperations.workspaceId, input.workspaceId),
       inArray(gasTankOperations.status, previousStatuses),
+      ...(input.expectedUpdatedAt ? [eq(gasTankOperations.updatedAt, input.expectedUpdatedAt)] : []),
       ...((input.status === "finalized" ||
           (input.status === "failed" && input.failureCode === "finalized_chain_failure") ||
           (input.status === "cancelled" && input.failureCode === "recent_blockhash_expired")) &&
@@ -4839,7 +4841,8 @@ export async function updateGasTankOperationAttempt(
   const rows = await db
     .select({
       status: gasTankOperations.status,
-      transactionSignature: gasTankOperations.transactionSignature
+      transactionSignature: gasTankOperations.transactionSignature,
+      updatedAt: gasTankOperations.updatedAt
     })
     .from(gasTankOperations)
     .where(and(
@@ -4851,7 +4854,9 @@ export async function updateGasTankOperationAttempt(
     rows[0] &&
     rows[0].status === input.status &&
     (input.transactionSignature === undefined ||
-      rows[0].transactionSignature === input.transactionSignature)
+      rows[0].transactionSignature === input.transactionSignature) &&
+    (!input.expectedUpdatedAt ||
+      rows[0].updatedAt.getTime() === input.expectedUpdatedAt.getTime())
   );
 }
 

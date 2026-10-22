@@ -127,7 +127,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, { params }: RouteContext) {
-  let operationForFailure: { workspaceId: string; operationId: string } | null = null;
+  let operationForFailure: { workspaceId: string; operationId: string; expectedUpdatedAt: Date } | null = null;
   try {
     assertSameOrigin(request);
     const text = await readBoundedRequestText(request, MAX_REQUEST_BYTES);
@@ -334,7 +334,8 @@ export async function POST(request: Request, { params }: RouteContext) {
             operationId: priorOperation.id,
             status: "failed",
             failureCode: "preparation_expired_without_submission",
-            feeLamports: "0"
+            feeLamports: "0",
+            expectedUpdatedAt: priorOperation.updatedAt
           });
           if (!expiredPreparation) {
             return NextResponse.json({ error: "gas_tank_operation_preparing" }, { status: 409 });
@@ -536,7 +537,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           : "gas_tank_operation_already_prepared"
       }, { status: 409 });
     }
-    operationForFailure = { workspaceId, operationId: begun.operation.id };
+    operationForFailure = { workspaceId, operationId: begun.operation.id, expectedUpdatedAt: begun.operation.updatedAt };
 
     try {
       const prepared = await withWorkspaceGasTankKey(db, workspaceId, (privateKey) =>
@@ -559,6 +560,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         workspaceId,
         operationId: begun.operation.id,
         status: "prepared",
+        expectedUpdatedAt: begun.operation.updatedAt,
         transactionSignature: prepared.signature,
         feeLamports: prepared.feeLamports,
         lastValidBlockHeight: String(prepared.lastValidBlockHeight),
@@ -583,6 +585,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         workspaceId,
         operationId: begun.operation.id,
         status: "failed",
+        expectedUpdatedAt: begun.operation.updatedAt,
         failureCode: error instanceof GasTankSponsorshipPolicyError
           ? error.code
           : "sponsorship_preparation_failed",
@@ -598,6 +601,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         workspaceId: operationForFailure.workspaceId,
         operationId: operationForFailure.operationId,
         status: "failed",
+        expectedUpdatedAt: operationForFailure.expectedUpdatedAt,
         failureCode: "sponsorship_preparation_failed",
         feeLamports: "0"
       }).catch(() => undefined);

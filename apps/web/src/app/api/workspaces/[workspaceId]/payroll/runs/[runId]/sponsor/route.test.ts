@@ -438,6 +438,28 @@ describe("payroll sponsor route", () => {
     }
   });
 
+  it("does not expire a newer preparation when two requests inspect a stale attempt", async () => {
+    const staleUpdatedAt = new Date(Date.now() - 3 * 60 * 1000);
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({ id: "operation-a", requestDigest: currentRequestDigest(), status: "preparing", updatedAt: staleUpdatedAt, transactionSignature: null });
+    mocks.updateGasTankOperationAttempt.mockResolvedValueOnce(false);
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_operation_preparing" });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({ workspaceId: "workspace-a", operationId: "operation-a", status: "failed", failureCode: "preparation_expired_without_submission", expectedUpdatedAt: staleUpdatedAt }));
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not mark a replacement attempt failed when the earlier preparation returns late", async () => {
+    const attemptUpdatedAt = new Date(Date.now() - 10_000);
+    mocks.beginGasTankOperationAttempt.mockResolvedValue({ status: "started", operation: { id: "operation-a", updatedAt: attemptUpdatedAt } });
+    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.ok).toBe(false);
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenNthCalledWith(1, {}, expect.objectContaining({ workspaceId: "workspace-a", operationId: "operation-a", status: "prepared", expectedUpdatedAt: attemptUpdatedAt }));
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenNthCalledWith(2, {}, expect.objectContaining({ workspaceId: "workspace-a", operationId: "operation-a", status: "failed", expectedUpdatedAt: attemptUpdatedAt }));
+  });
+
   it("does not create a second operation while a previous preparation is in flight", async () => {
     mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue({
       id: "operation-a", requestDigest: currentRequestDigest(), status: "preparing",
