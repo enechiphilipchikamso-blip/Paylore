@@ -333,6 +333,7 @@ describe("company-sponsored confidential-account setup instruction policy", () =
   it("permits the contributor-owned associated account and confidential configuration", () => {
     expect(assertAllowedConfidentialAccountSetupMessage(setupInput([
       { programAddressIndex: 6, accountIndices: [0, 2, 1, 3, 4, 5], data: Uint8Array.of(1) },
+      { programAddressIndex: 5, accountIndices: [2, 0, 4, 1], data: Uint8Array.of(29, 5, 0) },
       { programAddressIndex: 5, accountIndices: [2, 3, 7, 1], data: Uint8Array.of(27, 2, 0, 0) },
       { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) },
       { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(1, 1, 2) }
@@ -351,12 +352,6 @@ describe("company-sponsored confidential-account setup instruction policy", () =
     ]);
     expect(() => assertAllowedConfidentialAccountSetupMessage(altered))
       .toThrow("confidential_setup_memo_instruction_denied");
-  });
-
-  it("rejects proof-only transactions that do not create or configure an account", () => {
-    expect(() => assertAllowedConfidentialAccountSetupMessage(setupInput([
-      { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) }
-    ]))).toThrow("confidential_setup_instruction_missing");
   });
 
   it("rejects Token-2022 transfer instructions and unknown programs", () => {

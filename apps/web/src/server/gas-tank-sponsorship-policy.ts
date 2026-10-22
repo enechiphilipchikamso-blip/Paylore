@@ -405,6 +405,16 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
           requireAccount(accounts[0], input.tokenAccountAddress, "writable")) {
         continue;
       }
+      if (data.length === 3 && data[0] === 29 && data[1] === 5 && data[2] === 0 &&
+          accounts.length === 4 &&
+          requireAccount(accounts[0], input.tokenAccountAddress, "writable") &&
+          requireAccount(accounts[1], input.feePayerAddress, "signer") &&
+          requireAccount(accounts[1], input.feePayerAddress, "writable") &&
+          requireAccount(accounts[2], SYSTEM_PROGRAM_ADDRESS) &&
+          requireAccount(accounts[3], input.ownerAddress, "signer")) {
+        hasActionableSetupInstruction = true;
+        continue;
+      }
       if (data.length >= 3 && data.length <= 128 &&
           data[0] === 27 && data[1] === 2 &&
           accounts.length === 4 &&
@@ -455,6 +465,7 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
             const account = addressAt(index);
             return account === input.ownerAddress && !roleAt(index).signer;
           })) {
+        hasActionableSetupInstruction = true;
         continue;
       }
       throw new GasTankSponsorshipPolicyError("confidential_setup_proof_instruction_denied");
