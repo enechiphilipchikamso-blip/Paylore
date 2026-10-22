@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
+import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import {
   applyConfidentialPendingBalance,
   closeConfidentialAccount,
@@ -95,15 +96,15 @@ export function ContributorCompensation({
     text: string;
   } | null>(null);
 
-  async function refreshConfidentialBalance() {
-    if (!mint || !currentAccount) {
+  async function refreshConfidentialBalance(accountForRefresh: AccountState = currentAccount) {
+    if (!mint || !accountForRefresh) {
       throw new Error("Set up a confidential account before checking its balance.");
     }
     const wallet = await findAuthenticatedWallet(walletAddress);
     const result = await getConfidentialBalances(
       wallet,
       mint,
-      currentAccount.tokenAccountAddress
+      accountForRefresh.tokenAccountAddress
     );
     setBalance({
       availableBalance: result.availableBalance,
@@ -137,19 +138,19 @@ export function ContributorCompensation({
     return result.account as NonNullable<AccountState>;
   }
 
-  async function runSetup() {
+  async function runSetup(): Promise<boolean> {
     if (!mint) {
       setMessage({
         state: "error",
         text: "Confidential account setup is unavailable until the approved wrapped-USDC mint is initialized and configured."
       });
-      return;
+      return false;
     }
     if (
       !window.confirm(
         "Your wallet will sign the Token-2022 confidential-key derivation message and authorize account setup. Paylore does not receive or store the resulting keys. Use the same wallet for future confidential balance actions."
       )
-    ) return;
+    ) return false;
     setBusy(true);
     setMessage({ state: "partial", text: "Preparing account… Approve the confidential-key derivation and account transaction in your wallet." });
     try {
@@ -181,9 +182,10 @@ export function ContributorCompensation({
         state: "partial",
         text: "The account transaction is finalized. Paylore is verifying its Token-2022 state before recording setup."
       });
-      await verifySetup(setup.signature);
-      await refreshConfidentialBalance();
+      const verifiedAccount = await verifySetup(setup.signature);
+      await refreshConfidentialBalance(verifiedAccount);
       setMessage({ state: "success", text: "Confidential account ready" });
+      return true;
     } catch (error) {
       setMessage({
         state: "error",
@@ -191,8 +193,28 @@ export function ContributorCompensation({
           ? error.message
           : "Confidential account setup could not be completed."
       });
+      return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runClaimAndCashOut() {
+    if (busy) return;
+    const outcome = await ensureClaimAndCashOutAccount({
+      accountReady: currentAccount?.status === "ready",
+      setupAccount: runSetup
+    });
+    if (outcome === "account_setup_completed") {
+      setMessage({
+        state: "partial",
+        text: "Confidential account ready. Claim settlement is not available yet, so this action has not transferred USDC."
+      });
+    } else if (outcome === "settlement_unavailable") {
+      setMessage({
+        state: "partial",
+        text: "Claim settlement and cash-out are not available yet. No funds were transferred."
+      });
     }
   }
 
@@ -410,14 +432,30 @@ export function ContributorCompensation({
       </p>
       <section aria-labelledby="payroll-allocations-heading">
         <h3 id="payroll-allocations-heading">Recorded payroll allocations</h3>
+        {allocations.some((allocation) => allocation.status !== "claimed" && allocation.status !== "recovered") ? (
+          <div className="surface-card" aria-label="Claim and cash out">
+            <button
+              className="button"
+              disabled={busy || !mint}
+              onClick={() => void runClaimAndCashOut()}
+              type="button"
+            >
+              {busy ? "Preparing confidential account…" : "Claim & Cash Out"}
+            </button>
+            <p className="notice">
+              When no confidential account is ready, this action starts company-sponsored setup with your wallet as owner. Claim settlement is not available yet; this button will not transfer USDC.
+            </p>
+          </div>
+        ) : null}
         {allocations.length === 0 ? (
           <p>No finalized payroll claim commitments are recorded for you.</p>
         ) : (
           <>
             <p className="notice">
               A recorded Claim PDA is an entitlement record, not a USDC
-              transfer. Confidential payroll settlement and claim actions are
-              not yet available.
+              transfer. The Claim & Cash Out entry point can prepare your
+              contributor-owned confidential account; settlement is a separate
+              operation and no payment is recorded here.
             </p>
             <div className="table-scroll">
               <table>
