@@ -313,10 +313,11 @@ describe("company-sponsored confidential-account setup instruction policy", () =
   const associated = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsJJA8knL";
   const instructionsSysvar = "Sysvar1nstructions1111111111111111111111111";
   const proof = "ZkE1Gama1Proof11111111111111111111111111111";
+  const memo = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
   const message = (instructions: Array<{programAddressIndex:number;accountIndices:number[];data:Uint8Array}>) => ({
     version: 0,
-    staticAccounts: [gasTank, owner, token, mint, system, token2022, associated, instructionsSysvar, proof],
-    header: { numSignerAccounts: 2, numReadonlySignerAccounts: 1, numReadonlyNonSignerAccounts: 6 },
+    staticAccounts: [gasTank, owner, token, mint, system, token2022, associated, instructionsSysvar, proof, memo],
+    header: { numSignerAccounts: 2, numReadonlySignerAccounts: 1, numReadonlyNonSignerAccounts: 7 },
     instructions,
     addressTableLookups: []
   });
@@ -336,6 +337,20 @@ describe("company-sponsored confidential-account setup instruction policy", () =
       { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1, 2) },
       { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(1, 1, 2) }
     ])).reservedRentLamports).toBe(MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS);
+  });
+
+  it("requires the exact contributor-authorization memo when a setup transaction includes it", () => {
+    const valid = setupInput([
+      { programAddressIndex: 5, accountIndices: [2, 3, 7, 1], data: Uint8Array.of(27, 2, 0, 0) },
+      { programAddressIndex: 9, accountIndices: [1], data: new TextEncoder().encode("Paylore confidential-account setup authorization") }
+    ]);
+    expect(() => assertAllowedConfidentialAccountSetupMessage(valid)).not.toThrow();
+    const altered = setupInput([
+      { programAddressIndex: 5, accountIndices: [2, 3, 7, 1], data: Uint8Array.of(27, 2, 0, 0) },
+      { programAddressIndex: 9, accountIndices: [1], data: new TextEncoder().encode("arbitrary memo") }
+    ]);
+    expect(() => assertAllowedConfidentialAccountSetupMessage(altered))
+      .toThrow("confidential_setup_memo_instruction_denied");
   });
 
   it("rejects proof-only transactions that do not create or configure an account", () => {

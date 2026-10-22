@@ -276,6 +276,10 @@ export const MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS = 10_000_000n;
 const ASSOCIATED_TOKEN_PROGRAM_ADDRESS = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsJJA8knL";
 const SYSTEM_PROGRAM_ADDRESS = "11111111111111111111111111111111";
 const INSTRUCTIONS_SYSVAR_ADDRESS = "Sysvar1nstructions1111111111111111111111111";
+const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const SETUP_AUTHORIZATION_MEMO = new TextEncoder().encode(
+  "Paylore confidential-account setup authorization"
+);
 const ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS = "ZkE1Gama1Proof11111111111111111111111111111";
 
 type DecodedSetupMessage = {
@@ -320,7 +324,7 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
     message.version !== 0 ||
     message.addressTableLookups?.length ||
     message.instructions.length < 1 ||
-    message.instructions.length > 8 ||
+    message.instructions.length > 12 ||
     message.staticAccounts[0] !== input.feePayerAddress
   ) {
     throw new GasTankSponsorshipPolicyError("confidential_setup_transaction_invalid");
@@ -366,6 +370,16 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
     const programAddress = addressAt(instruction.programAddressIndex);
     const accounts = instruction.accountIndices;
     const data = instruction.data;
+
+    if (programAddress === MEMO_PROGRAM_ADDRESS) {
+      if (accounts.length !== 1 ||
+          !requireAccount(accounts[0], input.ownerAddress, "signer") ||
+          data.length !== SETUP_AUTHORIZATION_MEMO.length ||
+          !data.every((byte, index) => byte === SETUP_AUTHORIZATION_MEMO[index])) {
+        throw new GasTankSponsorshipPolicyError("confidential_setup_memo_instruction_denied");
+      }
+      continue;
+    }
 
     if (programAddress === ASSOCIATED_TOKEN_PROGRAM_ADDRESS) {
       const validData = data.length === 0 || (data.length === 1 && data[0] === 1);

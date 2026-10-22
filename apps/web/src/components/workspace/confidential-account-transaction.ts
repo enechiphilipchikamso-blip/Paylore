@@ -22,7 +22,9 @@ import {
   ElGamalSecretKey
 } from "@solana/zk-sdk/bundler";
 import {
+  AccountRole,
   address,
+  appendTransactionMessageInstruction,
   blockhash,
   createNoopSigner,
   createSolanaRpc,
@@ -47,6 +49,10 @@ import type { findAuthenticatedWallet } from "./authenticated-wallet";
 type Wallet = Awaited<ReturnType<typeof findAuthenticatedWallet>>;
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
+const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const SETUP_AUTHORIZATION_MEMO = new TextEncoder().encode(
+  "Paylore confidential-account setup authorization"
+);
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index]);
@@ -123,8 +129,22 @@ async function executePlan(
   const signatures: string[] = [];
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
+      const contributorAlreadySigns = message.instructions.some((instruction) =>
+        instruction.accounts?.some((account) =>
+          account.address === owner &&
+          (account.role === AccountRole.READONLY_SIGNER ||
+            account.role === AccountRole.WRITABLE_SIGNER)
+        )
+      );
+      const authorizedMessage = sponsorship && !contributorAlreadySigns
+        ? appendTransactionMessageInstruction({
+            programAddress: address(MEMO_PROGRAM_ADDRESS),
+            accounts: [{ address: owner, role: AccountRole.READONLY_SIGNER }],
+            data: SETUP_AUTHORIZATION_MEMO
+          }, message)
+        : message;
       const partiallySigned =
-        await partiallySignTransactionMessageWithSigners(message);
+        await partiallySignTransactionMessageWithSigners(authorizedMessage);
       const encoded = getBase64EncodedWireTransaction(partiallySigned);
       const transaction = Uint8Array.from(atob(encoded), (character) =>
         character.charCodeAt(0)

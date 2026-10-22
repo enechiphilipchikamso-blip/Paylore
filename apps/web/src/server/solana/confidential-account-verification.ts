@@ -25,6 +25,16 @@ export class ConfidentialAccountVerificationError extends Error {
   }
 }
 
+function hasAccountExtension(info: Record<string, unknown>, expectedExtension: string): boolean {
+  if (!Array.isArray(info.extensions)) return false;
+  return info.extensions.some((value) => {
+    const extension = object(value);
+    const name = extension?.extension;
+    return typeof name === "string" &&
+      name.replace(/[^a-z]/gi, "").toLowerCase() === expectedExtension;
+  });
+}
+
 function accountExtensionState(info: Record<string, unknown>, expectedExtension: string): Record<string, unknown> | null {
   if (!Array.isArray(info.extensions)) return null;
   for (const value of info.extensions) {
@@ -164,6 +174,7 @@ export async function verifyConfidentialAccountSetup(
   const data = object(value?.data);
   const parsed = object(data?.parsed);
   const info = object(parsed?.info);
+  const immutableOwnerPresent = info ? hasAccountExtension(info, "immutableowner") : false;
   const confidentialState = info ? accountExtensionState(info, "confidentialtransferaccount") : null;
   const approved = confidentialState?.approved === true;
   const confidentialCreditsAllowed =
@@ -174,6 +185,7 @@ export async function verifyConfidentialAccountSetup(
     parsed?.type !== "account" ||
     info?.owner !== input.walletAddress ||
     info?.mint !== input.mintAddress ||
+    !immutableOwnerPresent ||
     !confidentialState ||
     !approved ||
     !confidentialCreditsAllowed

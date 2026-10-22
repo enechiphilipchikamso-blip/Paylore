@@ -70,10 +70,13 @@ describe("confidential account transaction verification", () => {
               info: {
                 owner: walletAddress,
                 mint: mintAddress,
-                extensions: [{
-                  extension: "confidentialTransferAccount",
-                  state: { approved: true, allowConfidentialCredits: true }
-                }]
+                extensions: [
+                  { extension: "immutableOwner" },
+                  {
+                    extension: "confidentialTransferAccount",
+                    state: { approved: true, allowConfidentialCredits: true }
+                  }
+                ]
               }
             }
           }
@@ -112,11 +115,12 @@ describe("confidential account transaction verification", () => {
   });
 
   it.each([
-    { label: "another owner", info: { owner: mintAddress, mint: mintAddress, extensions: [{ extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: true } }] } },
-    { label: "another mint", info: { owner: walletAddress, mint: walletAddress, extensions: [{ extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: true } }] } },
-    { label: "missing extension", info: { owner: walletAddress, mint: mintAddress, extensions: [] } },
-    { label: "unapproved extension", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "confidentialTransferAccount", state: { approved: false, allowConfidentialCredits: true } }] } },
-    { label: "disabled confidential credits", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: false } }] } }
+    { label: "another owner", info: { owner: mintAddress, mint: mintAddress, extensions: [{ extension: "immutableOwner" }, { extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: true } }] } },
+    { label: "another mint", info: { owner: walletAddress, mint: walletAddress, extensions: [{ extension: "immutableOwner" }, { extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: true } }] } },
+    { label: "missing confidential extension", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "immutableOwner" }] } },
+    { label: "missing immutable owner extension", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: true } }] } },
+    { label: "unapproved extension", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "immutableOwner" }, { extension: "confidentialTransferAccount", state: { approved: false, allowConfidentialCredits: true } }] } },
+    { label: "disabled confidential credits", info: { owner: walletAddress, mint: mintAddress, extensions: [{ extension: "immutableOwner" }, { extension: "confidentialTransferAccount", state: { approved: true, allowConfidentialCredits: false } }] } }
   ])("rejects a finalized account that is not ready: $label", async ({ info }) => {
     const tokenAccount = await expectedAccount();
     vi.mocked(readSolanaRpc)
