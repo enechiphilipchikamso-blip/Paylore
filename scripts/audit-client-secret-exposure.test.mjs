@@ -57,6 +57,19 @@ test("rejects a server-only configuration name in browser code even without a va
   });
 });
 
+test("rejects the primary server-only RPC configuration name in browser output", async () => {
+  await withFixture(async ({ root, staticDirectory }) => {
+    await writeFile(
+      join(staticDirectory, "chunk.js"),
+      "const endpoint = process.env.PAYLORE_RPC_PRIMARY_URL;"
+    );
+    const result = runScanner(root, staticDirectory);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /PAYLORE_RPC_PRIMARY_URL/);
+    assert.doesNotMatch(result.stdout + result.stderr, /actual-secret-value/);
+  });
+});
+
 test("does not mistake the public Solana Devnet endpoint for a credential", async () => {
   await withFixture(async ({ root, staticDirectory }) => {
     const publicEndpoint = "https://api.devnet.solana.com";
