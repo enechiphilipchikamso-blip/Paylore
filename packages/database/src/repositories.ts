@@ -4683,7 +4683,10 @@ export async function beginGasTankOperationAttempt(
       .from(gasTankOperations)
       .where(and(
         eq(gasTankOperations.workspaceId, input.workspaceId),
-        gte(gasTankOperations.createdAt, input.since)
+        or(
+          gte(gasTankOperations.createdAt, input.since),
+          gte(gasTankOperations.updatedAt, input.since)
+        )
       ))
       .limit(1001);
     if (recent.length > 1000) {
@@ -4872,7 +4875,10 @@ export async function getWorkspaceGasTankSponsorshipUsage(
     .from(gasTankOperations)
     .where(and(
       eq(gasTankOperations.workspaceId, workspaceId),
-      gte(gasTankOperations.createdAt, since)
+      or(
+        gte(gasTankOperations.createdAt, since),
+        gte(gasTankOperations.updatedAt, since)
+      )
     ))
     .limit(1001);
   return summarizeGasTankSponsorshipBudget({
