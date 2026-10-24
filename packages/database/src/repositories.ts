@@ -5846,6 +5846,52 @@ export async function beginPayrollClaimEscrowFunding(
   return { status: "conflict" as const, tokenAccountAddress: existing.tokenAccountAddress };
 }
 
+export async function preparePayrollClaimEscrowFundingAttempt(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    sourceAvailableBefore: string;
+    destinationAvailableBefore: string;
+    now?: Date;
+  }
+) {
+  if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.destinationAvailableBefore)) {
+    return { status: "invalid_balance" as const };
+  }
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = rows[0];
+    if (!escrow) return { status: "not_found" as const };
+    if (escrow.status !== "funding" || escrow.fundingSignature !== null) {
+      return { status: "conflict" as const };
+    }
+    if (escrow.fundingSourceAvailableBefore !== null || escrow.fundingDestinationAvailableBefore !== null) {
+      return escrow.fundingSourceAvailableBefore === input.sourceAvailableBefore &&
+        escrow.fundingDestinationAvailableBefore === input.destinationAvailableBefore
+        ? { status: "duplicate" as const }
+        : { status: "conflict" as const };
+    }
+    const updated = await tx.update(payrollClaimEscrows).set({
+      fundingSourceAvailableBefore: input.sourceAvailableBefore,
+      fundingDestinationAvailableBefore: input.destinationAvailableBefore,
+      updatedAt: input.now ?? new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "funding"),
+      isNull(payrollClaimEscrows.fundingSignature),
+      isNull(payrollClaimEscrows.fundingSourceAvailableBefore),
+      isNull(payrollClaimEscrows.fundingDestinationAvailableBefore)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return updated[0] ? { status: "prepared" as const } : { status: "conflict" as const };
+  });
+}
+
 export async function attachPayrollClaimEscrowFundingSignature(
   db: Database,
   input: {
@@ -5870,6 +5916,14 @@ export async function attachPayrollClaimEscrowFundingSignature(
     or(
       isNull(payrollClaimEscrows.fundingSignature),
       eq(payrollClaimEscrows.fundingSignature, input.signature)
+    ),
+    or(
+      isNull(payrollClaimEscrows.fundingSourceAvailableBefore),
+      eq(payrollClaimEscrows.fundingSourceAvailableBefore, input.sourceAvailableBefore)
+    ),
+    or(
+      isNull(payrollClaimEscrows.fundingDestinationAvailableBefore),
+      eq(payrollClaimEscrows.fundingDestinationAvailableBefore, input.destinationAvailableBefore)
     )
   )).returning({ allocationId: payrollClaimEscrows.allocationId });
   if (updated[0]) return true;
