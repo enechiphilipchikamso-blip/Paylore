@@ -425,6 +425,7 @@ async function verifyFinalizedSettlement(input: {
   }
   let transferIndex = -1;
   let markIndex = -1;
+  let transferContext = "";
   let transfers = 0;
   let marks = 0;
   for (const [index, raw] of instructions.entries()) {
@@ -435,13 +436,16 @@ async function verifyFinalizedSettlement(input: {
     const data = typeof ix.data === "string" ? decodeBase58(ix.data) : null;
     if (programId === TOKEN_2022_PROGRAM_ADDRESS && data && data.length >= 2 && data[0] === 27 && data[1] === 7 &&
         accounts[0] === input.reserveToken && accounts[1] === input.mint && accounts[2] === input.destination) {
-      transferIndex = index; transfers++;
+      transferIndex = index;
+      transferContext = accounts[4] ?? "";
+      transfers++;
     }
     if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_claimed")) &&
-        accounts.length === 9 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
+        accounts.length === 10 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
         accounts[2] === input.reserveState && accounts[3] === input.reserveAuthority &&
         accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.destination &&
-        accounts[7] === input.claim && accounts[8] === INSTRUCTIONS_SYSVAR) {
+        accounts[7] === input.claim && accounts[8] === INSTRUCTIONS_SYSVAR &&
+        accounts[9] === transferContext) {
       markIndex = index; marks++;
     }
   }
