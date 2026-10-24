@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getWorkspacePayrollRun: vi.fn(),
+  getPayrollClaimEscrow: vi.fn(),
   getWorkspacePageContext: vi.fn(),
   loadPayloreConfig: vi.fn(),
   getFinalizedPayrollClaimState: vi.fn(),
@@ -11,7 +12,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@paylore/database", () => ({
-  getWorkspacePayrollRun: mocks.getWorkspacePayrollRun
+  getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
+  getPayrollClaimEscrow: mocks.getPayrollClaimEscrow
 }));
 vi.mock("../../../../../../server/workspace-page-context", () => ({
   getWorkspacePageContext: mocks.getWorkspacePageContext
@@ -78,6 +80,15 @@ beforeEach(() => {
     session: { userId: "admin-a", walletAddress: "admin-wallet" }
   });
   mocks.getWorkspacePayrollRun.mockResolvedValue(payroll);
+  mocks.getPayrollClaimEscrow.mockResolvedValue({
+    allocationId: "allocation-a",
+    workspaceId: "workspace-a",
+    payrollRunId: "run-a",
+    claimId: allocation.claimId,
+    tokenAccountAddress: "claim-escrow-a",
+    status: "funded",
+    amountBaseUnits: "1250000"
+  });
   mocks.loadPayloreConfig.mockReturnValue({
     PAYLORE_PAYROLL_PROGRAM_ID: "paylore-program"
   });
@@ -104,7 +115,8 @@ describe("workspace payroll recovery detail", () => {
       claimId: allocation.claimId,
       claimAddress: "claim-pda-a",
       allocationCommitment: payroll.run.allocationCommitment,
-      amountCommitment: allocation.amountCommitment
+      amountCommitment: allocation.amountCommitment,
+      escrowTokenAccount: "claim-escrow-a"
     });
     expect(html).toContain("Financial recovery is unavailable");
     expect(html).toContain('href="/workspace/workspace-a/recovery"');
