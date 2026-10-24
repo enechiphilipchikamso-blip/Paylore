@@ -974,361 +974,88 @@ export const payrollAllocations =
     ]
   );
 
-export const payrollClaimEscrows =
-  pgTable(
-    "payroll_claim_escrows",
-    {
-      allocationId: uuid("allocation_id")
-        .primaryKey()
-        .references(() => payrollAllocations.id, { onDelete: "cascade" }),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      payrollRunId: uuid("payroll_run_id")
-        .notNull()
-        .references(() => payrollRuns.id, { onDelete: "cascade" }),
-      claimId: text("claim_id").notNull(),
-      tokenAccountAddress: text("token_account_address").notNull().unique(),
-      status: text("status").notNull().default("preparing"),
-      encryptedPrivateKey: text("encrypted_private_key"),
-      privateKeyNonce: text("private_key_nonce"),
-      privateKeyAuthTag: text("private_key_auth_tag"),
-      encryptedDataKey: text("encrypted_data_key"),
-      dataKeyNonce: text("data_key_nonce"),
-      dataKeyAuthTag: text("data_key_auth_tag"),
-      encryptedBackup: text("encrypted_backup"),
-      backupNonce: text("backup_nonce"),
-      backupAuthTag: text("backup_auth_tag"),
-      accountSetupSignature: text("account_setup_signature"),
-      confidentialSetupSignatures: jsonb("confidential_setup_signatures").$type<string[]>().notNull().default([]),
-      fundingSignature: text("funding_signature"),
-      fundingProofContextAddresses: jsonb("funding_proof_context_addresses").$type<string[]>().notNull().default([]),
-      fundingContextSignatures: jsonb("funding_context_signatures").$type<string[]>().notNull().default([]),
-      fundingSourceAvailableBefore: text("funding_source_available_before"),
-      fundingSourceAvailableAfter: text("funding_source_available_after"),
-      fundingDestinationAvailableBefore: text("funding_destination_available_before"),
-      fundingDestinationAvailableAfter: text("funding_destination_available_after"),
-      fundedAt: timestamp("funded_at", { withTimezone: true }),
-      settlementSignature: text("settlement_signature"),
-      recoverySignature: text("recovery_signature"),
-      recoveryApplySignature: text("recovery_apply_signature"),
-      recoveryProofContextAddresses: jsonb("recovery_proof_context_addresses").$type<string[]>().notNull().default([]),
-      recoveryContextSignatures: jsonb("recovery_context_signatures").$type<string[]>().notNull().default([]),
-      recoverySourceAvailableBefore: text("recovery_source_available_before"),
-      recoverySourceAvailableAfter: text("recovery_source_available_after"),
-      recoveryDestinationAvailableBefore: text("recovery_destination_available_before"),
-      recoveryDestinationAvailableAfter: text("recovery_destination_available_after"),
-      recoveredAt: timestamp("recovered_at", { withTimezone: true }),
-      claimedAt: timestamp("claimed_at", { withTimezone: true }),
-      createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-      updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
-    },
-    (table) => [
-      index("payroll_claim_escrows_workspace_status_idx").on(table.workspaceId, table.status),
-      check(
-        "payroll_claim_escrows_status",
-        sql.raw("status IN ('preparing', 'ready', 'funding', 'funded', 'settlement_pending', 'recovery_pending', 'claimed', 'recovered', 'failed')")
-      ),
-      check(
-        "payroll_claim_escrows_encrypted_key_complete",
-        sql.raw("(encrypted_private_key IS NULL AND private_key_nonce IS NULL AND private_key_auth_tag IS NULL AND encrypted_data_key IS NULL AND data_key_nonce IS NULL AND data_key_auth_tag IS NULL AND encrypted_backup IS NULL AND backup_nonce IS NULL AND backup_auth_tag IS NULL) OR (encrypted_private_key IS NOT NULL AND private_key_nonce IS NOT NULL AND private_key_auth_tag IS NOT NULL AND encrypted_data_key IS NOT NULL AND data_key_nonce IS NOT NULL AND data_key_auth_tag IS NOT NULL AND encrypted_backup IS NOT NULL AND backup_nonce IS NOT NULL AND backup_auth_tag IS NOT NULL)")
-      ),
-      check(
-        "payroll_claim_escrows_funding_balances",
-        sql.raw("(funding_source_available_before IS NULL AND funding_source_available_after IS NULL AND funding_destination_available_before IS NULL AND funding_destination_available_after IS NULL) OR (funding_source_available_before ~ '^(0|[1-9][0-9]*)
-  pgTable(
-    "contributor_confidential_accounts",
-    {
-      contributorId: uuid("contributor_id")
-        .primaryKey()
-        .references(() => contributors.id, { onDelete: "cascade" }),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      ownerWalletAddress: text("owner_wallet_address").notNull(),
-      tokenAccountAddress: text("token_account_address").notNull(),
-      status: text("status").notNull().default("setup_pending"),
-      setupTransactionSignature: text("setup_transaction_signature"),
-      closeTransactionSignature: text("close_transaction_signature"),
-      closedAt: timestamp("closed_at", { withTimezone: true }),
-      createdAt: timestamp("created_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      updatedAt: timestamp("updated_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-    },
-    (table) => [
-      uniqueIndex("confidential_accounts_token_account_uq").on(
-        table.tokenAccountAddress
-      ),
-      index("confidential_accounts_workspace_status_idx").on(
-        table.workspaceId,
-        table.status
-      )
-    ]
-  );
-
-export const contributorOffboarding =
-  pgTable(
-    "contributor_offboarding",
-    {
-      contributorId: uuid("contributor_id")
-        .primaryKey()
-        .references(() => contributors.id, { onDelete: "cascade" }),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      requestedAt: timestamp("requested_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      completedAt: timestamp("completed_at", { withTimezone: true }),
-      manualAccountClose: boolean("manual_account_close"),
-      closeTransactionSignature: text("close_transaction_signature"),
-      automaticCleanupEligibleAt: timestamp(
-        "automatic_cleanup_eligible_at",
-        { withTimezone: true }
-      ),
-      associationRemovedAt: timestamp("association_removed_at", {
-        withTimezone: true
-      }),
-      status: text("status").notNull().default("requested")
-    },
-    (table) => [
-      index("contributor_offboarding_workspace_status_idx").on(
-        table.workspaceId,
-        table.status
-      ),
-      index("contributor_offboarding_cleanup_idx").on(
-        table.automaticCleanupEligibleAt
-      )
-    ]
-  );
-
-export const payrollRecoveries =
-  pgTable(
-    "payroll_recoveries",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      allocationId: uuid("allocation_id")
-        .notNull()
-        .references(() => payrollAllocations.id, { onDelete: "restrict" }),
-      actorUserId: uuid("actor_user_id")
-        .notNull()
-        .references(() => users.id, { onDelete: "restrict" }),
-      reason: text("reason").notNull(),
-      reasonNote: text("reason_note"),
-      status: text("status").notNull().default("prepared"),
-      transactionSignature: text("transaction_signature"),
-      createdAt: timestamp("created_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      confirmedAt: timestamp("confirmed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("payroll_recoveries_allocation_uq").on(table.allocationId),
-      index("payroll_recoveries_workspace_created_idx").on(
-        table.workspaceId,
-        table.createdAt
-      )
-    ]
-  );
-
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
-
-export const workspaceLedgerEntries =
-  pgTable(
-    "workspace_ledger_entries",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      idempotencyKey: text("idempotency_key").notNull(),
-      category: text("category").notNull(),
-      entryType: text("entry_type").notNull(),
-      status: text("status").notNull(),
-      amountBaseUnits: text("amount_base_units"),
-      mint: text("mint"),
-      referenceType: text("reference_type"),
-      referenceId: text("reference_id"),
-      transactionSignature: text("transaction_signature"),
-      metadata: jsonb("metadata").notNull().default({}),
-      createdAt: timestamp("created_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-    },
-    (table) => [
-      uniqueIndex("workspace_ledger_workspace_idempotency_uq").on(
-        table.workspaceId,
-        table.idempotencyKey
-      ),
-      index("workspace_ledger_workspace_created_idx").on(
-        table.workspaceId,
-        table.createdAt
-      ),
-      index("workspace_ledger_workspace_category_idx").on(
-        table.workspaceId,
-        table.category,
-        table.status
-      )
-    ]
-  );
-
-export const workspaceNotifications =
-  pgTable(
-    "workspace_notifications",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      workspaceId: uuid("workspace_id")
-        .notNull()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      recipientKey: text("recipient_key").notNull(),
-      eventKey: text("event_key").notNull(),
-      category: text("category").notNull(),
-      title: text("title").notNull(),
-      body: text("body").notNull(),
-      destination: text("destination"),
-      readAt: timestamp("read_at", { withTimezone: true }),
-      createdAt: timestamp("created_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-    },
-    (table) => [
-      uniqueIndex("workspace_notifications_event_recipient_uq").on(
-        table.workspaceId,
-        table.eventKey,
-        table.recipientKey
-      ),
-      index("workspace_notifications_recipient_read_idx").on(
-        table.recipientKey,
-        table.readAt,
-        table.createdAt
-      )
-    ]
-  );
-
-export const workspaceRetention =
-  pgTable(
-    "workspace_retention",
-    {
-      workspaceId: uuid("workspace_id")
-        .primaryKey()
-        .references(() => workspaces.id, { onDelete: "cascade" }),
-      lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      closedAt: timestamp("closed_at", { withTimezone: true }),
-      deletionRequestedAt: timestamp("deletion_requested_at", {
-        withTimezone: true
-      }),
-      deletionScheduledAt: timestamp("deletion_scheduled_at", {
-        withTimezone: true
-      }),
-      deletionCanceledAt: timestamp("deletion_canceled_at", {
-        withTimezone: true
-      }),
-      deletedAt: timestamp("deleted_at", { withTimezone: true }),
-      lastNoticeDay: integer("last_notice_day").notNull().default(0),
-      updatedAt: timestamp("updated_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-    },
-    (table) => [
-      index("workspace_retention_activity_idx").on(table.lastActivityAt),
-      index("workspace_retention_deletion_idx").on(table.deletionScheduledAt)
-    ]
-  );
-
-// Keep one minimal deletion outcome after the workspace's application rows are purged.
-export const workspaceDeletionAudit =
-  pgTable(
-    "workspace_deletion_audit",
-    {
-      workspaceId: uuid("workspace_id").primaryKey(),
-      requestedAt: timestamp("requested_at", { withTimezone: true }),
-      scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
-      canceledAt: timestamp("canceled_at", { withTimezone: true }),
-      completedAt: timestamp("completed_at", { withTimezone: true }),
-      outcome: text("outcome").notNull().default("not_requested"),
-      blockerCode: text("blocker_code"),
-      updatedAt: timestamp("updated_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-    }
-  );
-
-export const workspaceCreationRateLimits =
-  pgTable(
-    "workspace_creation_rate_limits",
-    {
-      userId:
-        uuid("user_id")
-          .primaryKey()
-          .references(
-            () => users.id,
-            {
-              onDelete:
-                "cascade"
-            }
-          ),
-
-      windowStartedAt:
-        timestamp(
-          "window_started_at",
-          {
-            withTimezone: true
-          }
-        ).notNull(),
-
-      attemptCount:
-        integer(
-          "attempt_count"
-        ).notNull()
-    }
-  );
-`
-      )
-    ]
-  );
+export const payrollClaimEscrows = pgTable(
+  "payroll_claim_escrows",
+  {
+    allocationId: uuid("allocation_id")
+      .primaryKey()
+      .references(() => payrollAllocations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    payrollRunId: uuid("payroll_run_id")
+      .notNull()
+      .references(() => payrollRuns.id, { onDelete: "cascade" }),
+    claimId: text("claim_id").notNull(),
+    tokenAccountAddress: text("token_account_address").notNull().unique(),
+    status: text("status").notNull().default("preparing"),
+    encryptedPrivateKey: text("encrypted_private_key"),
+    privateKeyNonce: text("private_key_nonce"),
+    privateKeyAuthTag: text("private_key_auth_tag"),
+    encryptedDataKey: text("encrypted_data_key"),
+    dataKeyNonce: text("data_key_nonce"),
+    dataKeyAuthTag: text("data_key_auth_tag"),
+    encryptedBackup: text("encrypted_backup"),
+    backupNonce: text("backup_nonce"),
+    backupAuthTag: text("backup_auth_tag"),
+    accountSetupSignature: text("account_setup_signature"),
+    confidentialSetupSignatures: jsonb("confidential_setup_signatures").$type<string[]>().notNull().default([]),
+    fundingSignature: text("funding_signature"),
+    fundingProofContextAddresses: jsonb("funding_proof_context_addresses").$type<string[]>().notNull().default([]),
+    fundingContextSignatures: jsonb("funding_context_signatures").$type<string[]>().notNull().default([]),
+    fundingSourceAvailableBefore: text("funding_source_available_before"),
+    fundingSourceAvailableAfter: text("funding_source_available_after"),
+    fundingDestinationAvailableBefore: text("funding_destination_available_before"),
+    fundingDestinationAvailableAfter: text("funding_destination_available_after"),
+    fundedAt: timestamp("funded_at", { withTimezone: true }),
+    settlementSignature: text("settlement_signature"),
+    recoverySignature: text("recovery_signature"),
+    recoveryApplySignature: text("recovery_apply_signature"),
+    recoveryReason: text("recovery_reason"),
+    recoveryReasonNote: text("recovery_reason_note"),
+    recoveryProofContextAddresses: jsonb("recovery_proof_context_addresses").$type<string[]>().notNull().default([]),
+    recoveryContextSignatures: jsonb("recovery_context_signatures").$type<string[]>().notNull().default([]),
+    recoverySourceAvailableBefore: text("recovery_source_available_before"),
+    recoverySourceAvailableAfter: text("recovery_source_available_after"),
+    recoveryDestinationAvailableBefore: text("recovery_destination_available_before"),
+    recoveryDestinationAvailableAfter: text("recovery_destination_available_after"),
+    recoveredAt: timestamp("recovered_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("payroll_claim_escrows_workspace_status_idx").on(table.workspaceId, table.status),
+    check(
+      "payroll_claim_escrows_status",
+      sql.raw("status IN ('preparing', 'ready', 'funding', 'funded', 'settlement_pending', 'recovery_pending', 'claimed', 'recovered', 'failed')")
+    ),
+    check(
+      "payroll_claim_escrows_encrypted_key_complete",
+      sql.raw("(encrypted_private_key IS NULL AND private_key_nonce IS NULL AND private_key_auth_tag IS NULL AND encrypted_data_key IS NULL AND data_key_nonce IS NULL AND data_key_auth_tag IS NULL AND encrypted_backup IS NULL AND backup_nonce IS NULL AND backup_auth_tag IS NULL) OR (encrypted_private_key IS NOT NULL AND private_key_nonce IS NOT NULL AND private_key_auth_tag IS NOT NULL AND encrypted_data_key IS NOT NULL AND data_key_nonce IS NOT NULL AND data_key_auth_tag IS NOT NULL AND encrypted_backup IS NOT NULL AND backup_nonce IS NOT NULL AND backup_auth_tag IS NOT NULL)")
+    ),
+    check(
+      "payroll_claim_escrows_funding_balances",
+      sql.raw("(funding_source_available_before IS NULL AND funding_source_available_after IS NULL AND funding_destination_available_before IS NULL AND funding_destination_available_after IS NULL) OR (funding_source_available_before ~ '^(0|[1-9][0-9]*)$' AND funding_source_available_after ~ '^(0|[1-9][0-9]*)$' AND funding_destination_available_before ~ '^(0|[1-9][0-9]*)$' AND funding_destination_available_after ~ '^(0|[1-9][0-9]*)$')")
+    ),
+    check(
+      "payroll_claim_escrows_recovery_balances",
+      sql.raw("(recovery_source_available_before IS NULL AND recovery_source_available_after IS NULL AND recovery_destination_available_before IS NULL AND recovery_destination_available_after IS NULL) OR (recovery_source_available_before ~ '^(0|[1-9][0-9]*)$' AND recovery_source_available_after ~ '^(0|[1-9][0-9]*)$' AND recovery_destination_available_before ~ '^(0|[1-9][0-9]*)$' AND recovery_destination_available_after ~ '^(0|[1-9][0-9]*)$')")
+    ),
+    check(
+      "payroll_claim_escrows_recovery_reason",
+      sql.raw("recovery_reason IS NULL OR recovery_reason IN ('incorrect_allocation', 'contributor_left_before_claim', 'payroll_correction', 'other')")
+    ),
+    check(
+      "payroll_claim_escrows_recovery_reason_note",
+      sql.raw("recovery_reason_note IS NULL OR char_length(recovery_reason_note) <= 500")
+    ),
+    check(
+      "payroll_claim_escrows_recovery_other_note_required",
+      sql.raw("recovery_reason IS DISTINCT FROM 'other' OR char_length(btrim(recovery_reason_note)) > 0")
+    )
+  ]
+);
 
 export const contributorConfidentialAccounts =
   pgTable(
