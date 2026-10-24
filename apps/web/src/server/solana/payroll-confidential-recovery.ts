@@ -286,7 +286,13 @@ export async function recoverPayrollAllocation(
     throw new PayrollConfidentialRecoveryError("payroll_allocation_commitment_invalid", 409);
   }
   if (allocation.status === "claimed" || allocation.status === "recovered" || allocation.status === "cancelled") {
-    if (allocation.status === "recovered") return { status: "already_reconciled", signature: allocation.transactionSignature ?? undefined };
+    if (allocation.status === "recovered") {
+      const priorEscrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+      return {
+        status: "already_reconciled",
+        signature: priorEscrow?.recoverySignature ?? undefined
+      };
+    }
     throw new PayrollConfidentialRecoveryError("payroll_allocation_not_recoverable", 409);
   }
 
