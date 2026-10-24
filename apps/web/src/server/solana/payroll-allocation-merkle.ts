@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { address, getAddressEncoder } from "@solana/kit";
 
 const LEAF_DOMAIN = Buffer.from("paylore:allocation-leaf:v1\0", "utf8");
+const NODE_DOMAIN = Buffer.from("paylore:allocation-node:v1\0", "utf8");
 
 export type PayrollAllocationLeafInput = {
   claimId: string;
@@ -85,7 +86,7 @@ export function buildPayrollAllocationMerkleTree(
     for (let index = 0; index < layer.length; index += 2) {
       const left = layer[index]!;
       const right = layer[index + 1] ?? left;
-      next.push(hash(concat(left, right)));
+      next.push(hash(concat(NODE_DOMAIN, left, right)));
     }
     layer = next;
     indices = indices.map((index) => Math.floor(index / 2));
@@ -111,7 +112,9 @@ export function verifyPayrollAllocationMerkleProof(input: {
   try {
     for (const siblingHex of input.siblings) {
       const sibling = decodeHex32(siblingHex, "Merkle sibling");
-      current = hash(index % 2 === 0 ? concat(current, sibling) : concat(sibling, current));
+      current = hash(index % 2 === 0
+        ? concat(NODE_DOMAIN, current, sibling)
+        : concat(NODE_DOMAIN, sibling, current));
       index = Math.floor(index / 2);
     }
     return index === 0 && Buffer.from(current).toString("hex") === input.allocationCommitment.toLowerCase();
