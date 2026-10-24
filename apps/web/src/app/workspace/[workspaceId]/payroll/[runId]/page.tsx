@@ -102,7 +102,9 @@ export default async function PayrollRunDetailPage({
           claims={payrollRun.allocations.map((allocation) => ({
             claimId: allocation.claimId,
             contributorAddress: allocation.contributorWalletAddress,
-            amountCommitment: allocation.amountCommitment ?? ""
+            amountCommitment: allocation.amountCommitment ?? "",
+            amountCommitmentProof: allocation.amountCommitmentProof ?? [],
+            amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1
           }))}
           canCommit={canCommit}
         />
