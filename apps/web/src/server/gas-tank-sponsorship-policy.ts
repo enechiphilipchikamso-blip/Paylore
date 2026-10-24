@@ -17,6 +17,7 @@ export type SponsoredClaimIntent = {
   amountCommitment: string;
   amountCommitmentProof: string[];
   amountCommitmentLeafIndex: number;
+  escrowTokenAccount: string;
   claimAddress?: string;
 };
 
@@ -123,6 +124,11 @@ export function assertSponsoredClaimIntent(input: {
       throw new GasTankSponsorshipPolicyError("allocation_proof_depth_invalid");
     }
     claim.amountCommitmentProof.forEach((sibling) => hex32(sibling));
+    try {
+      getAddressDecoder().decode(claim.escrowTokenAccount);
+    } catch {
+      throw new GasTankSponsorshipPolicyError("sponsored_claim_escrow_address_invalid");
+    }
     if (!claim.contributorAddress ||
         (claim.claimAddress !== undefined && !claim.claimAddress)) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_mapping_invalid");
@@ -200,7 +206,8 @@ export function assertAllowedPayrollInstructionSet(input: {
           hex32(claim.amountCommitment),
           encodeU32(claim.amountCommitmentLeafIndex),
           encodeU32(claim.amountCommitmentProof.length),
-          ...claim.amountCommitmentProof.map((sibling) => hex32(sibling))
+          ...claim.amountCommitmentProof.map((sibling) => hex32(sibling)),
+          getAddressDecoder().decode(claim.escrowTokenAccount)
         )
       ) ||
       !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
