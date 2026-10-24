@@ -39,7 +39,7 @@ The repository is a pnpm workspace with:
 
 ## Local development
 
-Use Node.js 24.21.0 and pnpm 10.34.5.
+Use Node.js 24.22.1 and pnpm 10.34.5.
 
 Install dependencies:
 

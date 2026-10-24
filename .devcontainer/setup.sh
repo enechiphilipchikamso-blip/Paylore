@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected_node="24.21.0"
+expected_node="24.22.1"
+expected_node_binary="/usr/local/share/nvm/versions/node/v${expected_node}/bin/node"
 actual_node="$(node --version | sed 's/^v//')"
+actual_node_command="$(command -v node)"
+actual_node_path="$(node -p 'process.execPath')"
 
 if [[ "$actual_node" != "$expected_node" ]]; then
   echo "Expected Node.js ${expected_node}, found ${actual_node}." >&2
+  exit 1
+fi
+
+if [[ "$actual_node_command" != "$expected_node_binary" || "$actual_node_path" != "$expected_node_binary" ]]; then
+  echo "Expected Node.js executable ${expected_node_binary}; found command ${actual_node_command} and runtime path ${actual_node_path}." >&2
   exit 1
 fi
 
