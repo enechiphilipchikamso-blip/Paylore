@@ -4429,6 +4429,30 @@ export async function releaseFailedPayrollSettlementAttempt(
   return Boolean(rows[0]);
 }
 
+export async function getWorkspacePayrollProgramAuthority(
+  db: Database,
+  input: { workspaceId: string; programId: string }
+): Promise<{ authorityAddress: string } | null> {
+  const rows = await db.select({
+    metadata: workspaceLedgerEntries.metadata
+  }).from(workspaceLedgerEntries).where(and(
+    eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+    eq(workspaceLedgerEntries.entryType, "claim_commitment"),
+    eq(workspaceLedgerEntries.referenceType, "payroll_run"),
+    eq(workspaceLedgerEntries.status, "finalized")
+  )).orderBy(desc(workspaceLedgerEntries.createdAt)).limit(100);
+  for (const row of rows) {
+    const metadata = row.metadata !== null && typeof row.metadata === "object" &&
+      !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : null;
+    if (metadata?.programId === input.programId &&
+        typeof metadata.authorityAddress === "string" &&
+        metadata.authorityAddress.length > 0) {
+      return { authorityAddress: metadata.authorityAddress };
+    }
+  }
+  return null;
+}
+
 export async function getPayrollClaimCreationEvidence(
   db: Database,
   input: { workspaceId: string; runId: string; claimId: string; claimAddress: string }
