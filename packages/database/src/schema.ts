@@ -999,6 +999,8 @@ export const payrollClaimEscrows =
       encryptedBackup: text("encrypted_backup"),
       backupNonce: text("backup_nonce"),
       backupAuthTag: text("backup_auth_tag"),
+      accountSetupSignature: text("account_setup_signature"),
+      confidentialSetupSignatures: jsonb("confidential_setup_signatures").$type<string[]>().notNull().default([]),
       fundingSignature: text("funding_signature"),
       fundingProofContextAddresses: jsonb("funding_proof_context_addresses").$type<string[]>().notNull().default([]),
       fundingContextSignatures: jsonb("funding_context_signatures").$type<string[]>().notNull().default([]),
