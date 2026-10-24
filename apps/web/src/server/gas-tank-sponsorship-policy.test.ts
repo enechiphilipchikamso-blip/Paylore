@@ -23,6 +23,8 @@ const claim = {
   claimId: "01".repeat(32),
   contributorAddress: "contributor-wallet",
   amountCommitment: "ab".repeat(32),
+  amountCommitmentProof: ["cd".repeat(32)],
+  amountCommitmentLeafIndex: 0,
   claimAddress: "claim-pda"
 };
 const encoder = new TextEncoder();
@@ -80,7 +82,10 @@ function instructions() {
           createDiscriminator,
           decodedHex(claim.claimId),
           decodedHex(commitment),
-          decodedHex(claim.amountCommitment)
+          decodedHex(claim.amountCommitment),
+          new Uint8Array([0, 0, 0, 0]),
+          new Uint8Array([1, 0, 0, 0]),
+          decodedHex(claim.amountCommitmentProof[0]!)
         )
       }
     ]
