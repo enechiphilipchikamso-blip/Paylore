@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
   sendCount: 0,
   signatureSteps: {} as Record<string, string>,
   pendingSignatures: new Set<string>(),
+  contextAccounts: new Set<string>(),
+  forceDebitOnFailedTransfer: false,
   failStep: null as string | null,
   balanceMode: "enough",
   reserveAccountExists: true,
@@ -175,6 +177,8 @@ function resetHarness(): void {
     sendCount: 0,
     signatureSteps: {},
     pendingSignatures: new Set<string>(),
+    contextAccounts: new Set<string>(),
+    forceDebitOnFailedTransfer: false,
     failStep: null,
     balanceMode: "enough",
     reserveAccountExists: true,
@@ -220,7 +224,7 @@ vi.mock("@solana/kit", () => ({
         h.signatureSteps[signature] = h.currentStep;
         if (h.currentStep === "apply" && h.failStep !== "apply") h.applyComplete = true;
         if (h.currentStep === "deposit" && h.failStep !== "deposit") h.depositComplete = true;
-        if (h.currentStep === "transfer" && h.failStep !== "transfer") h.settlementSubmitted = true;
+        if (h.currentStep === "transfer" && (h.failStep !== "transfer" || h.forceDebitOnFailedTransfer)) h.settlementSubmitted = true;
         return signature;
       }
     }),
@@ -267,6 +271,7 @@ vi.mock("@solana/kit", () => ({
   },
   fetchEncodedAccount: async (_rpc: unknown, accountAddress: string) => {
     if (accountAddress === h.reserveToken) return { exists: h.reserveAccountExists, owner: h.tokenProgram };
+    if (h.contextAccounts.has(accountAddress)) return { exists: true, owner: h.zkProofProgram };
     return { exists: false, owner: h.tokenProgram };
   },
   isSome: (value: unknown) => value !== null && value !== undefined
@@ -304,7 +309,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
   fetchConfidentialTransferBalance: vi.fn(async () => {
     let availableBalance = 2_000_000n;
     if (h.settlementSubmitted) {
-      availableBalance = h.failStep === "transfer" ? 2_000_000n : 750_000n;
+      availableBalance = h.failStep === "transfer" && !h.forceDebitOnFailedTransfer ? 2_000_000n : 750_000n;
     } else if (h.balanceMode === "low" && !h.depositComplete) {
       availableBalance = 0n;
     }
@@ -556,6 +561,30 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(result).toMatchObject({ status: "retry_ready", signature: "settlement-signature-3" });
     expect(h.releasedFailedCalls).toBe(1);
     expect(h.ledgerCalls).toBe(0);
+  });
+
+  it("does not release a failed transfer for retry when the private debit is already visible", async () => {
+    h.failStep = "transfer";
+    h.forceDebitOnFailedTransfer = true;
+    h.nextSteps = ["configure", "proof_setup", "transfer"];
+
+    const result = await settleContributorPayrollAllocation({} as any, input);
+
+    expect(result).toMatchObject({ status: "pending", signature: "settlement-signature-3" });
+    expect(h.ledgerCalls).toBe(0);
+    expect(h.releasedFailedCalls).toBe(0);
+    expect(h.releaseCalls).toBe(0);
+  });
+
+  it("preserves the verified claim result but reports pending proof cleanup", async () => {
+    h.contextAccounts = new Set([h.context1, h.context2, h.context3]);
+    h.failStep = "other";
+
+    const result = await settleContributorPayrollAllocation({} as any, input);
+
+    expect(result).toMatchObject({ status: "claimed", warning: "proof_context_cleanup_pending" });
+    expect(h.ledgerCalls).toBe(1);
+    expect(h.clearContextsCalls).toBe(0);
   });
 
   it("returns pending for a prior settlement whose finality is not available yet", async () => {
