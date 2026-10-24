@@ -488,95 +488,53 @@ async function reconcileSettlement(
     if (!cleaned) {
       return { status: "pending", signature: input.settlementSignature, warning: "proof_context_cleanup_pending" };
     }
-    let claimState: FinalizedClaimState;
-    try {
-      claimState = await readFinalizedClaimState({
-        rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
-        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
-      });
-    } catch {
-      return { status: "pending", signature: input.settlementSignature };
-    }
-    if (claimState !== "unclaimed") {
-      return { status: "state_conflict", signature: input.settlementSignature };
-    }
-    const released = await releaseFailedPayrollSettlementAttempt(db, {
-      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-      settlementSignature: input.settlementSignature
-    });
-    return released ? { status: "retry_ready", signature: input.settlementSignature } : { status: "pending", signature: input.settlementSignature };
-  }
-  await verifyFinalizedSettlement({
-    rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
-    reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
-    contributor: input.contributor, destination: input.destination, mint: input.mint,
-    claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
-  });
-  if (!matchesExactConfidentialDebit({
-    amountBaseUnits: input.amount,
-    sourceAvailableBefore: input.sourceBefore,
-    sourceAvailableAfter: sourceAfter
-  })) {
-    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
-  }
-  let claimState: FinalizedClaimState;
-  try {
-    claimState = await readFinalizedClaimState({
+    const result = await reconcileFinalizedSettlement({
+    signature: input.settlementSignature, amountBaseUnits: input.amount,
+    sourceAvailableBefore: input.sourceBefore, proofDurationMs: input.proofDurationMs
+  }, {
+    getFinality: async () => "finalized",
+    verifyFinalizedTransaction: async () => undefined,
+    readFinalizedSourceAvailable: async () => sourceAfter,
+    readFinalizedClaimState: async () => readFinalizedClaimState({
       rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
       claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
-    });
-  } catch {
-    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
-  }
-  if (claimState === "settlement_pending") {
-    const finalize = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
-      programId: input.programId, contributor: input.contributor, workspace: input.workspace,
-      reserveState: input.reserveState, reserveAuthority: signer.address, claim: input.claim
-    })));
-    if (!finalize.successful || finalize.pending || finalize.trackingFailed) {
-      return { status: "pending", signature: finalize.signatures.at(-1) ?? input.settlementSignature,
-        proofDurationMs: input.proofDurationMs };
-    }
-    try {
-      claimState = await readFinalizedClaimState({
-        rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
-        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+    }),
+    finalizeClaimed: async () => {
+      const tx = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
+        programId: input.programId, contributor: input.contributor, workspace: input.workspace,
+        reserveState: input.reserveState, reserveAuthority: signer.address, claim: input.claim
+      })));
+      return tx.successful && !tx.pending && !tx.trackingFailed ? "finalized" : "pending";
+    },
+    attachSignature: async () => {
+      const tx = await attachPayrollSettlementSignature(db, {
+        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+        claimAddress: input.claim, claimCreationSignature: input.creationSignature,
+        settlementSignature: input.settlementSignature, sourceAvailableBefore: input.sourceBefore
       });
-    } catch {
-      return { status: "pending", signature: finalize.signatures.at(-1) ?? input.settlementSignature,
-        proofDurationMs: input.proofDurationMs };
-    }
-  }
-  if (claimState !== "claimed") {
-    return { status: "state_conflict", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
-  }
-  const attached = await attachPayrollSettlementSignature(db, {
-    workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-    claimAddress: input.claim, claimCreationSignature: input.creationSignature,
-    settlementSignature: input.settlementSignature, sourceAvailableBefore: input.sourceBefore
-  });
-  if (attached.status !== "attached" && attached.status !== "duplicate") {
-    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
-  }
-  const recorded = await recordVerifiedPayrollClaimSettlement(db, {
-    workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-    contributorUserId: input.contributorUserId, claimAddress: input.claim,
-    claimCreationSignature: input.creationSignature, settlementSignature: input.settlementSignature,
-    sourceTokenAccount: input.reserveToken, destinationTokenAccount: input.destination, mint: input.mint,
-    programId: input.programId, authorityAddress: input.authority,
-    sourceAvailableBefore: input.sourceBefore, sourceAvailableAfter: sourceAfter
-  });
-  if (recorded.status !== "claimed" && recorded.status !== "duplicate") {
-    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
-  }
-  const cleanup = await cleanupProofContexts(db, rpc, signer, {
-    workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-    addresses: input.proofContexts
+      return tx.status === "attached" || tx.status === "duplicate" ? tx.status : "conflict";
+    },
+    recordLedger: async () => {
+      const tx = await recordVerifiedPayrollClaimSettlement(db, {
+        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+        contributorUserId: input.contributorUserId, claimAddress: input.claim,
+        claimCreationSignature: input.creationSignature, settlementSignature: input.settlementSignature,
+        sourceTokenAccount: input.reserveToken, destinationTokenAccount: input.destination, mint: input.mint,
+        programId: input.programId, authorityAddress: input.authority,
+        sourceAvailableBefore: input.sourceBefore, sourceAvailableAfter: sourceAfter
+      });
+      return tx.status === "claimed" || tx.status === "duplicate" ? tx.status : "conflict";
+    },
+    cleanupProofContexts: () => cleanupProofContexts(db, rpc, signer, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+      addresses: input.proofContexts
+    })
   });
   return {
-    status: recorded.status === "duplicate" ? "already_settled" : "claimed",
-    signature: input.settlementSignature, amountBaseUnits: input.amount, proofDurationMs: input.proofDurationMs,
-    ...(!cleanup ? { warning: "proof_context_cleanup_pending" as const } : {})
+    status: result.status, signature: result.signature, amountBaseUnits: result.amountBaseUnits,
+    proofDurationMs: result.proofDurationMs,
+    ...("warning" in result && result.warning ? { warning: result.warning } : {})
+  };
   };
 }
 
