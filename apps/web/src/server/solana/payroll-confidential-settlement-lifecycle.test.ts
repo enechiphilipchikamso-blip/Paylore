@@ -9,7 +9,19 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@paylore/database", () => ({
-  clearPayrollSettlementProofContexts: mocks.clearPayrollSettlementProofContexts
+  appendPayrollSettlementContextSignature: vi.fn(),
+  attachPayrollSettlementSignature: vi.fn(),
+  beginPayrollSettlementAttempt: vi.fn(),
+  clearPayrollSettlementProofContexts: mocks.clearPayrollSettlementProofContexts,
+  getContributorConfidentialAccount: vi.fn(),
+  getPayrollClaimCreationEvidence: vi.fn(),
+  getWorkspacePayrollRun: vi.fn(),
+  getWorkspaceReserve: vi.fn(),
+  recordVerifiedPayrollClaimSettlement: vi.fn(),
+  releaseFailedPayrollSettlementAttempt: vi.fn(),
+  releaseUnsubmittedPayrollSettlementAttempt: vi.fn(),
+  setPayrollSettlementProofContexts: vi.fn(),
+  updatePendingPayrollSettlementBalanceSnapshot: vi.fn()
 }));
 vi.mock("@solana/kit", async (importOriginal) => ({
   ...(await importOriginal()),
