@@ -52,6 +52,7 @@ export type WorkspaceConfidentialReserveResult = {
   reserveAddress?: string;
   tokenAccount?: string | null;
   confidentialTransferReady?: boolean;
+  publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
   programReserveConfigured?: boolean;
@@ -415,7 +416,7 @@ export async function getWorkspaceConfidentialReserveSnapshot(
     if (workspaceStatus === "workspace_program_not_initialized") {
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
-        tokenAccount, confidentialTransferReady, availableBalanceBaseUnits, pendingBalanceBaseUnits,
+        tokenAccount, confidentialTransferReady, publicBalanceBaseUnits: await readPublicReserveBalance(input.rpc, tokenAccount), availableBalanceBaseUnits, pendingBalanceBaseUnits,
         programReserveConfigured: false
       };
     }
@@ -433,6 +434,13 @@ export async function getWorkspaceConfidentialReserveSnapshot(
   return context as WorkspaceConfidentialReserveResult;
 }
 
+async function readPublicReserveBalance(
+  rpc: ReturnType<typeof createSolanaRpc>,
+  tokenAddress: string
+): Promise<string> {
+  return (await fetchToken(rpc, address(tokenAddress))).data.amount.toString();
+}
+
 async function inspectTokenAccount(input: {
   rpc: ReturnType<typeof createSolanaRpc>;
   reserveAddress: string;
@@ -444,6 +452,7 @@ async function inspectTokenAccount(input: {
   status: "account_missing" | "account_ready";
   tokenAccount: string;
   confidentialTransferReady: boolean;
+  publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
 }> {
@@ -469,6 +478,7 @@ async function inspectTokenAccount(input: {
     status: "account_ready",
     tokenAccount: input.reserveTokenAddress,
     confidentialTransferReady: true,
+    publicBalanceBaseUnits: token.amount.toString(),
     ...(await deriveConfidentialBalanceSnapshot(input.rpc, input.reserveTokenAddress, input.secret, input.aesKey))
   };
 }
@@ -584,6 +594,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
         tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
+        publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
         availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
         pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: false
       };
@@ -596,6 +607,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       return {
         status: "program_configured", reserveAddress: input.reserveAddress,
         tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
+        publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
         availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
         pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: true
       };
@@ -639,6 +651,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
     return {
       status: "program_configured", reserveAddress: input.reserveAddress,
       tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
+      publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
       availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
       pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: true
     };
