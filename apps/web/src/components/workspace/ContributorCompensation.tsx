@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
+import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 
 import {
   applyConfidentialPendingBalance,
@@ -254,10 +255,7 @@ export function ContributorCompensation({
       }
       router.refresh();
       try { await refreshConfidentialBalance(); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
-      if (stateConflict) setMessage({ state: settled ? "partial" : "error", text: "The finalized Claim PDA is no longer UNCLAIMED. No second transfer was attempted; this allocation needs administrator reconciliation before retry." });
-      else if (failed) setMessage({ state: settled ? "partial" : "error", text: `${settled} allocation(s) settled; ${failed} need attention. Unverified transfers are not shown as complete.` });
-      else if (pending || cleanupPending) setMessage({ state: "partial", text: `${settled} allocation(s) settled; ${pending} await finality or retry, and ${cleanupPending} need proof-context cleanup.` });
-      else setMessage({ state: "success", text: `${settled} confidential payroll allocation(s) transferred and reconciled. Apply pending credits before withdrawing; public cash-out is a separate action.` });
+      setMessage(getClaimAndCashOutOutcome({ settled, pending, failed, cleanupPending, stateConflict }));
     } finally { setBusy(false); }
   }
 
