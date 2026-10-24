@@ -3726,6 +3726,7 @@ export async function recordPayrollClaimSubmission(
     claims: Array<{
       claimId: string;
       claimAddress: string;
+      escrowTokenAccount: string;
     }>;
     now?: Date;
   }
@@ -3782,7 +3783,29 @@ export async function recordPayrollClaimSubmission(
       return { status: "invalid_claims" as const };
     }
 
+    const escrowRows = await tx
+      .select()
+      .from(payrollClaimEscrows)
+      .where(and(
+        eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+        eq(payrollClaimEscrows.payrollRunId, input.runId),
+        inArray(payrollClaimEscrows.allocationId, rows.map((allocation) => allocation.id))
+      ))
+      .for("update");
+    if (escrowRows.length !== input.claims.length) {
+      return { status: "escrow_not_ready" as const };
+    }
     const byClaimId = new Map(input.claims.map((claim) => [claim.claimId, claim]));
+    for (const allocation of rows) {
+      const submitted = byClaimId.get(allocation.claimId);
+      const escrow = escrowRows.find((item) => item.allocationId === allocation.id);
+      if (!submitted || !escrow ||
+          escrow.claimId !== submitted.claimId ||
+          escrow.tokenAccountAddress !== submitted.escrowTokenAccount ||
+          !["ready", "funding", "funded"].includes(escrow.status)) {
+        return { status: "escrow_identity_conflict" as const };
+      }
+    }
     const sameFinalizedReplay = rows.every((allocation) => {
       const submitted = byClaimId.get(allocation.claimId);
       return submitted !== undefined &&
