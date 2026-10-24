@@ -488,12 +488,48 @@ async function reconcileSettlement(
     if (!cleaned) {
       return { status: "pending", signature: input.settlementSignature, warning: "proof_context_cleanup_pending" };
     }
-    const result = await reconcileFinalizedSettlement({
+    let claimState: FinalizedClaimState;
+    try {
+      claimState = await readFinalizedClaimState({
+        rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
+        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+      });
+    } catch {
+      return { status: "pending", signature: input.settlementSignature };
+    }
+    if (claimState !== "unclaimed") {
+      return { status: "state_conflict", signature: input.settlementSignature };
+    }
+    const released = await releaseFailedPayrollSettlementAttempt(db, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+      settlementSignature: input.settlementSignature
+    });
+    return released ? { status: "retry_ready", signature: input.settlementSignature } : { status: "pending", signature: input.settlementSignature };
+  }
+  await verifyFinalizedSettlement({
+    rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
+    reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
+    contributor: input.contributor, destination: input.destination, mint: input.mint,
+    claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+  });
+  if (!matchesExactConfidentialDebit({
+    amountBaseUnits: input.amount,
+    sourceAvailableBefore: input.sourceBefore,
+    sourceAvailableAfter: sourceAfter
+  })) {
+    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
+  }
+  const result = await reconcileFinalizedSettlement({
     signature: input.settlementSignature, amountBaseUnits: input.amount,
     sourceAvailableBefore: input.sourceBefore, proofDurationMs: input.proofDurationMs
   }, {
-    getFinality: async () => "finalized",
-    verifyFinalizedTransaction: async () => undefined,
+    getFinality: async () => finality,
+    verifyFinalizedTransaction: async () => verifyFinalizedSettlement({
+      rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
+      reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
+      contributor: input.contributor, destination: input.destination, mint: input.mint,
+      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+    }),
     readFinalizedSourceAvailable: async () => sourceAfter,
     readFinalizedClaimState: async () => readFinalizedClaimState({
       rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
