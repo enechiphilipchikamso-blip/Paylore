@@ -24,6 +24,7 @@ export type PayrollClaimInput = {
   amountCommitment: string;
   amountCommitmentProof: string[];
   amountCommitmentLeafIndex: number;
+  escrowTokenAccount: string;
 };
 
 export type PayrollClaimTransaction = {
@@ -218,7 +219,8 @@ export async function buildPayrollClaimTransactions(input: {
             amountCommitment,
             leafIndex,
             encodeU32(proofSiblings.length),
-            ...proofSiblings
+            ...proofSiblings,
+            getAddressEncoder().encode(address(claim.escrowTokenAccount))
           )
         } as const
       };
