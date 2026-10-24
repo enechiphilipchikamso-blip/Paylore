@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS payroll_claim_escrows (
   encrypted_backup text,
   backup_nonce text,
   backup_auth_tag text,
+  account_setup_signature text,
+  confidential_setup_signatures jsonb NOT NULL DEFAULT '[]'::jsonb,
   funding_signature text,
   funding_proof_context_addresses jsonb NOT NULL DEFAULT '[]'::jsonb,
   funding_context_signatures jsonb NOT NULL DEFAULT '[]'::jsonb,
