@@ -4223,7 +4223,7 @@ export async function beginPayrollSettlementAttempt(
       id: payrollAllocations.id
     }).from(payrollAllocations).where(and(
       eq(payrollAllocations.workspaceId, input.workspaceId),
-      eq(payrollAllocations.status, "settlement_pending")
+      inArray(payrollAllocations.status, ["settlement_pending", "recovery_pending"])
     )).for("update").limit(1);
     if (pendingRows.length > 0) {
       return { status: "workspace_busy" as const };
@@ -6156,6 +6156,23 @@ export async function beginPayrollRecoveryAttempt(
   input: { workspaceId: string; runId: string; allocationId: string }
 ) {
   return db.transaction(async (tx) => {
+    const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
+      .from(workspaceReserves)
+      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+
+    const pendingRows = await tx.select({ id: payrollAllocations.id })
+      .from(payrollAllocations)
+      .where(and(
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        inArray(payrollAllocations.status, ["settlement_pending", "recovery_pending"])
+      ))
+      .for("update")
+      .limit(1);
+    if (pendingRows.length > 0) return { status: "workspace_busy" as const };
+
     const allocationRows = await tx.select({
       status: payrollAllocations.status
     }).from(payrollAllocations).where(and(
@@ -6248,6 +6265,13 @@ export async function releasePayrollRecoveryAttempt(
     if (!allocation[0]) return false;
     const escrow = await tx.update(payrollClaimEscrows).set({
       status: "funded",
+      recoveryProofContextAddresses: [],
+      recoveryContextSignatures: [],
+      recoverySourceAvailableBefore: null,
+      recoverySourceAvailableAfter: null,
+      recoveryDestinationAvailableBefore: null,
+      recoveryDestinationAvailableAfter: null,
+      recoverySignature: null,
       updatedAt: new Date()
     }).where(and(
       eq(payrollClaimEscrows.workspaceId, input.workspaceId),
@@ -6259,6 +6283,136 @@ export async function releasePayrollRecoveryAttempt(
   });
 }
 
+
+
+export async function setPayrollClaimEscrowRecoveryBalanceSnapshot(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    sourceAvailableBefore: string;
+    reserveAvailableBefore: string;
+  }
+) {
+  if (![input.sourceAvailableBefore, input.reserveAvailableBefore].every((value) =>
+    /^(0|[1-9][0-9]*)$/.test(value)
+  )) return { status: "invalid_balance" as const };
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = rows[0];
+    if (!escrow) return { status: "not_found" as const };
+    if (escrow.status !== "recovery_pending" || escrow.recoverySignature !== null) {
+      return { status: "conflict" as const };
+    }
+    if (escrow.recoverySourceAvailableBefore !== null ||
+        escrow.recoveryDestinationAvailableBefore !== null) {
+      return escrow.recoverySourceAvailableBefore === input.sourceAvailableBefore &&
+        escrow.recoveryDestinationAvailableBefore === input.reserveAvailableBefore
+        ? { status: "duplicate" as const }
+        : { status: "conflict" as const };
+    }
+    const updated = await tx.update(payrollClaimEscrows).set({
+      recoverySourceAvailableBefore: input.sourceAvailableBefore,
+      recoveryDestinationAvailableBefore: input.reserveAvailableBefore,
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "recovery_pending"),
+      isNull(payrollClaimEscrows.recoverySignature),
+      isNull(payrollClaimEscrows.recoverySourceAvailableBefore),
+      isNull(payrollClaimEscrows.recoveryDestinationAvailableBefore)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return updated[0] ? { status: "prepared" as const } : { status: "conflict" as const };
+  });
+}
+
+/** A failed transfer may be released only when both owner-decrypted balances prove no value moved. */
+export async function resetFailedPayrollRecoveryAttempt(
+  db: Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    signature: string;
+    sourceAvailableAfter: string;
+    reserveAvailableAfter: string;
+  }
+) {
+  const balances = [input.sourceAvailableAfter, input.reserveAvailableAfter];
+  if (!balances.every((value) => /^(0|[1-9][0-9]*)$/.test(value))) return false;
+  return db.transaction(async (tx) => {
+    const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
+      .from(workspaceReserves)
+      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!reserveRows[0]) return false;
+    const escrowRows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.payrollRunId, input.runId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = escrowRows[0];
+    if (!escrow || escrow.status !== "recovery_pending" ||
+        escrow.recoverySignature !== input.signature ||
+        escrow.recoverySourceAvailableBefore !== input.sourceAvailableAfter ||
+        escrow.recoveryDestinationAvailableBefore !== input.reserveAvailableAfter) return false;
+    const allocationRows = await tx.select({ status: payrollAllocations.status })
+      .from(payrollAllocations).where(and(
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        eq(payrollAllocations.payrollRunId, input.runId),
+        eq(payrollAllocations.id, input.allocationId)
+      )).for("update").limit(1);
+    if (allocationRows[0]?.status !== "recovery_pending") return false;
+    const updatedAllocation = await tx.update(payrollAllocations).set({
+      status: "unclaimed",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.status, "recovery_pending")
+    )).returning({ id: payrollAllocations.id });
+    if (!updatedAllocation[0]) return false;
+    const updatedEscrow = await tx.update(payrollClaimEscrows).set({
+      status: "funded",
+      recoverySignature: null,
+      recoveryProofContextAddresses: [],
+      recoveryContextSignatures: [],
+      recoverySourceAvailableBefore: null,
+      recoverySourceAvailableAfter: null,
+      recoveryDestinationAvailableBefore: null,
+      recoveryDestinationAvailableAfter: null,
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "recovery_pending"),
+      eq(payrollClaimEscrows.recoverySignature, input.signature)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return Boolean(updatedEscrow[0]);
+  });
+}
+
+export async function clearPayrollClaimEscrowRecoveryApplySignature(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  const updated = await db.update(payrollClaimEscrows).set({
+    recoveryApplySignature: null,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "recovery_pending"),
+    eq(payrollClaimEscrows.recoveryApplySignature, input.signature)
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  return Boolean(updated[0]);
+}
 
 export async function setPayrollClaimEscrowProofContexts(
   db: Database,
