@@ -6,7 +6,7 @@ import {
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress, isSome,
-  nonDivisibleSequentialInstructionPlan, partiallySignTransactionMessageWithSigners,
+  partiallySignTransactionMessageWithSigners,
   setTransactionMessageFeePayerSigner, setTransactionMessageLifetimeUsingBlockhash,
   singleInstructionPlan, type Instruction, type InstructionPlan, type Signature
 } from "@solana/kit";
