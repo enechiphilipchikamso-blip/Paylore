@@ -925,6 +925,7 @@ export const payrollAllocations =
         .notNull()
         .references(() => contributors.id, { onDelete: "restrict" }),
       amountBaseUnits: text("amount_base_units").notNull(),
+      amountCommitment: text("amount_commitment"),
       claimId: text("claim_id").notNull(),
       claimAddress: text("claim_address"),
       status: text("status").notNull().default("unclaimed"),
