@@ -44,3 +44,8 @@ BEGIN
       CHECK (recovery_reason IS DISTINCT FROM 'other' OR char_length(btrim(recovery_reason_note)) > 0);
   END IF;
 END $$;
+
+
+ALTER TABLE workspace_reserves
+  ADD COLUMN IF NOT EXISTS confidential_account_setup_signature text,
+  ADD COLUMN IF NOT EXISTS program_reserve_setup_signature text;
