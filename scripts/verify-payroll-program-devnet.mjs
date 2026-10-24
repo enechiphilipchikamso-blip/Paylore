@@ -84,7 +84,7 @@ export function parseProgramAccount(programAccount, programId) {
 }
 
 export function parseProgramData(programDataAccount, artifactBytes, expectedUpgradeAuthority) {
-  if (programDataAccount?.owner !== BPF_UPGRADEABLE_LOADER_ID || programDataAccount.executable === true) {
+  if (programDataAccount?.owner !== BPF_UPGRADEABLE_LOADER_ID || programDataAccount.executable !== false) {
     fail("The Paylore ProgramData account is absent or owned by another loader.");
   }
   const data = accountBytes(programDataAccount, "ProgramData");
@@ -163,6 +163,7 @@ async function rpcRequest(rpcUrl, method, params, { fetchImpl = fetch, headers =
 
 function rpcOptions(env) {
   const url = new URL(env.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  if (url.protocol !== "https:") fail("Devnet program verification requires an HTTPS RPC endpoint.");
   const provider = String(env.PAYLORE_RPC_PRIMARY_PROVIDER || "direct").toLowerCase();
   const headers = {};
   if (provider === "helius" && env.PAYLORE_RPC_PRIMARY_API_KEY) {
