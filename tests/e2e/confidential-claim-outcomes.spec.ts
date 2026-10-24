@@ -27,6 +27,17 @@ async function requireSafeActionPreconditions(page: Page): Promise<void> {
   }
 }
 
+async function clickAndWaitForClaimResponse(page: Page): Promise<void> {
+  const response = page.waitForResponse((candidate) =>
+    claimRoute.test(new URL(candidate.url()).pathname) &&
+    candidate.request().method() === "POST",
+  { timeout: 10_000 }).catch(() => null);
+  await page.getByRole("button", { name: "Claim & Cash Out" }).click();
+  if (!await response) {
+    test.skip(true, "The test workspace has no allocation with a committed Claim PDA and creation signature.");
+  }
+}
+
 test.describe("confidential claim rendered outcomes", () => {
   test("renders settlement success only from the handled claim response", async ({ browser }) => {
     test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
@@ -34,13 +45,11 @@ test.describe("confidential claim rendered outcomes", () => {
     const { context, page } = await openAuthorizedCompensationPage(browser);
     try {
       await requireSafeActionPreconditions(page);
-      let intercepted = 0;
       await page.route(claimRoute, async (route) => {
         if (route.request().method() !== "POST") {
           await route.continue();
           return;
         }
-        intercepted++;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -53,8 +62,7 @@ test.describe("confidential claim rendered outcomes", () => {
         });
       });
 
-      await page.getByRole("button", { name: "Claim & Cash Out" }).click();
-      if (intercepted === 0) test.skip(true, "The test workspace has no allocation with a committed Claim PDA and creation signature.");
+      await clickAndWaitForClaimResponse(page);
       await expect(page.getByRole("status").filter({
         hasText: /confidential payroll allocation\(s\) transferred and reconciled/
       })).toBeVisible();
