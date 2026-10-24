@@ -96,7 +96,7 @@ type PreparedSponsorshipData = {
   authorityAddress: string;
   programId: string;
   allocationCommitment: string;
-  claims: Array<{ claimId: string; claimAddress: string }>;
+  claims: Array<{ claimId: string; claimAddress: string; amountCommitment: string }>;
   blockhash: string;
   transactionBase64: string;
 };
@@ -115,7 +115,10 @@ function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData |
     !data.claims.every((claim) => {
       if (!claim || typeof claim !== "object") return false;
       const record = claim as Record<string, unknown>;
-      return typeof record.claimId === "string" && typeof record.claimAddress === "string";
+      return typeof record.claimId === "string" &&
+        typeof record.claimAddress === "string" &&
+        typeof record.amountCommitment === "string" &&
+        /^[0-9a-f]{64}$/i.test(record.amountCommitment);
     }) ||
     typeof data.blockhash !== "string" ||
     typeof data.transactionBase64 !== "string"
@@ -288,7 +291,10 @@ export async function POST(request: Request, { params }: RouteContext) {
         data.programId !== programId ||
         data.allocationCommitment !== run.run.allocationCommitment ||
         data.claims.length !== claimIds.length ||
-        data.claims.some((claim, index) => claim.claimId.toLowerCase() !== claimIds[index])
+        data.claims.some((claim, index) =>
+          claim.claimId.toLowerCase() !== claimIds[index] ||
+          claim.amountCommitment.toLowerCase() !== claims[index]?.amountCommitment.toLowerCase()
+        )
       ) {
         return null;
       }
