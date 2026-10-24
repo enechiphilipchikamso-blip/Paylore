@@ -3712,6 +3712,8 @@ export async function recordPayrollClaimSubmission(
     workspaceId: string;
     runId: string;
     signature: string;
+    programId: string;
+    authorityAddress: string;
     claims: Array<{
       claimId: string;
       claimAddress: string;
@@ -3746,7 +3748,8 @@ export async function recordPayrollClaimSubmission(
     if (
       run.status !== "commit_pending" &&
       run.status !== "submitting" &&
-      run.status !== "committed"
+      run.status !== "committed" &&
+      run.status !== "complete"
     ) {
       return { status: "invalid_state" as const };
     }
@@ -3771,6 +3774,76 @@ export async function recordPayrollClaimSubmission(
     }
 
     const byClaimId = new Map(input.claims.map((claim) => [claim.claimId, claim]));
+    const sameFinalizedReplay = rows.every((allocation) => {
+      const submitted = byClaimId.get(allocation.claimId);
+      return submitted !== undefined &&
+        allocation.claimAddress === submitted.claimAddress &&
+        allocation.transactionSignature === input.signature &&
+        ["unclaimed", "claimed", "recovered"].includes(allocation.status);
+    });
+    if (sameFinalizedReplay) {
+      return {
+        status: "duplicate" as const,
+        submittedCount: rows.length,
+        totalCount: rows.length
+      };
+    }
+
+    const terminalAllocationsMatch = run.status === "complete" &&
+      rows.every((allocation) => {
+        const submitted = byClaimId.get(allocation.claimId);
+        return submitted !== undefined &&
+          allocation.claimAddress === submitted.claimAddress &&
+          (allocation.status === "claimed" || allocation.status === "recovered");
+      });
+    if (terminalAllocationsMatch) {
+      const priorLedgerRows = await tx
+        .select({ metadata: workspaceLedgerEntries.metadata })
+        .from(workspaceLedgerEntries)
+        .where(and(
+          eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+          eq(workspaceLedgerEntries.idempotencyKey, `payroll-claim-commit:${input.runId}:${input.signature}`)
+        ))
+        .limit(1);
+      const priorMetadata = priorLedgerRows[0]?.metadata;
+      const metadata = priorMetadata !== null &&
+        typeof priorMetadata === "object" &&
+        !Array.isArray(priorMetadata)
+        ? priorMetadata as Record<string, unknown>
+        : null;
+      const recordedClaims = metadata && Array.isArray(metadata.claims)
+        ? metadata.claims.filter((claim): claim is { claimId: string; claimAddress: string } =>
+            claim !== null &&
+            typeof claim === "object" &&
+            !Array.isArray(claim) &&
+            typeof (claim as Record<string, unknown>).claimId === "string" &&
+            typeof (claim as Record<string, unknown>).claimAddress === "string"
+          )
+        : [];
+      const recordedClaimsMatch = recordedClaims.length === input.claims.length &&
+        input.claims.every((submitted) => recordedClaims.some((recorded) =>
+          recorded.claimId === submitted.claimId &&
+          recorded.claimAddress === submitted.claimAddress
+        ));
+      if (
+        metadata &&
+        metadata.programId === input.programId &&
+        metadata.authorityAddress === input.authorityAddress &&
+        metadata.allocationCommitment === run.allocationCommitment &&
+        recordedClaimsMatch
+      ) {
+        return {
+          status: "duplicate" as const,
+          submittedCount: rows.length,
+          totalCount: rows.length
+        };
+      }
+      return { status: "claim_conflict" as const };
+    }
+    if (run.status === "complete") {
+      return { status: "claim_conflict" as const };
+    }
+
     for (const allocation of rows) {
       const submitted = byClaimId.get(allocation.claimId);
       if (!submitted) {
@@ -3779,6 +3852,15 @@ export async function recordPayrollClaimSubmission(
       if (
         allocation.claimAddress !== null &&
         allocation.claimAddress !== submitted.claimAddress
+      ) {
+        return { status: "claim_conflict" as const };
+      }
+      if (
+        allocation.transactionSignature !== null &&
+        (
+          allocation.transactionSignature !== input.signature ||
+          allocation.claimAddress === null
+        )
       ) {
         return { status: "claim_conflict" as const };
       }
@@ -3866,7 +3948,14 @@ export async function recordPayrollClaimSubmission(
         transactionSignature: input.signature,
         metadata: {
           claimIds,
-          allocationCommitment: run.allocationCommitment
+          claims: input.claims.map((claim) => ({
+            claimId: claim.claimId,
+            claimAddress: claim.claimAddress
+          })),
+          allocationCommitment: run.allocationCommitment,
+          programId: input.programId,
+          authorityAddress: input.authorityAddress,
+          evidenceSource: "finalized_chain_verification"
         },
         createdAt: now
       })

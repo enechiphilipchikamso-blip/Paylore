@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   getWorkspacePayrollRun: vi.fn(),
   verifyPayrollClaimTransaction: vi.fn(),
   updateGasTankOperationAttempt: vi.fn(),
-  recordPayrollClaimSubmission: vi.fn()
+  recordPayrollClaimSubmission: vi.fn(),
+  loadPayloreConfig: vi.fn()
 }));
 
 vi.mock("@paylore/database", () => ({
@@ -24,6 +25,9 @@ vi.mock("../../../../../../../../server/session", () => ({
 }));
 vi.mock("../../../../../../../../server/db", () => ({
   getDatabase: mocks.getDatabase
+}));
+vi.mock("../../../../../../../../server/config", () => ({
+  loadPayloreConfig: mocks.loadPayloreConfig
 }));
 vi.mock("../../../../../../../../server/security", () => ({
   assertSameOrigin: mocks.assertSameOrigin,
@@ -56,6 +60,9 @@ describe("verified payroll claim commit", () => {
     vi.clearAllMocks();
     mocks.assertSameOrigin.mockImplementation(() => undefined);
     mocks.getDatabase.mockReturnValue({});
+    mocks.loadPayloreConfig.mockReturnValue({
+      PAYLORE_PAYROLL_PROGRAM_ID: "payroll-program"
+    });
     mocks.getSessionState.mockResolvedValue({
       status: "authenticated",
       session: { userId: "manager-user", walletAddress: "manager-wallet" }
@@ -108,6 +115,8 @@ describe("verified payroll claim commit", () => {
       workspaceId: "workspace-a",
       runId: "run-a",
       signature,
+      programId: "payroll-program",
+      authorityAddress: "manager-wallet",
       claims: [{ claimId, claimAddress }]
     });
   });
@@ -120,6 +129,21 @@ describe("verified payroll claim commit", () => {
     expect(response.status).toBe(200);
     expect(mocks.updateGasTankOperationAttempt).not.toHaveBeenCalled();
     expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
+  });
+
+  it("returns an idempotent success for a verified same-signature replay", async () => {
+    mocks.recordPayrollClaimSubmission.mockResolvedValue({
+      status: "duplicate", submittedCount: 1, totalCount: 1
+    });
+    const response = await POST(request({
+      signature,
+      claims: [{ claimId, claimAddress }]
+    }), context);
+    expect(response.status).toBe(200);
+    expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledWith({}, expect.objectContaining({
+      programId: "payroll-program",
+      authorityAddress: "manager-wallet"
+    }));
   });
 
   it("rejects a claim that is not allocated to the requested payroll run", async () => {

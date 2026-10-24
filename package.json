@@ -14,13 +14,14 @@
     "test": "pnpm --filter @paylore/web test",
     "test:e2e": "playwright test",
     "build": "pnpm --filter @paylore/web build",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:client-secrets && pnpm build && pnpm audit:client-secrets && pnpm test:e2e",
+    "check": "pnpm audit:node-runtime && pnpm lint && pnpm typecheck && pnpm test && pnpm test:client-secrets && pnpm build && pnpm audit:client-secrets && pnpm test:e2e",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "keys:rotate": "node scripts/rotate-envelope-keys.mjs",
     "anchor:build": "anchor build",
     "audit:client-secrets": "node scripts/audit-client-secret-exposure.mjs apps/web/.next/static",
+    "audit:node-runtime": "node scripts/audit-node-runtime-pins.mjs",
     "test:client-secrets": "node --test scripts/audit-client-secret-exposure.test.mjs"
   },
   "devDependencies": {

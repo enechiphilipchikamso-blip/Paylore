@@ -430,10 +430,16 @@ async function reconcileEvent(
       workspaceId: first.workspaceId,
       runId: first.runId,
       signature: event.transactionSignature,
+      programId: payrollProgramId,
+      authorityAddress: claimInstructions[0].authorityAddress,
       claims: submittedClaims,
       now
     });
-    if (result.status !== "committed" && result.status !== "submitting") {
+    if (
+      result.status !== "committed" &&
+      result.status !== "submitting" &&
+      result.status !== "duplicate"
+    ) {
       await retry("payroll_claim_state_conflict");
       return deadLetter ? "dead_letter" : "retry_pending";
     }

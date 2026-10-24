@@ -7,6 +7,7 @@ import {
 } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../server/db";
+import { loadPayloreConfig } from "../../../../../../../../server/config";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../server/security";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 
@@ -119,6 +120,13 @@ export async function POST(request: Request, { params }: RouteContext) {
       );
     }
 
+    const programId = loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID;
+    if (!programId) {
+      return NextResponse.json(
+        { error: "payroll_program_not_configured" },
+        { status: 503 }
+      );
+    }
     try {
       await verifyPayrollClaimTransaction({
         signature: body.signature,
@@ -162,6 +170,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       workspaceId,
       runId,
       signature: body.signature,
+      programId,
+      authorityAddress: session.session.walletAddress,
       claims: submittedClaims
     });
     if (result.status === "not_found") {
@@ -170,7 +180,11 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 404 }
       );
     }
-    if (result.status !== "committed" && result.status !== "submitting") {
+    if (
+      result.status !== "committed" &&
+      result.status !== "submitting" &&
+      result.status !== "duplicate"
+    ) {
       return NextResponse.json(
         { error: "payroll_claim_state_conflict" },
         { status: 409 }
