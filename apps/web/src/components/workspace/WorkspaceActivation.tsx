@@ -74,6 +74,7 @@ export function WorkspaceActivation({
                 <SubscriptionPaymentAction
                   actionLabel="Get Started"
                   configured={paymentConfigured}
+                  prepareOnLoad={true}
                   refreshOnSuccess={false}
                   onSuccess={() => {
                     setPaid(true);
