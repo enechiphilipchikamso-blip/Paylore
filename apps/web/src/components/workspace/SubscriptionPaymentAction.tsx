@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createSubscriptionPaymentTransaction,
   subscriptionPaymentSignature
 } from "./subscription-payment-transaction";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
-import { beginSubscriptionWalletApproval } from "./subscription-payment-submission";
-import { isConfirmedWalletCancellation } from "./subscription-payment-submission";
+import {
+  beginSubscriptionWalletApproval,
+  isConfirmedWalletCancellation
+} from "./subscription-payment-submission";
 
 type PreparedActivationPayment = {
   attemptId: string;
@@ -33,6 +35,7 @@ export function SubscriptionPaymentAction({
   walletAddress,
   configured,
   actionLabel,
+  prepareOnLoad = false,
   refreshOnSuccess = true,
   onSuccess
 }: {
@@ -40,6 +43,7 @@ export function SubscriptionPaymentAction({
   walletAddress: string;
   configured: boolean;
   actionLabel: string;
+  prepareOnLoad?: boolean;
   refreshOnSuccess?: boolean;
   onSuccess?: () => void;
 }) {
@@ -52,6 +56,7 @@ export function SubscriptionPaymentAction({
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [preparedPayment, setPreparedPayment] = useState<PreparedActivationPayment | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  const preparedOnLoadKey = useRef<string | null>(null);
 
   async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<boolean> {
     const endpoint = paymentAttemptId
@@ -134,7 +139,7 @@ export function SubscriptionPaymentAction({
     }
   }
 
-  async function prepareActivation() {
+  const prepareActivation = useCallback(async () => {
     setBusy(true);
     setError(null);
     setPartial(null);
@@ -192,7 +197,7 @@ export function SubscriptionPaymentAction({
       const payment: PreparedActivationPayment = { ...prepared, transaction };
       setAttemptId(prepared.attemptId);
       setPreparedPayment(payment);
-      setPartial("Payment details are ready. Review the amount, network, wallet and recipient below, then open your wallet to approve this payment.");
+      setPartial("Payment details are ready. Review the amount, network, wallet and recipient below, then select the button to open your wallet and approve this payment.");
       setProgress(null);
     } catch (cause) {
       setPreparedPayment(null);
@@ -208,7 +213,14 @@ export function SubscriptionPaymentAction({
     } finally {
       setBusy(false);
     }
-  }
+  }, [walletAddress, workspaceId]);
+
+  const preparationKey = workspaceId + ":" + walletAddress;
+  useEffect(() => {
+    if (!prepareOnLoad || !configured || preparedOnLoadKey.current === preparationKey) return;
+    preparedOnLoadKey.current = preparationKey;
+    void prepareActivation();
+  }, [configured, preparationKey, prepareActivation, prepareOnLoad]);
 
   async function submitPreparedPayment() {
     const prepared = preparedPayment;
@@ -342,7 +354,7 @@ export function SubscriptionPaymentAction({
           onClick={() => void submitPreparedPayment()}
           type="button"
         >
-          Open wallet to approve $49 USDC
+          {prepareOnLoad ? actionLabel : "Open wallet to approve $49 USDC"}
         </button>
       ) : (
         <button
