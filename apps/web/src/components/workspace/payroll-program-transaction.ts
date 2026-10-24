@@ -236,7 +236,7 @@ export async function buildPayrollClaimTransactions(input: {
     index += claimsPerTransaction
   ) {
     batches.push(
-      claimInstructions.slice(index, index + PAYROLL_CLAIMS_PER_TRANSACTION)
+      claimInstructions.slice(index, index + claimsPerTransaction)
     );
   }
 
