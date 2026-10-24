@@ -93,7 +93,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     try {
       const verified = await verifySubscriptionPayment(attempt.signature, session.session.walletAddress, attempt.memo);
       if (verified.recipient !== attempt.recipient || verified.mint !== attempt.mint || verified.amountBaseUnits !== attempt.amountBaseUnits) {
-        await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "failed", signature: attempt.signature });
+        const failed = await updateSubscriptionPaymentAttemptStatus(db, {
+          attemptId: attempt.id, status: "failed", signature: attempt.signature
+        });
+        if (!failed) {
+          const current = await getSubscriptionPaymentAttempt(db, attempt.id);
+          if (current?.status === "confirmed") return NextResponse.json({ status: "active" });
+          return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+        }
         return NextResponse.json({ error: "payment_attempt_mismatch" }, { status: 422 });
       }
       await applyVerifiedSubscriptionPayment(db, { workspaceId, userId: session.session.userId, ...verified });
