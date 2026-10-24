@@ -3,6 +3,7 @@ import { address, getAddressEncoder } from "@solana/kit";
 
 const LEAF_DOMAIN = Buffer.from("paylore:allocation-leaf:v1\0", "utf8");
 const NODE_DOMAIN = Buffer.from("paylore:allocation-node:v1\0", "utf8");
+export const MAX_ALLOCATION_PROOF_DEPTH = 16;
 
 export type PayrollAllocationLeafInput = {
   claimId: string;
@@ -91,6 +92,9 @@ export function buildPayrollAllocationMerkleTree(
     layer = next;
     indices = indices.map((index) => Math.floor(index / 2));
   }
+  if (proofs.some((proof) => proof.siblings.length > MAX_ALLOCATION_PROOF_DEPTH)) {
+    throw new Error("Payroll allocation tree exceeds the supported Merkle proof depth.");
+  }
   for (let index = 0; index < proofs.length; index++) {
     proofs[index]!.leafIndex = index;
   }
@@ -106,7 +110,7 @@ export function verifyPayrollAllocationMerkleProof(input: {
   leafIndex: number;
   siblings: readonly string[];
 }): boolean {
-  if (!Number.isSafeInteger(input.leafIndex) || input.leafIndex < 0 || input.siblings.length > 32) return false;
+  if (!Number.isSafeInteger(input.leafIndex) || input.leafIndex < 0 || input.siblings.length > MAX_ALLOCATION_PROOF_DEPTH) return false;
   let current = payrollAllocationLeaf(input.leaf);
   let index = input.leafIndex;
   try {
