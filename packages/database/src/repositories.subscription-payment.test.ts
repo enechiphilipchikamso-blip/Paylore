@@ -25,6 +25,7 @@ function fakeDatabase(initialSubscription: Record<string, unknown> = {
   const notificationKeys = new Set<string>();
   const ledgerRows: Array<Record<string, unknown>> = [];
   const notificationRows: Array<Record<string, unknown>> = [];
+  const updates: Array<{ table: unknown; changes: Record<string, unknown> }> = [];
   const notificationAttempts: Array<Record<string, unknown>> = [];
   const members = [{ userId: "member-a" }, { userId: "member-b" }];
 
@@ -100,7 +101,11 @@ function fakeDatabase(initialSubscription: Record<string, unknown> = {
       let changes: Record<string, unknown> = {};
       let returns = false;
       const builder: Record<string, any> = {};
-      builder.set = vi.fn((value: Record<string, unknown>) => { changes = value; return builder; });
+      builder.set = vi.fn((value: Record<string, unknown>) => {
+        changes = value;
+        updates.push({ table, changes });
+        return builder;
+      });
       builder.where = vi.fn(() => builder);
       builder.returning = vi.fn(() => {
         returns = true;
@@ -127,6 +132,7 @@ function fakeDatabase(initialSubscription: Record<string, unknown> = {
     ledgerRows,
     notificationRows,
     notificationAttempts,
+    updates,
     get subscription() { return currentSubscription; },
     get paymentRows() { return [...payments.values()]; }
   };
@@ -215,6 +221,45 @@ describe("verified subscription payment ledger and notifications", () => {
     expect(db.paymentRows[0]).toMatchObject({
       periodStart: periodEnd,
       periodEnd: new Date("2026-11-24T08:00:00.000Z")
+    });
+  });
+
+  it("reactivates an expired archived workspace only from a new verified payment", async () => {
+    const oldPeriodStart = new Date("2026-08-24T08:00:00.000Z");
+    const expiredPeriodEnd = new Date("2026-09-24T08:00:00.000Z");
+    const now = new Date("2026-10-24T08:00:00.000Z");
+    const db = fakeDatabase({
+      workspaceId: "workspace-a",
+      status: "archived",
+      periodStart: oldPeriodStart,
+      periodEnd: expiredPeriodEnd,
+      cancelAtPeriodEnd: false
+    });
+
+    const result = await applyVerifiedSubscriptionPayment(db.db, {
+      workspaceId: "workspace-a",
+      userId: "admin-a",
+      signature: "post-expiry-payment-signature",
+      mint: "circle-devnet-usdc-mint",
+      recipient: "configured-subscription-recipient",
+      amountBaseUnits: "49000000",
+      now
+    });
+
+    expect(result).toMatchObject({
+      duplicate: false,
+      status: "active",
+      periodStart: now,
+      periodEnd: new Date("2026-11-24T08:00:00.000Z"),
+      cancelAtPeriodEnd: false
+    });
+    expect(db.paymentRows[0]).toMatchObject({
+      periodStart: now,
+      periodEnd: new Date("2026-11-24T08:00:00.000Z")
+    });
+    expect(db.updates).toContainEqual({
+      table: workspaceRetention,
+      changes: { closedAt: null, updatedAt: now }
     });
   });
 
