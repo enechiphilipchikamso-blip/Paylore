@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   listContributorPayrollAllocations: vi.fn(),
   getWorkspacePageContext: vi.fn(),
   loadPayloreConfig: vi.fn(),
-  compensationProps: null as Record<string, any> | null
+  compensationProps: null as Record<string, unknown> | null
 }));
 
 vi.mock("@paylore/database", () => ({
@@ -25,7 +25,7 @@ vi.mock("../../../../server/config", () => ({
   loadPayloreConfig: mocks.loadPayloreConfig
 }));
 vi.mock("../../../../components/workspace/ContributorCompensation", () => ({
-  ContributorCompensation: (props: Record<string, any>) => {
+  ContributorCompensation: (props: Record<string, unknown>) => {
     mocks.compensationProps = props;
     return null;
   }
