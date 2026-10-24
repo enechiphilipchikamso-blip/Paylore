@@ -333,7 +333,8 @@ describe("payroll program transaction verification", () => {
         claims: [{
           claimId,
           claimAddress: authorityAddress,
-          contributorAddress
+          contributorAddress,
+          amountCommitment
         }]
       })
     ).rejects.toThrow("does not match this allocation");
