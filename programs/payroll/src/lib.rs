@@ -159,20 +159,16 @@ fn has_matching_confidential_transfer(
     mint: Pubkey,
     destination: Pubkey,
 ) -> Result<bool> {
+    // The exact preceding instruction is the only safe binding: an earlier
+    // transfer could be unrelated to this Claim PDA transition.
     let current_index = load_current_index_checked(instructions_sysvar)?;
-    for index in 0..current_index {
-        let instruction = load_instruction_at_checked(index as usize, instructions_sysvar)?;
-        if instruction.program_id == TOKEN_2022_PROGRAM_ID
-            && instruction.data.get(0..2) == Some(&[27u8, 7u8][..])
-            && instruction.accounts.len() >= 3
-            && instruction.accounts[0].pubkey == source
-            && instruction.accounts[1].pubkey == mint
-            && instruction.accounts[2].pubkey == destination
-        {
-            return Ok(true);
-        }
+    if current_index == 0 {
+        return Ok(false);
     }
-    Ok(false)
+    let previous = load_instruction_at_checked((current_index - 1) as usize, instructions_sysvar)?;
+    Ok(is_matching_confidential_transfer_instruction(
+        &previous, source, mint, destination
+    ))
 }
 
 fn is_matching_confidential_transfer_instruction(
