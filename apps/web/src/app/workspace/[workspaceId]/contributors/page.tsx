@@ -49,7 +49,8 @@ export default async function ContributorsPage({
             displayName: contributor.displayName,
             identityWalletAddress: contributor.identityWalletAddress,
             effectivePayoutAddress: contributor.effectivePayoutAddress,
-            organizationLabel: contributor.organizationLabel,
+            organizationLabel: canManage ? contributor.organizationLabel : null,
+            adminNote: canManage ? contributor.adminNote : null,
             lifecycle: contributor.lifecycle,
             onboardingStatus: contributor.onboardingStatus,
             role: contributor.role

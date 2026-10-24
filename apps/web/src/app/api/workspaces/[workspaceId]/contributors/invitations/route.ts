@@ -44,9 +44,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
   const { workspaceId } = await params;
   const access = await accessWorkspace(workspaceId);
   if ("response" in access) return access.response;
+  if (access.membership.role !== "organization_admin") {
+    return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
+  }
   return NextResponse.json({
     invitations: await listWorkspaceInvitations(access.db, workspaceId)
-  });
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
@@ -87,6 +90,9 @@ export async function POST(request: Request, { params }: RouteContext) {
   } catch (error) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
+    }
+    if (error instanceof Error && error.message === "Contributor is not eligible for an invitation.") {
+      return NextResponse.json({ error: "contributor_not_eligible_for_invitation" }, { status: 409 });
     }
     console.error(JSON.stringify({ event: "contributor_invitation_create_failed" }));
     return NextResponse.json({ error: "invitation_could_not_be_prepared" }, { status: 500 });

@@ -28,7 +28,7 @@ export default async function ContributorInvitationsPage({
     workspaceId,
     `/workspace/${workspaceId}/contributors/invitations`
   );
-  if (context.workspace.role === "contributor") notFound();
+  if (context.workspace.role !== "organization_admin") notFound();
   const [contributors, invitations] = await Promise.all([
     listWorkspaceContributors(context.db, workspaceId),
     listWorkspaceInvitations(context.db, workspaceId)
@@ -55,10 +55,11 @@ export default async function ContributorInvitationsPage({
         workspaceId={workspaceId}
         contributors={contributors
           .filter((contributor) => contributor.lifecycle !== "left")
-          .map(({ id, displayName }) => ({ id, displayName }))}
+          .map(({ id, displayName, role }) => ({ id, displayName, role }))}
         invitations={invitations.map((invitation) => ({
           id: invitation.id,
           contributorName: invitation.contributorName,
+          contributorRole: invitation.contributorRole,
           acceptedAt: invitation.acceptedAt?.toISOString() ?? null,
           expiresAt: invitation.expiresAt.toISOString()
         }))}

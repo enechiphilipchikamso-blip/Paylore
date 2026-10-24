@@ -1,25 +1,27 @@
 "use client";
 
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
 
+type WorkspaceRole = "organization_admin" | "finance_auditor" | "contributor";
 type ContributorRecord = {
   id: string;
   displayName: string;
   identityWalletAddress: string;
   effectivePayoutAddress: string;
   organizationLabel: string | null;
+  adminNote: string | null;
   lifecycle: "invited" | "active" | "left";
   onboardingStatus: "pending" | "complete" | "incomplete";
-  role: "organization_admin" | "finance_auditor" | "contributor";
+  role: WorkspaceRole;
 };
-
-const lifecycleLabels = {
-  invited: "Invited",
-  active: "Active",
-  left: "Left"
-} as const;
+const lifecycleLabels = { invited: "Invited", active: "Active", left: "Left" } as const;
+const roleLabels: Record<WorkspaceRole, string> = {
+  organization_admin: "Organization Administrator",
+  finance_auditor: "Finance/Auditor",
+  contributor: "Contributor"
+};
 
 export function ContributorDirectory({
   workspaceId,
@@ -33,49 +35,59 @@ export function ContributorDirectory({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{
-    state: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [labelDraft, setLabelDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState("");
+  const [notice, setNotice] = useState<{ state: "success" | "error"; text: string } | null>(null);
+
   const filteredRecords = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return records;
     return records.filter((record) =>
-      `${record.displayName} ${record.identityWalletAddress}`
-        .toLowerCase()
-        .includes(normalized)
+      `${record.displayName} ${record.identityWalletAddress} ${roleLabels[record.role]} ${record.organizationLabel ?? ""}`
+        .toLowerCase().includes(normalized)
     );
   }, [query, records]);
 
-  async function updateLifecycle(
-    record: ContributorRecord,
-    lifecycle: ContributorRecord["lifecycle"]
-  ) {
+  function beginEdit(record: ContributorRecord) {
+    setEditingId(record.id);
+    setLabelDraft(record.organizationLabel ?? "");
+    setNoteDraft(record.adminNote ?? "");
+    setNotice(null);
+  }
+
+  async function saveProfile(record: ContributorRecord) {
+    if (busyId !== null) return;
     setBusyId(record.id);
     setNotice(null);
     try {
       const response = await fetch(
-        `/api/workspaces/${workspaceId}/contributors/${record.id}`,
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/contributors/${encodeURIComponent(record.id)}`,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ lifecycle })
+          body: JSON.stringify({ organizationLabel: labelDraft, adminNote: noteDraft })
         }
       );
       if (!response.ok) {
         setNotice({
           state: "error",
-          text: "Contributor record could not be updated. Please try again."
+          text: response.status === 403
+            ? "You are not authorized to edit contributor profile details."
+            : response.status === 404
+              ? "This contributor no longer belongs to the workspace. Refresh the directory."
+              : "Contributor profile details could not be saved. Please try again."
         });
         return;
       }
-      setNotice({ state: "success", text: "Contributor record updated." });
+      setEditingId(null);
+      setNotice({ state: "success", text: "Contributor profile details saved." });
       router.refresh();
     } catch {
       setNotice({
         state: "error",
-        text: "Contributor record could not be updated. Please try again."
+        text: "Contributor profile details could not be verified. Refresh before retrying."
       });
     } finally {
       setBusyId(null);
@@ -84,7 +96,7 @@ export function ContributorDirectory({
 
   async function requestOffboarding(record: ContributorRecord) {
     if (
-      busyId ||
+      busyId !== null ||
       !window.confirm(
         `Request that ${record.displayName} review leaving this workspace? This does not remove membership or transfer ownership of the contributor's confidential account.`
       )
@@ -93,14 +105,12 @@ export function ContributorDirectory({
     setNotice(null);
     try {
       const response = await fetch(
-        `/api/workspaces/${workspaceId}/contributors/${record.id}/offboarding`,
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/contributors/${encodeURIComponent(record.id)}/offboarding`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({
-            confirmation: "Request contributor review"
-          })
+          body: JSON.stringify({ confirmation: "Request contributor review" })
         }
       );
       if (!response.ok) {
@@ -131,12 +141,8 @@ export function ContributorDirectory({
     <div className="contributor-directory">
       <div className="workspace-dashboard__section-heading">
         <label className="field contributor-search">
-          <span>Search contributors by name or wallet</span>
-          <input
-            onChange={(event) => setQuery(event.target.value)}
-            type="search"
-            value={query}
-          />
+          <span>Search contributors by name, wallet, or role</span>
+          <input onChange={(event) => setQuery(event.target.value)} type="search" value={query} />
         </label>
         <div className="hero__actions">
           {canManage ? (
@@ -163,9 +169,7 @@ export function ContributorDirectory({
         <div className="workspace-empty-state">
           <h3>{records.length === 0 ? "No contributors have been added yet." : "No contributors match this search."}</h3>
           {records.length === 0 && canManage ? (
-            <Link className="button" href={`/workspace/${workspaceId}/contributors/import`}>
-              Import contributors
-            </Link>
+            <Link className="button" href={`/workspace/${workspaceId}/contributors/import`}>Import contributors</Link>
           ) : null}
         </div>
       ) : (
@@ -174,69 +178,69 @@ export function ContributorDirectory({
             <thead>
               <tr>
                 <th scope="col">Name</th>
+                <th scope="col">Role</th>
                 <th scope="col">Status</th>
                 <th scope="col">Identity wallet</th>
-                <th scope="col">Payout address</th>
+                <th scope="col">Effective payout address</th>
                 <th scope="col">Onboarding</th>
                 {canManage ? <th scope="col">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
               {filteredRecords.map((record) => (
-                <tr key={record.id}>
-                  <td>
-                    <strong>{record.displayName}</strong>
-                    {record.organizationLabel ? <small>{record.organizationLabel}</small> : null}
-                  </td>
-                  <td>{lifecycleLabels[record.lifecycle]}</td>
-                  <td><code>{record.identityWalletAddress}</code></td>
-                  <td><code>{record.effectivePayoutAddress}</code></td>
-                  <td>{record.onboardingStatus}</td>
-                  {canManage ? (
+                <Fragment key={record.id}>
+                  <tr>
                     <td>
-                      {record.lifecycle === "left" ? (
-                        <span>Offboarding completed</span>
-                      ) : (
-                        <>
-                          <label className="visually-hidden" htmlFor={`lifecycle-${record.id}`}>
-                            Update {record.displayName} lifecycle
-                          </label>
-                          <select
-                            disabled={busyId === record.id}
-                            id={`lifecycle-${record.id}`}
-                            onChange={(event) =>
-                              void updateLifecycle(
-                                record,
-                                event.target.value as "invited" | "active"
-                              )
-                            }
-                            value={record.lifecycle}
-                          >
-                            <option value="invited">Invited</option>
-                            <option value="active">Active</option>
-                          </select>
-                          {busyId === record.id ? (
-                            <span className="loading-indicator" role="status">
-                              <span className="loading-indicator__icon" aria-hidden="true" />
-                              Saving…
-                            </span>
-                          ) : null}
-                          {record.role === "contributor" &&
-                          record.lifecycle === "active" ? (
-                            <button
-                              className="button button--secondary"
-                              disabled={busyId !== null}
-                              onClick={() => void requestOffboarding(record)}
-                              type="button"
-                            >
-                              Request offboarding review
-                            </button>
-                          ) : null}
-                        </>
-                      )}
+                      <strong>{record.displayName}</strong>
+                      {record.organizationLabel ? <small>{record.organizationLabel}</small> : null}
+                      {canManage && record.adminNote ? <small>Admin note: {record.adminNote}</small> : null}
                     </td>
+                    <td>{roleLabels[record.role]}</td>
+                    <td>{lifecycleLabels[record.lifecycle]}</td>
+                    <td><code>{record.identityWalletAddress}</code></td>
+                    <td><code>{record.effectivePayoutAddress}</code></td>
+                    <td>{record.onboardingStatus}</td>
+                    {canManage ? (
+                      <td>
+                        <button className="button button--secondary" disabled={busyId !== null} onClick={() => beginEdit(record)} type="button">
+                          Edit profile details
+                        </button>
+                        {record.role === "contributor" && record.lifecycle === "active" ? (
+                          <button className="button button--secondary" disabled={busyId !== null} onClick={() => void requestOffboarding(record)} type="button">
+                            Request offboarding review
+                          </button>
+                        ) : null}
+                      </td>
+                    ) : null}
+                  </tr>
+                  {canManage && editingId === record.id ? (
+                    <tr>
+                      <td colSpan={7}>
+                        <form
+                          className="contributor-profile-editor"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void saveProfile(record);
+                          }}
+                        >
+                          <h3>Edit {record.displayName}</h3>
+                          <label className="field" htmlFor={`organization-label-${record.id}`}>
+                            <span>Organization label</span>
+                            <input id={`organization-label-${record.id}`} maxLength={120} onChange={(event) => setLabelDraft(event.target.value)} value={labelDraft} />
+                          </label>
+                          <label className="field" htmlFor={`admin-note-${record.id}`}>
+                            <span>Administrator note</span>
+                            <textarea id={`admin-note-${record.id}`} maxLength={2000} onChange={(event) => setNoteDraft(event.target.value)} rows={3} value={noteDraft} />
+                          </label>
+                          <div className="hero__actions">
+                            <button className="button" disabled={busyId !== null} type="submit">{busyId === record.id ? "Saving…" : "Save profile details"}</button>
+                            <button className="button button--secondary" disabled={busyId !== null} onClick={() => setEditingId(null)} type="button">Cancel</button>
+                          </div>
+                        </form>
+                      </td>
+                    </tr>
                   ) : null}
-                </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

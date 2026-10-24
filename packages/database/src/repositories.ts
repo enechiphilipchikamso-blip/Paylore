@@ -648,6 +648,7 @@ export async function findInvitationEntryTarget(
           contributors.identityWalletAddress,
         contributorName:
           contributors.displayName,
+        contributorRole: contributors.role,
         acceptedAt:
           contributorInvitations.acceptedAt,
         expiresAt:
@@ -679,7 +680,7 @@ export async function findInvitationEntryTarget(
       .limit(1);
 
   const invitation = rows[0];
-  if (!invitation || invitation.expiresAt <= now) {
+  if (!invitation || invitation.expiresAt <= now || invitation.acceptedAt) {
     return null;
   }
 
@@ -1438,6 +1439,45 @@ export async function updateContributorLifecycle(
   return rows[0] ?? null;
 }
 
+export async function updateContributorAdministrativeMetadata(
+  db: Database,
+  input: {
+    workspaceId: string;
+    contributorId: string;
+    organizationLabel?: string | null;
+    adminNote?: string | null;
+    now?: Date;
+  }
+) {
+  const changes: {
+    organizationLabel?: string | null;
+    adminNote?: string | null;
+    updatedAt: Date;
+  } = { updatedAt: input.now ?? new Date() };
+  if (input.organizationLabel !== undefined) changes.organizationLabel = input.organizationLabel;
+  if (input.adminNote !== undefined) changes.adminNote = input.adminNote;
+
+  const rows = await db
+    .update(contributors)
+    .set(changes)
+    .where(and(
+      eq(contributors.id, input.contributorId),
+      eq(contributors.workspaceId, input.workspaceId)
+    ))
+    .returning({
+      id: contributors.id,
+      displayName: contributors.displayName,
+      identityWalletAddress: contributors.identityWalletAddress,
+      effectivePayoutAddress: contributors.effectivePayoutAddress,
+      organizationLabel: contributors.organizationLabel,
+      adminNote: contributors.adminNote,
+      role: contributors.role,
+      lifecycle: contributors.lifecycle,
+      onboardingStatus: contributors.onboardingStatus
+    });
+  return rows[0] ?? null;
+}
+
 export async function findWorkspaceContributorByWallet(
   db: Database,
   workspaceId: string,
@@ -2142,7 +2182,8 @@ export async function createContributorInvitation(
         .select({
           walletAddress:
             contributors.identityWalletAddress,
-          lifecycle: contributors.lifecycle
+          lifecycle: contributors.lifecycle,
+          role: contributors.role
         })
         .from(contributors)
         .where(
@@ -2154,10 +2195,8 @@ export async function createContributorInvitation(
         .limit(1);
 
     const contributor = contributorRows[0];
-    if (!contributor || contributor.lifecycle === "left") {
-      throw new Error(
-        "Contributor is not eligible for an invitation."
-      );
+    if (!contributor || contributor.lifecycle === "left" || contributor.role === "organization_admin") {
+      throw new Error("Contributor is not eligible for an invitation.");
     }
 
     const [invitation] =
@@ -2200,6 +2239,7 @@ export async function listWorkspaceInvitations(
       contributorId:
         contributorInvitations.contributorId,
       contributorName: contributors.displayName,
+      contributorRole: contributors.role,
       status: contributors.lifecycle,
       expiresAt: contributorInvitations.expiresAt,
       acceptedAt: contributorInvitations.acceptedAt
@@ -2244,7 +2284,8 @@ export async function acceptContributorInvitation(
           acceptedAt: contributorInvitations.acceptedAt,
           expiresAt: contributorInvitations.expiresAt,
           identityWalletAddress:
-            contributors.identityWalletAddress
+            contributors.identityWalletAddress,
+          contributorRole: contributors.role
         })
         .from(contributorInvitations)
         .innerJoin(
@@ -2269,6 +2310,9 @@ export async function acceptContributorInvitation(
       invitation.expiresAt <= now ||
       invitation.acceptedAt
     ) {
+      return null;
+    }
+    if (invitation.contributorRole === "organization_admin") {
       return null;
     }
     if (
@@ -2308,7 +2352,7 @@ export async function acceptContributorInvitation(
         .values({
           workspaceId: invitation.workspaceId,
           userId: input.userId,
-          role: "contributor"
+          role: invitation.contributorRole
         })
         .onConflictDoNothing({
           target: [
@@ -2342,7 +2386,7 @@ export async function acceptContributorInvitation(
           .limit(1);
       if (
         existingMembership[0]?.role !==
-        "contributor"
+        invitation.contributorRole
       ) {
         throw new Error(
           "This wallet already has a different workspace role."
@@ -2357,13 +2401,15 @@ export async function acceptContributorInvitation(
         onboardingStatus: "complete",
         updatedAt: now
       })
-      .where(
-        eq(contributors.id, invitation.contributorId)
-      );
+      .where(and(
+        eq(contributors.id, invitation.contributorId),
+        eq(contributors.workspaceId, invitation.workspaceId)
+      ));
 
     return {
       workspaceId: invitation.workspaceId,
-      contributorId: invitation.contributorId
+      contributorId: invitation.contributorId,
+      role: invitation.contributorRole
     };
   });
 }
