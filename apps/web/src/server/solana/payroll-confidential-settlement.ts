@@ -38,7 +38,10 @@ import {
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
-import { bindAmountCommitmentProof } from "./payroll-amount-proof-binding";
+import {
+  bindAmountCommitmentProof,
+  PayrollAmountProofBindingError
+} from "./payroll-amount-proof-binding";
 import {
   advanceConfidentialSequence,
   assertConfidentialStepAllowed,
@@ -835,9 +838,17 @@ export async function settleContributorPayrollAllocation(
         });
         const transferPlan = {
           ...unboundTransferPlan,
-          plans: unboundTransferPlan.plans.map((plan, index) =>
-            index === 0 ? bindAmountCommitmentProof(plan, elgamal, amountCommitmentMaterial) : plan
-          )
+          plans: unboundTransferPlan.plans.map((plan, index) => {
+            if (index !== 0) return plan;
+            try {
+              return bindAmountCommitmentProof(plan, elgamal, amountCommitmentMaterial);
+            } catch (error) {
+              if (error instanceof PayrollAmountProofBindingError) {
+                throw new PayrollConfidentialSettlementError(error.code, 503);
+              }
+              throw error;
+            }
+          })
         } as typeof unboundTransferPlan;
         proofDurationMs = Math.max(0, performance.now() - proofStarted);
         if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 || transferPlan.plans[1]?.kind !== "single") {
