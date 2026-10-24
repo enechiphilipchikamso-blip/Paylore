@@ -55,7 +55,9 @@ export function SubscriptionPaymentAction({
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [preparedPayment, setPreparedPayment] = useState<PreparedActivationPayment | null>(null);
-  const [progress, setProgress] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(
+    prepareOnLoad && configured ? "Preparing your $49 USDC payment…" : null
+  );
   const preparedOnLoadKey = useRef<string | null>(null);
 
   async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<boolean> {
