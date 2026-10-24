@@ -70,7 +70,7 @@ export function PayrollClaimCommitAction({
     setMessage(null);
     try {
       const wallet = await findAuthenticatedWallet(walletAddress);
-      const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 9)
+      const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 8)
         ? 1
         : PAYROLL_CLAIMS_PER_TRANSACTION;
       const batchCount = Math.ceil(claims.length / claimsPerTransaction);
