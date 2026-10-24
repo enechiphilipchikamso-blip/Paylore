@@ -2378,6 +2378,68 @@ export async function getWorkspaceReserve(
   return rows[0] ?? null;
 }
 
+export type WorkspaceReserveSetupPhase = "account_setup" | "program_configure";
+
+export async function attachWorkspaceReserveSetupSignature(
+  db: Database,
+  input: { workspaceId: string; phase: WorkspaceReserveSetupPhase; signature: string }
+): Promise<"attached" | "duplicate" | "conflict" | "not_found"> {
+  if (!input.signature || input.signature.length > 128) return "conflict";
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      accountSignature: workspaceReserves.confidentialAccountSetupSignature,
+      programSignature: workspaceReserves.programReserveSetupSignature
+    }).from(workspaceReserves)
+      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
+      .for("update").limit(1);
+    const current = rows[0];
+    if (!current) return "not_found";
+    const existing = input.phase === "account_setup"
+      ? current.accountSignature : current.programSignature;
+    if (existing === input.signature) return "duplicate";
+    if (existing !== null) return "conflict";
+
+    const updated = input.phase === "account_setup"
+      ? await tx.update(workspaceReserves).set({
+          confidentialAccountSetupSignature: input.signature,
+          updatedAt: new Date()
+        }).where(and(
+          eq(workspaceReserves.workspaceId, input.workspaceId),
+          isNull(workspaceReserves.confidentialAccountSetupSignature)
+        )).returning({ workspaceId: workspaceReserves.workspaceId })
+      : await tx.update(workspaceReserves).set({
+          programReserveSetupSignature: input.signature,
+          updatedAt: new Date()
+        }).where(and(
+          eq(workspaceReserves.workspaceId, input.workspaceId),
+          isNull(workspaceReserves.programReserveSetupSignature)
+        )).returning({ workspaceId: workspaceReserves.workspaceId });
+    return updated[0] ? "attached" : "conflict";
+  });
+}
+
+export async function clearWorkspaceReserveSetupSignature(
+  db: Database,
+  input: { workspaceId: string; phase: WorkspaceReserveSetupPhase; signature: string }
+): Promise<boolean> {
+  const updated = input.phase === "account_setup"
+    ? await db.update(workspaceReserves).set({
+        confidentialAccountSetupSignature: null,
+        updatedAt: new Date()
+      }).where(and(
+        eq(workspaceReserves.workspaceId, input.workspaceId),
+        eq(workspaceReserves.confidentialAccountSetupSignature, input.signature)
+      )).returning({ workspaceId: workspaceReserves.workspaceId })
+    : await db.update(workspaceReserves).set({
+        programReserveSetupSignature: null,
+        updatedAt: new Date()
+      }).where(and(
+        eq(workspaceReserves.workspaceId, input.workspaceId),
+        eq(workspaceReserves.programReserveSetupSignature, input.signature)
+      )).returning({ workspaceId: workspaceReserves.workspaceId });
+  return Boolean(updated[0]);
+}
+
 export async function createWorkspaceReserve(
   db: Database,
   input: typeof workspaceReserves.$inferInsert
