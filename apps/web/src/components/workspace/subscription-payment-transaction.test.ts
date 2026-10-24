@@ -3,15 +3,40 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { address, getAddressEncoder } from "@solana/kit";
 import { createSubscriptionPaymentTransaction } from "./subscription-payment-transaction";
 
+const PAYER = "Vote111111111111111111111111111111111111111";
+const RECIPIENT = "Stake11111111111111111111111111111111111111";
+const CONFIDENTIAL_USDC_MINT = "8wZmMHQY3bCJMhWs8j6BLxvgNLUkCXB2F5tEZPFF8A6q";
+const CLASSIC_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+const CLASSIC_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const PAYMENT_MEMO = "Paylore activation attempt test | workspace workspace-test";
+const TRANSFER_CHECKED_49_USDC = [12, 0x40, 0xae, 0xeb, 0x02, 0, 0, 0, 0, 6];
+
+function contains(transaction: Uint8Array, value: Uint8Array | number[]): boolean {
+  return Buffer.from(transaction).includes(Buffer.from(value));
+}
+
+function expectPaymentPayload(
+  transaction: Uint8Array,
+  input: { payer: string; recipient: string; mint: string; tokenProgram: string; memo: string }
+) {
+  expect(contains(transaction, getAddressEncoder().encode(address(input.payer)))).toBe(true);
+  expect(contains(transaction, getAddressEncoder().encode(address(input.recipient)))).toBe(true);
+  expect(contains(transaction, getAddressEncoder().encode(address(input.mint)))).toBe(true);
+  expect(contains(transaction, getAddressEncoder().encode(address(input.tokenProgram)))).toBe(true);
+  expect(contains(transaction, TRANSFER_CHECKED_49_USDC)).toBe(true);
+  expect(contains(transaction, Buffer.from(input.memo))).toBe(true);
+  expect(contains(transaction, Buffer.from("Paylore workspace activation | 49 USDC | recipient "))).toBe(false);
+}
+
 describe("subscription payment transaction", () => {
-  it("builds a Token-2022 USDC payment transaction for wallet approval", async () => {
+  it("builds an exact $49 USDC Token-2022 payment with the supplied wallet, recipient and attempt memo", async () => {
     const transaction = await createSubscriptionPaymentTransaction({
-      payer: "11111111111111111111111111111111",
-      recipient: "Vote111111111111111111111111111111111111111",
-      mint: "8wZmMHQY3bCJMhWs8j6BLxvgNLUkCXB2F5tEZPFF8A6q",
+      payer: PAYER,
+      recipient: RECIPIENT,
+      mint: CONFIDENTIAL_USDC_MINT,
       tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
       workspaceId: "workspace-test",
-      memo: "Paylore activation attempt test | workspace workspace-test",
+      memo: PAYMENT_MEMO,
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     });
@@ -20,57 +45,47 @@ describe("subscription payment transaction", () => {
     expect(transaction.slice(1, 65)).toEqual(new Uint8Array(64));
     expect(transaction[65]).toBe(0x80);
     expect(transaction.length).toBeGreaterThan(150);
-    expect(Buffer.from(transaction).includes(
-      Buffer.from(
-        getAddressEncoder().encode(
-          address(TOKEN_2022_PROGRAM_ADDRESS)
-        )
-      )
-    )).toBe(true);
-    expect(Buffer.from(transaction).includes(
-      Buffer.from("Paylore activation attempt test | workspace workspace-test")
-    )).toBe(true);
-    expect(Buffer.from(transaction).includes(
-      Buffer.from("Paylore workspace activation | 49 USDC | recipient ")
-    )).toBe(false);
+    expectPaymentPayload(transaction, {
+      payer: PAYER,
+      recipient: RECIPIENT,
+      mint: CONFIDENTIAL_USDC_MINT,
+      tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+      memo: PAYMENT_MEMO
+    });
   });
- 
-  it("builds a classic SPL Token payment for a classic USDC mint", async () => {
-    const classicTokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-    const recipient = "Vote111111111111111111111111111111111111111";
+
+  it("builds the same exact payment through the configured classic SPL Token program for Circle Devnet USDC", async () => {
+    const memo = "Paylore activation attempt test | workspace workspace-classic-usdc";
     const transaction = await createSubscriptionPaymentTransaction({
-      payer: "11111111111111111111111111111111",
-      recipient,
-      mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
-      tokenProgram: classicTokenProgram,
+      payer: PAYER,
+      recipient: RECIPIENT,
+      mint: CLASSIC_USDC_MINT,
+      tokenProgram: CLASSIC_TOKEN_PROGRAM,
       workspaceId: "workspace-classic-usdc",
-      memo: "Paylore activation attempt test | workspace workspace-classic-usdc",
+      memo,
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     });
 
-    expect(Buffer.from(transaction).includes(
-      Buffer.from(getAddressEncoder().encode(address(classicTokenProgram)))
-    )).toBe(true);
-    expect(Buffer.from(transaction).includes(
-      Buffer.from("Paylore activation attempt test | workspace workspace-classic-usdc")
-    )).toBe(true);
-    expect(Buffer.from(transaction).includes(
-      Buffer.from("Paylore workspace activation | 49 USDC | recipient ")
-    )).toBe(false);
+    expectPaymentPayload(transaction, {
+      payer: PAYER,
+      recipient: RECIPIENT,
+      mint: CLASSIC_USDC_MINT,
+      tokenProgram: CLASSIC_TOKEN_PROGRAM,
+      memo
+    });
   });
 
   it("rejects a token program not supported for subscription payments", async () => {
     await expect(createSubscriptionPaymentTransaction({
-      payer: "11111111111111111111111111111111",
-      recipient: "Vote111111111111111111111111111111111111111",
-      mint: "4zMMC9srt5Ri5X14GAgXha3i3GnPAEERYPJgZJDncDU",
+      payer: PAYER,
+      recipient: RECIPIENT,
+      mint: CLASSIC_USDC_MINT,
       tokenProgram: "11111111111111111111111111111111",
       workspaceId: "workspace-test",
-      memo: "Paylore activation attempt test | workspace workspace-test",
+      memo: PAYMENT_MEMO,
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 100
     })).rejects.toThrow("unsupported token program");
   });
-
 });
