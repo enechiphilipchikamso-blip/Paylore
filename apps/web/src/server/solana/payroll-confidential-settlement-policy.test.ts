@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import { address, singleInstructionPlan, type Instruction } from "@solana/kit";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
+import { bindClaimedStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer } from "./payroll-confidential-settlement-policy";
+
+const source = address("So11111111111111111111111111111111111111112");
+const mint = address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+const destination = address("11111111111111111111111111111111");
+const other = address("4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93");
+function ix(program: string, data: number[], accounts: string[] = []): Instruction {
+  return { programAddress: address(program), data: Uint8Array.from(data), accounts: accounts.map((value) => ({ address: address(value), role: 0 })) };
+}
+describe("confidential settlement instruction binding", () => {
+  const transfer = ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 7], [source, mint, destination]);
+  const expected = { source, mint, destination };
+  it("rejects a mismatched transfer source, mint, destination, program and variant", () => {
+    expect(isExpectedConfidentialTransfer(transfer, expected)).toBe(true);
+    expect(isExpectedConfidentialTransfer(transfer, { ...expected, source: destination })).toBe(false);
+    expect(isExpectedConfidentialTransfer(transfer, { ...expected, mint: source })).toBe(false);
+    expect(isExpectedConfidentialTransfer(transfer, { ...expected, destination: source })).toBe(false);
+    expect(isExpectedConfidentialTransfer(ix(other, [27, 7], [source, mint, destination]), expected)).toBe(false);
+    expect(isExpectedConfidentialTransfer(ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 6], [source, mint, destination]), expected)).toBe(false);
+  });
+  it("binds Claim-PDA mutation to the exact transfer as an indivisible stage", () => {
+    const setup = ix(other, [1]), cleanup = ix(other, [2]), mark = ix(other, [3]);
+    const plan = { kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
+      plans: [singleInstructionPlan(setup), singleInstructionPlan(transfer), singleInstructionPlan(cleanup)] };
+    const bound = bindClaimedStateToConfidentialTransfer(plan, mark, expected);
+    expect(bound.kind).toBe("sequential");
+    if (bound.kind !== "sequential" || bound.plans[1]?.kind !== "sequential") return;
+    expect(bound.plans[1].divisible).toBe(false);
+    expect(bound.plans[1].plans).toHaveLength(2);
+  });
+  it("extracts only ZK proof-context close instructions and deduplicates addresses", () => {
+    const contextA = address("ComputeBudget111111111111111111111111111111");
+    const contextB = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+    const plan = { kind: "parallel" as const, planType: "instructionPlan" as const, divisible: true,
+      plans: [
+        singleInstructionPlan(ix(ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS, [1], [contextA, source, destination])),
+        singleInstructionPlan(ix(ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS, [1], [contextB, source, destination])),
+        singleInstructionPlan(ix(other, [1], [source, destination])),
+        singleInstructionPlan(ix(ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS, [1], [contextA, source, destination]))
+      ] };
+    expect(getProofContextAddresses(plan)).toEqual([contextA, contextB]);
+  });
+});
