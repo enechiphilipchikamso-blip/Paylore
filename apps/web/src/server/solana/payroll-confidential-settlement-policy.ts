@@ -37,9 +37,9 @@ export function getProofContextAddresses(plan: InstructionPlan): string[] {
 }
 
 /** Makes the on-chain Claim-PDA transition indivisible with its confidential transfer. */
-export function bindClaimedStateToConfidentialTransfer(
+export function bindSettlementPendingStateToConfidentialTransfer(
   plan: InstructionPlan,
-  markClaimed: Instruction,
+  markSettlementPending: Instruction,
   expected: { source: string; mint: string; destination: string }
 ): InstructionPlan {
   if (plan.kind !== "sequential" || plan.plans.length !== 3 ||
@@ -49,7 +49,7 @@ export function bindClaimedStateToConfidentialTransfer(
   }
   return {
     ...plan,
-    plans: [plan.plans[0]!, nonDivisibleSequentialInstructionPlan([plan.plans[1].instruction, markClaimed]), plan.plans[2]!]
+    plans: [plan.plans[0]!, nonDivisibleSequentialInstructionPlan([plan.plans[1].instruction, markSettlementPending]), plan.plans[2]!]
   };
 }
 
