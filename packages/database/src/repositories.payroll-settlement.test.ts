@@ -62,12 +62,33 @@ describe("confidential payroll settlement repository", () => {
     expect(db.tx.insert).not.toHaveBeenCalled();
   });
   it("does not start over when a matching settlement is already pending", async () => {
-    const db = fakeDatabase([[{ ...pendingAllocation, settlementSignature: null }]]);
+    const db = fakeDatabase([
+      [{ workspaceId: common.workspaceId }],
+      [{ ...pendingAllocation, settlementSignature: null }]
+    ]);
     await expect(beginPayrollSettlementAttempt(db.db, {
       workspaceId: common.workspaceId, runId: common.runId, allocationId: common.allocationId,
       claimAddress: common.claimAddress, claimCreationSignature: creationSignature,
       sourceAvailableBefore: "9000000"
     })).resolves.toEqual({ status: "pending", signature: null });
+    expect(db.tx.update).not.toHaveBeenCalled();
+  });
+
+  it("serializes different allocations against the same reserve", async () => {
+    const db = fakeDatabase([
+      [{ workspaceId: common.workspaceId }],
+      [{
+        id: "allocation-b", claimAddress: "claim-b", status: "unclaimed",
+        transactionSignature: creationSignature, settlementSignature: null,
+        settlementSourceAvailableBefore: null
+      }],
+      [{ id: "allocation-a" }]
+    ]);
+    await expect(beginPayrollSettlementAttempt(db.db, {
+      workspaceId: common.workspaceId, runId: common.runId, allocationId: "allocation-b",
+      claimAddress: "claim-b", claimCreationSignature: creationSignature,
+      sourceAvailableBefore: "9000000"
+    })).resolves.toEqual({ status: "workspace_busy" });
     expect(db.tx.update).not.toHaveBeenCalled();
   });
 });
