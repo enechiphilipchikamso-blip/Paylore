@@ -105,14 +105,16 @@ test.describe("confidential claim performance evidence", () => {
       const button = page.getByRole("button", { name: "Claim & Cash Out" });
       await expect(button).toBeVisible();
       const before = await page.evaluate(() => ({ time: performance.now(), heap: performance.memory?.usedJSHeapSize ?? null }));
-      const responses: Array<{ status: number; timing: string | null; elapsedMs: number; body: unknown }> = [];
-      page.on("response", async (response) => {
+      const responses: Array<{ status: number; timing: string | null; elapsedMs: number }> = [];
+      page.on("response", (response) => {
         if (!/\/allocations\/[^/]+\/claim$/.test(new URL(response.url()).pathname)) return;
-        let body: unknown = null;
-        try { body = await response.json(); } catch { /* Keep a redacted response record when JSON parsing fails. */ }
         const timing = response.request().timing();
-        responses.push({ status: response.status(), timing: response.headers()["server-timing"] ?? null,
-          elapsedMs: timing.responseEnd - timing.startTime, body });
+        // Performance artifacts must not retain private allocation amounts or transaction signatures.
+        responses.push({
+          status: response.status(),
+          timing: response.headers()["server-timing"] ?? null,
+          elapsedMs: timing.responseEnd - timing.startTime
+        });
       });
       await button.click();
       await expect.poll(() => responses.length, { timeout: 150_000 }).toBeGreaterThan(0);
