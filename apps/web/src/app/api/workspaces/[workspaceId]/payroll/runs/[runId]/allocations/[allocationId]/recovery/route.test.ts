@@ -94,12 +94,12 @@ describe("payroll recovery route", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+    expect(body).toMatchObject({
       status: "recovery_pending",
       reason: "payroll_correction",
       recoverySignature: "recovery-signature"
     });
-    const body = await response.json();
     expect(JSON.stringify(body)).not.toContain("must-not-leak");
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
