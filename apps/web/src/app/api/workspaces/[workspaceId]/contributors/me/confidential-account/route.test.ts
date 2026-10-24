@@ -4,14 +4,19 @@ const mocks = vi.hoisted(() => ({
   getSessionState: vi.fn(), getWorkspaceForUser: vi.fn(), findWorkspaceContributorByWallet: vi.fn(),
   recordContributorConfidentialAccountSetup: vi.fn(),
   finalizeGasTankConfidentialAccountSetupForVerifiedAccount: vi.fn(),
+  getContributorConfidentialAccount: vi.fn(),
+  getContributorOffboardingStatus: vi.fn(),
+  hasOpenContributorPayrollAllocations: vi.fn(),
   verifyConfidentialAccountSetup: vi.fn(), loadPayloreConfig: vi.fn()
 }));
 vi.mock("@paylore/database", () => ({
   findWorkspaceContributorByWallet: mocks.findWorkspaceContributorByWallet,
   recordContributorConfidentialAccountSetup: mocks.recordContributorConfidentialAccountSetup,
   finalizeGasTankConfidentialAccountSetupForVerifiedAccount: mocks.finalizeGasTankConfidentialAccountSetupForVerifiedAccount,
-  getContributorConfidentialAccount: vi.fn(), getContributorOffboardingStatus: vi.fn(),
-  getWorkspaceForUser: mocks.getWorkspaceForUser, hasOpenContributorPayrollAllocations: vi.fn()
+  getContributorConfidentialAccount: mocks.getContributorConfidentialAccount,
+  getContributorOffboardingStatus: mocks.getContributorOffboardingStatus,
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+  hasOpenContributorPayrollAllocations: mocks.hasOpenContributorPayrollAllocations
 }));
 vi.mock("../../../../../../../server/db", () => ({ getDatabase: mocks.getDatabase }));
 vi.mock("../../../../../../../server/session", () => ({
@@ -47,6 +52,13 @@ describe("contributor confidential-account setup route", () => {
     mocks.getWorkspaceForUser.mockResolvedValue({ role: "contributor" });
     mocks.findWorkspaceContributorByWallet.mockResolvedValue({ id: "contributor-a", lifecycle: "active" });
     mocks.loadPayloreConfig.mockReturnValue({ PAYLORE_WRAPPED_USDC_MINT: "wrapped-mint" });
+    mocks.getContributorConfidentialAccount.mockResolvedValue({
+      tokenAccountAddress: "token-account-a",
+      setupTransactionSignature: signature,
+      status: "ready"
+    });
+    mocks.getContributorOffboardingStatus.mockResolvedValue(null);
+    mocks.hasOpenContributorPayrollAllocations.mockResolvedValue(false);
     mocks.verifyConfidentialAccountSetup.mockResolvedValue("token-account-a");
     mocks.recordContributorConfidentialAccountSetup.mockResolvedValue({
       contributorId: "contributor-a", tokenAccountAddress: "token-account-a", status: "ready"
@@ -61,6 +73,21 @@ describe("contributor confidential-account setup route", () => {
     );
     expect(response.status).toBe(403);
     expect(mocks.findWorkspaceContributorByWallet).not.toHaveBeenCalled();
+  });
+
+  it("reconciles the sponsored setup reservation when readiness is retried after a finalized owner transaction", async () => {
+    const response = await GET(
+      new Request("https://paylore.test/api/confidential-account"),
+      context
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.finalizeGasTankConfidentialAccountSetupForVerifiedAccount).toHaveBeenCalledWith({}, {
+      workspaceId: "workspace-a",
+      transactionSignature: signature,
+      ownerAddress: "contributor-wallet",
+      mintAddress: "wrapped-mint",
+      tokenAccountAddress: "token-account-a"
+    });
   });
 
   it("records ready only after owner-bound finalized setup and extension readiness are verified", async () => {
