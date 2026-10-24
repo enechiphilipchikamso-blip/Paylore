@@ -969,7 +969,7 @@ export const payrollAllocations =
       ),
       check(
         "payroll_allocations_amount_commitment_proof_format",
-        sql.raw("jsonb_typeof(amount_commitment_proof) = 'array' AND amount_commitment_leaf_index >= 0")
+        sql.raw("jsonb_typeof(amount_commitment_proof) = 'array' AND jsonb_array_length(amount_commitment_proof) <= 16 AND amount_commitment_leaf_index >= 0")
       )
     ]
   );
