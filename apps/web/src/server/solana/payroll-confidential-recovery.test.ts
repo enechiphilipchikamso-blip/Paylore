@@ -420,10 +420,10 @@ describe("confidential payroll recovery orchestration", () => {
     expect(h.transferExecuted).toBe(true);
     expect(h.recoveryPlan.kind).toBe("sequential");
     expect(h.recoveryPlan.plans).toHaveLength(2);
-    expect(h.recoveryPlan.plans[0].instruction.accounts[0].address).toBe(h.escrowToken);
-    expect(h.recoveryPlan.plans[0].instruction.accounts[2].address).toBe(h.reserveToken);
-    expect(h.recoveryPlan.plans[1].instruction.programAddress).toBe(h.programId);
-    expect(Buffer.from(h.recoveryPlan.plans[1].instruction.data).subarray(0, 8))
+    expect(h.recoveryPlan.plans[0].accounts[0].address).toBe(h.escrowToken);
+    expect(h.recoveryPlan.plans[0].accounts[2].address).toBe(h.reserveToken);
+    expect(h.recoveryPlan.plans[1].programAddress).toBe(h.programId);
+    expect(Buffer.from(h.recoveryPlan.plans[1].data).subarray(0, 8))
       .toEqual(Buffer.from(discriminator("global:recover_claim")));
     expect(h.recoveryRecords).toHaveLength(1);
     expect(h.recoveryRecords[0]).toMatchObject({
