@@ -5,7 +5,7 @@ import { isWalletCancellation } from "../auth/walletErrors";
 import { useState } from "react";
 import { getBase58Decoder } from "@solana/kit";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
-const PAYROLL_CLAIMS_PER_TRANSACTION = 4;
+const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
 import { waitForDevnetFinality } from "./payroll-transaction-finality";
 
 type Claim = {
