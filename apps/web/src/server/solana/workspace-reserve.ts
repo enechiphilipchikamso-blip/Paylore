@@ -404,8 +404,10 @@ export async function getWorkspaceConfidentialReserveSnapshot(
   fallbackAuthorityAddress: string
 ): Promise<WorkspaceConfidentialReserveResult> {
   const context = await withReserveContext(db, workspaceId, fallbackAuthorityAddress, async (input) => {
-    const { status, tokenAccount, confidentialTransferReady, availableBalanceBaseUnits, pendingBalanceBaseUnits } =
-      await inspectTokenAccount(input);
+    const {
+      status, tokenAccount, confidentialTransferReady, publicBalanceBaseUnits,
+      availableBalanceBaseUnits, pendingBalanceBaseUnits
+    } = await inspectTokenAccount(input);
     if (status === "account_missing") {
       return { status: "account_missing", reserveAddress: input.reserveAddress, tokenAccount };
     }
@@ -416,7 +418,7 @@ export async function getWorkspaceConfidentialReserveSnapshot(
     if (workspaceStatus === "workspace_program_not_initialized") {
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
-        tokenAccount, confidentialTransferReady, publicBalanceBaseUnits: await readPublicReserveBalance(input.rpc, tokenAccount), availableBalanceBaseUnits, pendingBalanceBaseUnits,
+        tokenAccount, confidentialTransferReady, publicBalanceBaseUnits, availableBalanceBaseUnits, pendingBalanceBaseUnits,
         programReserveConfigured: false
       };
     }
@@ -427,18 +429,11 @@ export async function getWorkspaceConfidentialReserveSnapshot(
     return {
       status: reserveStatus === "program_configured" ? "program_configured" : "confidential_account_ready",
       reserveAddress: input.reserveAddress, tokenAccount,
-      confidentialTransferReady, availableBalanceBaseUnits, pendingBalanceBaseUnits,
+      confidentialTransferReady, publicBalanceBaseUnits, availableBalanceBaseUnits, pendingBalanceBaseUnits,
       programReserveConfigured: reserveStatus === "program_configured"
     };
   });
   return context as WorkspaceConfidentialReserveResult;
-}
-
-async function readPublicReserveBalance(
-  rpc: ReturnType<typeof createSolanaRpc>,
-  tokenAddress: string
-): Promise<string> {
-  return (await fetchToken(rpc, address(tokenAddress))).data.amount.toString();
 }
 
 async function inspectTokenAccount(input: {
