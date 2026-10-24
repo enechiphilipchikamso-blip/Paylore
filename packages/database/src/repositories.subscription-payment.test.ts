@@ -12,14 +12,14 @@ import {
   workspaceSubscriptions
 } from "./schema";
 
-function fakeDatabase() {
-  let currentSubscription: Record<string, unknown> = {
-    workspaceId: "workspace-a",
-    status: "inactive",
-    periodStart: null,
-    periodEnd: null,
-    cancelAtPeriodEnd: false
-  };
+function fakeDatabase(initialSubscription: Record<string, unknown> = {
+  workspaceId: "workspace-a",
+  status: "inactive",
+  periodStart: null,
+  periodEnd: null,
+  cancelAtPeriodEnd: false
+}) {
+  let currentSubscription: Record<string, unknown> = { ...initialSubscription };
   const payments = new Map<string, Record<string, unknown>>();
   const ledgerKeys = new Set<string>();
   const notificationKeys = new Set<string>();
@@ -185,4 +185,37 @@ describe("verified subscription payment ledger and notifications", () => {
       row.eventKey === `subscription-payment-confirmed:${input.signature}`
     )).toBe(true);
   });
+  it("renews a cancellation-scheduled subscription from its paid period end without shifting the current period start", async () => {
+    const periodStart = new Date("2026-09-24T08:00:00.000Z");
+    const periodEnd = new Date("2026-10-24T08:00:00.000Z");
+    const now = new Date("2026-10-10T08:00:00.000Z");
+    const db = fakeDatabase({
+      workspaceId: "workspace-a",
+      status: "cancel_scheduled",
+      periodStart,
+      periodEnd,
+      cancelAtPeriodEnd: true
+    });
+    const result = await applyVerifiedSubscriptionPayment(db.db, {
+      workspaceId: "workspace-a",
+      userId: "admin-a",
+      signature: "renewal-payment-signature",
+      mint: "circle-devnet-usdc-mint",
+      recipient: "configured-subscription-recipient",
+      amountBaseUnits: "49000000",
+      now
+    });
+    expect(result).toMatchObject({
+      duplicate: false,
+      status: "active",
+      periodStart,
+      periodEnd: new Date("2026-11-24T08:00:00.000Z"),
+      cancelAtPeriodEnd: false
+    });
+    expect(db.paymentRows[0]).toMatchObject({
+      periodStart: periodEnd,
+      periodEnd: new Date("2026-11-24T08:00:00.000Z")
+    });
+  });
+
 });

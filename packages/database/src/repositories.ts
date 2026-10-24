@@ -1,3 +1,4 @@
+import { canTransitionSubscriptionPaymentAttemptStatus, type SubscriptionPaymentAttemptStatus } from "./subscription-payment-attempt-policy";
 import {
   and,
   asc,
@@ -920,27 +921,39 @@ export async function updateSubscriptionPaymentAttemptStatus(
   input: {
     attemptId: string;
     status: "confirmed" | "expired" | "failed";
-    signature?: string | null;
+    signature: string | null;
     now?: Date;
   }
 ) {
   const now = input.now ?? new Date();
-  const conditions = [
-    eq(subscriptionPaymentAttempts.id, input.attemptId)
-  ];
-  if (input.signature !== undefined) {
-    conditions.push(
-      input.signature === null
-        ? isNull(subscriptionPaymentAttempts.signature)
-        : eq(subscriptionPaymentAttempts.signature, input.signature)
-    );
+  const existing = await getSubscriptionPaymentAttempt(db, input.attemptId);
+  if (!existing) return null;
+
+  const currentStatus = existing.status as SubscriptionPaymentAttemptStatus;
+  const currentSignature = existing.signature ?? null;
+  if (!canTransitionSubscriptionPaymentAttemptStatus({
+    currentStatus,
+    currentSignature,
+    nextStatus: input.status,
+    nextSignature: input.signature
+  })) return null;
+
+  if (currentStatus === input.status && currentSignature === input.signature) {
+    return existing;
   }
-  const rows = await db
+
+  const expectedState = [
+    eq(subscriptionPaymentAttempts.id, input.attemptId),
+    eq(subscriptionPaymentAttempts.status, currentStatus),
+    currentSignature === null
+      ? isNull(subscriptionPaymentAttempts.signature)
+      : eq(subscriptionPaymentAttempts.signature, currentSignature)
+  ];
+  return (await db
     .update(subscriptionPaymentAttempts)
     .set({ status: input.status, updatedAt: now })
-    .where(and(...conditions))
-    .returning();
-  return rows[0] ?? null;
+    .where(and(...expectedState))
+    .returning())[0] ?? null;
 }
 
 async function ensureSubscriptionPaymentNotification(
@@ -1026,15 +1039,13 @@ export async function applyVerifiedSubscriptionPayment(
       );
     }
 
-    const currentPaymentStart =
+    const hasCurrentPaidPeriod = Boolean(
       current.periodEnd &&
       current.periodEnd > now &&
-      (current.status === "active" ||
-        current.status === "cancel_scheduled")
-        ? current.periodEnd
-        : now;
-    const nextPeriodEnd =
-      addCalendarMonth(currentPaymentStart);
+      (current.status === "active" || current.status === "cancel_scheduled")
+    );
+    const currentPaymentStart = hasCurrentPaidPeriod ? current.periodEnd! : now;
+    const nextPeriodEnd = addCalendarMonth(currentPaymentStart);
 
     const insertedPayment =
       await tx
@@ -1101,12 +1112,7 @@ export async function applyVerifiedSubscriptionPayment(
         .update(workspaceSubscriptions)
         .set({
           status: "active",
-          periodStart:
-            current.status === "active" &&
-            current.periodEnd &&
-            current.periodEnd > now
-              ? current.periodStart
-              : currentPaymentStart,
+          periodStart: hasCurrentPaidPeriod ? current.periodStart : currentPaymentStart,
           periodEnd: nextPeriodEnd,
           cancelAtPeriodEnd: false,
           updatedAt: now
@@ -3196,6 +3202,7 @@ export async function createDueSubscriptionRenewalReminders(
 
     let subscriptionsProcessed = 0;
     let notificationsCreated = 0;
+    let ledgerEntriesCreated = 0;
     for (const subscription of subscriptions) {
       if (!subscription.periodEnd) continue;
       const dueDays = getDueSubscriptionRenewalReminderDays(subscription.periodEnd, now);
@@ -3207,22 +3214,20 @@ export async function createDueSubscriptionRenewalReminders(
         .where(eq(workspaceMemberships.workspaceId, subscription.workspaceId));
       if (members.length === 0) continue;
 
-      const notices = dueDays.flatMap((days) => members.map((member) => {
-        const canceled = subscription.status === "cancel_scheduled";
-        return {
-          workspaceId: subscription.workspaceId,
-          recipientKey: member.userId,
-          eventKey: `subscription-renewal-reminder:${subscription.periodEnd!.getTime()}:${days}`,
-          category: "Workspace & Billing",
-          title: "Subscription expires soon",
-          body: canceled
-            ? `Your workspace subscription ends in ${days} day${days === 1 ? "" : "s"}. Cancellation is scheduled at the end of the paid period. Renew manually before then to keep normal workspace operations available.`
-            : `Your workspace subscription ends in ${days} day${days === 1 ? "" : "s"}. Renewal is manual. Review billing to renew before the paid period ends and avoid Read-Only Archive.`,
-          destination: `/workspace/${subscription.workspaceId}/billing`,
-          createdAt: now
-        };
-      }));
-      const inserted = await tx
+      const canceled = subscription.status === "cancel_scheduled";
+      const notices = dueDays.flatMap((days) => members.map((member) => ({
+        workspaceId: subscription.workspaceId,
+        recipientKey: member.userId,
+        eventKey: "subscription-renewal-reminder:" + subscription.periodEnd!.getTime() + ":" + days,
+        category: "Workspace & Billing",
+        title: "Subscription expires soon",
+        body: canceled
+          ? "Your workspace subscription ends in " + days + " day" + (days === 1 ? "" : "s") + ". Cancellation is scheduled at the end of the paid period. Renew manually before then to keep normal workspace operations available."
+          : "Your workspace subscription ends in " + days + " day" + (days === 1 ? "" : "s") + ". Renewal is manual. Review billing to renew before the paid period ends and avoid Read-Only Archive.",
+        destination: "/workspace/" + subscription.workspaceId + "/billing",
+        createdAt: now
+      })));
+      const insertedNotifications = await tx
         .insert(workspaceNotifications)
         .values(notices)
         .onConflictDoNothing({
@@ -3233,9 +3238,40 @@ export async function createDueSubscriptionRenewalReminders(
           ]
         })
         .returning({ id: workspaceNotifications.id });
-      notificationsCreated += inserted.length;
+      notificationsCreated += insertedNotifications.length;
+
+      const reminderLedgerEntries = dueDays.map((days) => ({
+        workspaceId: subscription.workspaceId,
+        idempotencyKey: "subscription-renewal-reminder:" + subscription.periodEnd!.getTime() + ":" + days,
+        category: "billing",
+        entryType: "subscription_renewal_reminder",
+        status: "finalized",
+        amountBaseUnits: null,
+        mint: null,
+        referenceType: "workspace_subscription",
+        referenceId: subscription.workspaceId,
+        transactionSignature: null,
+        metadata: {
+          financial: false,
+          periodEnd: subscription.periodEnd!.toISOString(),
+          reminderDays: days,
+          cancellationScheduled: canceled
+        },
+        createdAt: now
+      }));
+      const insertedLedgerEntries = await tx
+        .insert(workspaceLedgerEntries)
+        .values(reminderLedgerEntries)
+        .onConflictDoNothing({
+          target: [
+            workspaceLedgerEntries.workspaceId,
+            workspaceLedgerEntries.idempotencyKey
+          ]
+        })
+        .returning({ id: workspaceLedgerEntries.id });
+      ledgerEntriesCreated += insertedLedgerEntries.length;
     }
-    return { subscriptionsProcessed, notificationsCreated };
+    return { subscriptionsProcessed, notificationsCreated, ledgerEntriesCreated };
   });
 }
 

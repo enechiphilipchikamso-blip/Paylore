@@ -87,6 +87,7 @@ export default async function processWorkspaceRetention() {
       contributorAssociationsRemoved: contributorCleanup.removed,
       contributorAssociationsDeferred: contributorCleanup.deferred,
       subscriptionRemindersCreated: renewalReminders.notificationsCreated,
+      subscriptionReminderLedgerEntriesCreated: renewalReminders.ledgerEntriesCreated,
       subscriptionsWithDueReminders: renewalReminders.subscriptionsProcessed,
       workspacesProcessed,
       notificationsCreated
