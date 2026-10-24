@@ -14,6 +14,7 @@ const TEXT = new TextEncoder();
 export type SponsoredClaimIntent = {
   claimId: string;
   contributorAddress: string;
+  amountCommitment: string;
   claimAddress?: string;
 };
 
@@ -178,7 +179,8 @@ export function assertAllowedPayrollInstructionSet(input: {
         concat(
           input.createClaimDiscriminator,
           hex32(claim.claimId),
-          commitment
+          commitment,
+          hex32(claim.amountCommitment)
         )
       ) ||
       !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
