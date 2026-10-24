@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
 
 const mocks = vi.hoisted(() => ({
   fetchEncodedAccount: vi.fn(),
@@ -121,10 +122,29 @@ describe("confidential proof-context cleanup", () => {
   });
 
 
+  it("closes every owned context before clearing durable tracking", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
+    });
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => ({
+      successful: true,
+      pending: false,
+      signatures: ["close-signature"],
+      trackingFailed: false
+    }));
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(true);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.createTransactionPlanExecutorWithConcurrentLeaves).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
+  });
+
   it("keeps durable tracking when closing an owned proof context fails", async () => {
     mocks.fetchEncodedAccount.mockResolvedValue({
       exists: true,
-      owner: "ZkE1Gama1Proof11111111111111111111111111111"
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
     });
     const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
     expect(result).toBe(false);
