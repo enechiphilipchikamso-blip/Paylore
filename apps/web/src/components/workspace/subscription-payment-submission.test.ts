@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { findAuthenticatedWallet } from "./authenticated-wallet";
-import { beginSubscriptionWalletApproval } from "./subscription-payment-submission";
+import {
+  beginSubscriptionWalletApproval,
+  isConfirmedWalletCancellation
+} from "./subscription-payment-submission";
 
 const PAYER = "11111111111111111111111111111111";
 const OTHER_PAYER = "Vote111111111111111111111111111111111111111";
@@ -49,5 +52,25 @@ describe("beginSubscriptionWalletApproval", () => {
       transaction
     })).toThrow("Your authenticated wallet changed. Sign in again before paying.");
     expect(fixture.signAndSendTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("isConfirmedWalletCancellation", () => {
+  it("recognizes an explicit wallet rejection", () => {
+    const cause = Object.assign(new Error("User rejected the request"), {
+      name: "UserRejectedRequestError"
+    });
+    expect(isConfirmedWalletCancellation(cause)).toBe(true);
+  });
+
+  it("does not report an abort as proof that no payment was sent", () => {
+    const cause = Object.assign(new Error("The wallet request was aborted"), {
+      name: "AbortError"
+    });
+    expect(isConfirmedWalletCancellation(cause)).toBe(false);
+  });
+
+  it("keeps an unrelated provider error out of the cancellation state", () => {
+    expect(isConfirmedWalletCancellation(new Error("RPC connection closed"))).toBe(false);
   });
 });
