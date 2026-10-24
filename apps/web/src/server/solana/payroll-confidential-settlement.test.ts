@@ -147,7 +147,7 @@ function finalizedTransaction(signature: string) {
     instructions = [{
       programId: h.zkProofProgram, accounts: [context], data: encodeBase58(new Uint8Array([3]))
     }];
-  } else if (step === "context_close") {
+  } else if (step.endsWith("context_close")) {
     instructions = [{
       programId: h.zkProofProgram, accounts: [h.closingContext], data: encodeBase58(new Uint8Array([4]))
     }];
@@ -203,7 +203,9 @@ function identifyTransactionStep(plan: unknown): string {
   if (has(h.tokenProgram, 204)) return "apply_escrow";
   if (has(h.tokenProgram, 201)) return "apply";
   if (has(h.tokenProgram, 200)) return "account_setup";
-  if (has(h.zkProofProgram, 4)) return "context_close";
+  if (has(h.zkProofProgram, 4)) {
+    return h.closingContext.startsWith("Payout") ? "payout_context_close" : "funding_context_close";
+  }
   if (has(h.zkProofProgram, 3)) {
     return h.currentPlanMode === "funding" ? "funding_proof_setup" : "payout_proof_setup";
   }
@@ -335,9 +337,11 @@ vi.mock("@solana/kit", () => ({
             h.currentPlanContexts.forEach((context) => h.contextAccounts.add(context));
           } else if (h.currentStep === "payout_proof_setup") {
             h.currentPlanContexts.forEach((context) => h.contextAccounts.add(context));
-          } else if (h.currentStep === "context_close") {
+          } else if (h.currentStep.endsWith("context_close")) {
             h.contextAccounts.delete(h.closingContext);
           }
+        } else if (failed && h.currentStep === "transfer" && h.forceDebitOnFailedTransfer) {
+          h.escrowAvailable -= 1_250_000n;
         }
         return signature;
       }
@@ -761,6 +765,17 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.ledgerCalls).toBe(0);
   });
 
+  it("releases a failed finalized escrow-funding transfer only when no balance moved", async () => {
+    h.failStep = "escrow_funding";
+    const result = await settleContributorPayrollAllocation({} as any, input);
+    expect(result.status).toBe("retry_ready");
+    expect(h.escrowStatus).toBe("ready");
+    expect(h.reserveAvailable).toBe(2_000_000n);
+    expect(h.escrowAvailable).toBe(0n);
+    expect(h.ledgerCalls).toBe(0);
+    expect(h.releaseCalls).toBe(1);
+  });
+
   it("keeps an escrow-funding proof failure retryable without posting a claim ledger", async () => {
     h.failStep = "funding_proof_setup";
     const result = await settleContributorPayrollAllocation({} as any, input);
@@ -786,6 +801,14 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.ledgerCalls).toBe(0);
     expect(h.releasedFailedCalls).toBe(0);
     expect(h.releaseCalls).toBe(0);
+  });
+
+  it("keeps a verified claim settled when proof-context cleanup fails afterward", async () => {
+    h.failStep = "payout_context_close";
+    const result = await settleContributorPayrollAllocation({} as any, input);
+    expect(result).toMatchObject({ status: "claimed", warning: "proof_context_cleanup_pending" });
+    expect(h.ledgerCalls).toBe(1);
+    expect(h.clearContextsCalls).toBe(0);
   });
 
   it("reports pending when a submitted payout has not reached finality", async () => {
