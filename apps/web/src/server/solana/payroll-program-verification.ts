@@ -38,6 +38,7 @@ export type ExpectedPayrollClaim = {
   amountCommitment: string;
   amountCommitmentProof: string[];
   amountCommitmentLeafIndex: number;
+  escrowTokenAccount: string;
 };
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -253,9 +254,13 @@ export async function verifyPayrollClaimTransaction(input: {
         expected.amountCommitmentProof.length > 16 ||
         new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(104, true) !== expected.amountCommitmentLeafIndex ||
         new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(108, true) !== expected.amountCommitmentProof.length ||
-        data.length !== 112 + expected.amountCommitmentProof.length * 32 ||
+        data.length !== 144 + expected.amountCommitmentProof.length * 32 ||
         expected.amountCommitmentProof.some((sibling, index) =>
           !sameBytes(data.subarray(112 + index * 32, 144 + index * 32), decodeHex32(sibling))
+        ) ||
+        !sameBytes(
+          data.subarray(112 + expected.amountCommitmentProof.length * 32, 144 + expected.amountCommitmentProof.length * 32),
+          getAddressEncoder().encode(address(expected.escrowTokenAccount))
         )
       ) {
         throw new Error("The on-chain claim instruction does not match the approved payroll.");
@@ -294,15 +299,17 @@ export async function verifyPayrollClaimTransaction(input: {
       account.owner !== programId ||
       account.executable ||
       !data ||
-      data.length !== 170 ||
+      data.length !== 203 ||
       !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
       !sameBytes(data.subarray(8, 40), workspaceBytes) ||
       !sameBytes(data.subarray(40, 72), contributorBytes) ||
       !sameBytes(data.subarray(72, 104), expected.claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
       !sameBytes(data.subarray(136, 168), decodeHex32(expected.amountCommitment)) ||
-      data[168] !== 0 ||
-      data[169] !== expected.claimBump
+      !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(expected.escrowTokenAccount))) ||
+      data[200] !== 0 ||
+      data[201] !== 0 ||
+      data[202] !== expected.claimBump
     ) {
       throw new Error(
         "The finalized Claim PDA account does not match the expected workspace, contributor, allocation, commitment, and unclaimed state."
@@ -322,6 +329,7 @@ export async function getFinalizedPayrollClaimState(input: {
   claimAddress: string;
   allocationCommitment: string;
   amountCommitment: string;
+  escrowTokenAccount: string;
 }): Promise<FinalizedPayrollClaimState> {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
@@ -354,20 +362,22 @@ export async function getFinalizedPayrollClaimState(input: {
     accountRecord.owner !== programId ||
     accountRecord.executable !== false ||
     !data ||
-    data.length !== 170 ||
+    data.length !== 203 ||
     !sameBytes(data.subarray(0, 8), await instructionDiscriminator("account:ClaimState")) ||
     !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(workspace)) ||
     !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributorAddress))) ||
     !sameBytes(data.subarray(72, 104), claimId) ||
     !sameBytes(data.subarray(104, 136), allocationCommitment) ||
     !sameBytes(data.subarray(136, 168), amountCommitment) ||
-    data[169] !== claim.bump ||
-    data[168] > 3
+    !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
+    data[200] !== 1 ||
+    data[202] !== claim.bump ||
+    data[201] > 3
   ) {
     throw new Error("The finalized Claim PDA does not match the expected allocation.");
   }
 
-  switch (data[168]) {
+  switch (data[201]) {
     case 0: return "unclaimed";
     case 1: return "claimed";
     case 2: return "recovered";
