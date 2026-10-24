@@ -4054,14 +4054,6 @@ export async function beginPayrollSettlementAttempt(
     const allocation = rows[0];
     if (!allocation) return { status: "not_found" as const };
 
-    // Serialize access to the single workspace reserve, not only to this allocation.
-    const reserveRows = await tx.select({
-      workspaceId: workspaceReserves.workspaceId
-    }).from(workspaceReserves).where(
-      eq(workspaceReserves.workspaceId, input.workspaceId)
-    ).for("update").limit(1);
-    if (!reserveRows[0]) return { status: "reserve_not_found" as const };
-
     if (
       allocation.status === "settlement_pending" &&
       allocation.claimAddress === input.claimAddress &&
@@ -4081,8 +4073,8 @@ export async function beginPayrollSettlementAttempt(
     }).from(payrollAllocations).where(and(
       eq(payrollAllocations.workspaceId, input.workspaceId),
       eq(payrollAllocations.status, "settlement_pending")
-    )).for("update").limit(100);
-    if (pendingRows.some((row) => row.id !== input.allocationId)) {
+    )).for("update").limit(1);
+    if (pendingRows.length > 0) {
       return { status: "workspace_busy" as const };
     }
 
