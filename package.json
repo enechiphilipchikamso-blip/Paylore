@@ -14,7 +14,7 @@
     "test": "pnpm --filter @paylore/web test",
     "test:e2e": "playwright test",
     "build": "pnpm --filter @paylore/web build",
-    "check": "pnpm audit:node-runtime && pnpm test:program-idl && pnpm lint && pnpm typecheck && pnpm test && pnpm test:client-secrets && pnpm build && pnpm audit:client-secrets && pnpm test:e2e",
+    "check": "pnpm audit:node-runtime && pnpm test:program-idl && pnpm test:devnet-program-verify && pnpm lint && pnpm typecheck && pnpm test && pnpm test:client-secrets && pnpm build && pnpm audit:client-secrets && pnpm test:e2e",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -25,9 +25,10 @@
     "test:client-secrets": "node --test scripts/audit-client-secret-exposure.test.mjs",
     "anchor:verify-idl": "node scripts/audit-payroll-program-idl.mjs",
     "test:program-idl": "node --test scripts/audit-payroll-program-idl.test.mjs",
-    "anchor:verify-deployed": "cd programs/payroll && anchor verify -p paylore_payroll 4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93",
+    "anchor:verify-deployed": "node scripts/verify-payroll-program-devnet.mjs",
     "anchor:verify-release": "pnpm anchor:build:verifiable && pnpm anchor:verify-idl && pnpm anchor:verify-deployed",
-    "anchor:build:verifiable": "cd programs/payroll && anchor build --verifiable"
+    "anchor:build:verifiable": "cd programs/payroll && anchor build --verifiable",
+    "test:devnet-program-verify": "node --test scripts/verify-payroll-program-devnet.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
