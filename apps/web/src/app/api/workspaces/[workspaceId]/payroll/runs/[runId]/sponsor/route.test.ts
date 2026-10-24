@@ -135,6 +135,8 @@ describe("payroll sponsor route", () => {
         id: "allocation-a",
         claimId,
         amountCommitment: "ab".repeat(32),
+        amountCommitmentProof: ["cd".repeat(32)],
+        amountCommitmentLeafIndex: 0,
         contributorWalletAddress: "contributor-wallet",
         status: "draft"
       }]
@@ -224,6 +226,8 @@ describe("payroll sponsor route", () => {
         id: "allocation-a",
         claimId,
         amountCommitment: "ab".repeat(32),
+        amountCommitmentProof: ["cd".repeat(32)],
+        amountCommitmentLeafIndex: 0,
         contributorWalletAddress: "contributor-wallet",
         claimAddress: "claim-pda",
         status: "unclaimed"
@@ -256,6 +260,8 @@ describe("payroll sponsor route", () => {
         id: "allocation-a",
         claimId,
         amountCommitment: "ab".repeat(32),
+        amountCommitmentProof: ["cd".repeat(32)],
+        amountCommitmentLeafIndex: 0,
         contributorWalletAddress: "contributor-wallet",
         claimAddress: "claim-pda",
         status: "unclaimed"
@@ -494,6 +500,8 @@ describe("payroll sponsor route", () => {
         id: "allocation-b",
         claimId,
         amountCommitment: "ab".repeat(32),
+        amountCommitmentProof: ["cd".repeat(32)],
+        amountCommitmentLeafIndex: 0,
         contributorWalletAddress: "contributor-wallet",
         status: "draft"
       }]
