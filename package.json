@@ -26,7 +26,8 @@
     "anchor:verify-idl": "node scripts/audit-payroll-program-idl.mjs",
     "test:program-idl": "node --test scripts/audit-payroll-program-idl.test.mjs",
     "anchor:verify-deployed": "anchor verify -p paylore_payroll 4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93",
-    "anchor:verify-release": "anchor build --verifiable && pnpm anchor:verify-idl && pnpm anchor:verify-deployed"
+    "anchor:verify-release": "pnpm anchor:build:verifiable && pnpm anchor:verify-idl && pnpm anchor:verify-deployed",
+    "anchor:build:verifiable": "cd programs/payroll && anchor build --verifiable"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
