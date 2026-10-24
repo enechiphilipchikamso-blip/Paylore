@@ -174,22 +174,18 @@ function rpcOptions(env) {
   return { url: url.toString(), headers };
 }
 
-/** Read-only verification of Devnet identity, generated ABI, deployed loader metadata, and exact program bytes. */
-export async function verifyPayrollProgramDevnet({
+/** Checks cluster identity before reading the existing program and compares its finalized bytes to the local artifact. */
+export async function verifyDeployedProgramBytecodeOnDevnet({
   rpcUrl = DEVNET_RPC_URL,
   rpcHeaders = {},
   fetchImpl = fetch,
   programId = EXPECTED_PAYLORE_PROGRAM_ID,
-  idl,
-  source,
-  anchorConfig,
   artifactBytes,
   expectedUpgradeAuthority
 }) {
   if (programId !== EXPECTED_PAYLORE_PROGRAM_ID) {
     fail("The Paylore Payroll Program ID must remain the existing approved Devnet address.");
   }
-  auditPayrollProgramIdl({ idl, source, anchorConfig });
 
   const genesisHash = await rpcRequest(rpcUrl, "getGenesisHash", [], { fetchImpl, headers: rpcHeaders });
   if (genesisHash !== PAYLORE_DEVNET_GENESIS_HASH) {
@@ -210,12 +206,26 @@ export async function verifyPayrollProgramDevnet({
   );
 
   return {
-    status: "devnet_program_bytecode_and_source_idl_verified",
+    status: "devnet_program_bytecode_verified",
     cluster: "devnet",
     programId,
     programDataAddress,
     genesisHash,
     ...metadata
+  };
+}
+
+/** Read-only verification of Devnet identity, generated ABI, deployed loader metadata, and exact program bytes. */
+export async function verifyPayrollProgramDevnet(input) {
+  auditPayrollProgramIdl({
+    idl: input.idl,
+    source: input.source,
+    anchorConfig: input.anchorConfig
+  });
+  const binary = await verifyDeployedProgramBytecodeOnDevnet(input);
+  return {
+    ...binary,
+    status: "devnet_program_bytecode_and_source_idl_verified"
   };
 }
 
