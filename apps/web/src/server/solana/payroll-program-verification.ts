@@ -311,6 +311,71 @@ export async function verifyPayrollClaimTransaction(input: {
   }
 }
 
+export type FinalizedPayrollClaimState = "unclaimed" | "claimed" | "recovered" | "settlement_pending";
+
+/** Reads the canonical Claim PDA at finalized commitment before any recovery affordance is offered. */
+export async function getFinalizedPayrollClaimState(input: {
+  authorityAddress: string;
+  workspaceId: string;
+  contributorAddress: string;
+  claimId: string;
+  claimAddress: string;
+  allocationCommitment: string;
+  amountCommitment: string;
+}): Promise<FinalizedPayrollClaimState> {
+  const config = loadPayloreConfig();
+  const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
+  if (!programId) throw new Error("The Devnet Payroll Program is not configured.");
+
+  const claimId = decodeHex32(input.claimId);
+  const allocationCommitment = decodeHex32(input.allocationCommitment);
+  const amountCommitment = decodeHex32(input.amountCommitment);
+  const { workspace } = await deriveWorkspaceAddress(
+    input.authorityAddress, input.workspaceId, programId
+  );
+  const claim = await deriveClaimAddress(
+    workspace, input.contributorAddress, claimId, programId
+  );
+  if (claim.address !== input.claimAddress) {
+    throw new Error("The Claim PDA does not match this allocation.");
+  }
+
+  const response = await readSolanaRpc<{
+    value: { owner: string; executable: boolean; data: unknown } | null;
+  }>("getAccountInfo", [
+    claim.address,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  const account = object(response)?.value;
+  const accountRecord = object(account);
+  const data = decodeBase64AccountData(accountRecord?.data);
+  if (
+    !accountRecord ||
+    accountRecord.owner !== programId ||
+    accountRecord.executable !== false ||
+    !data ||
+    data.length !== 170 ||
+    !sameBytes(data.subarray(0, 8), await instructionDiscriminator("account:ClaimState")) ||
+    !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(workspace)) ||
+    !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributorAddress))) ||
+    !sameBytes(data.subarray(72, 104), claimId) ||
+    !sameBytes(data.subarray(104, 136), allocationCommitment) ||
+    !sameBytes(data.subarray(136, 168), amountCommitment) ||
+    data[169] !== claim.bump ||
+    data[168] > 3
+  ) {
+    throw new Error("The finalized Claim PDA does not match the expected allocation.");
+  }
+
+  switch (data[168]) {
+    case 0: return "unclaimed";
+    case 1: return "claimed";
+    case 2: return "recovered";
+    case 3: return "settlement_pending";
+    default: throw new Error("The finalized Claim PDA status is invalid.");
+  }
+}
+
 export async function verifyPayrollRecoveryTransaction(input: {
   signature: string;
   authorityAddress: string;
