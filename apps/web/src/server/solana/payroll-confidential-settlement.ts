@@ -601,7 +601,7 @@ async function verifyFinalizedClaimEscrowFunding(input: {
   }).send();
   const transaction = finalizedInstructions(txResult);
   const meta = object(object(txResult)?.meta);
-  if (!transaction || !meta || meta.err !== null || object(txResult)?.slot === undefined ||
+  if (!transaction || !meta || meta.err !== null || typeof object(txResult)?.slot !== "number" ||
       transaction.signature !== input.signature ||
       transaction.keys[0] !== input.reserveAuthority ||
       !isClaimEscrowFundingTransaction({
@@ -833,13 +833,27 @@ async function fundPayrollClaimEscrow(
   }
   escrow = (await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId)) ?? escrow;
 
-  const before = await readBalances();
+  let before: Awaited<ReturnType<typeof readBalances>>;
+  try {
+    before = await readBalances();
+  } catch (error) {
+    await resetFailedPayrollClaimEscrowFunding(db, {
+      workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
+    });
+    await releaseUnsubmittedPayrollSettlementAttempt(db, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+    });
+    throw error;
+  }
   const sourceBefore = before.source.confidential.availableBalance.toString();
   const destinationBefore = before.destination.confidential.availableBalance.toString();
   if (BigInt(sourceBefore) < amount || BigInt(destinationBefore) !== 0n ||
       before.destination.confidential.pendingBalance !== 0n) {
     await resetFailedPayrollClaimEscrowFunding(db, {
       workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
+    });
+    await releaseUnsubmittedPayrollSettlementAttempt(db, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
     });
     throw new PayrollConfidentialSettlementError("payroll_claim_escrow_balance_not_ready", 409);
   }
