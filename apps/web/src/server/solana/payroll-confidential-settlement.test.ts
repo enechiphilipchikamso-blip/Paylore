@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { settleContributorPayrollAllocation } from "./payroll-confidential-settlement";
 
 const h = vi.hoisted(() => ({
+  tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  zkProofProgram: "ZkEgalProof111111111111111111111111111111",
   reserveAuthority: "ReserveAuthority1111111111111111111111111",
   contributor: "ContributorWallet11111111111111111111111",
   destination: "ContributorTokenAccount11111111111111111",
@@ -40,8 +42,6 @@ const h = vi.hoisted(() => ({
   releasedFailedCalls: 0
 }));
 
-const TOKEN_2022_PROGRAM_ADDRESS = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS = "ZkEgalProof111111111111111111111111111111";
 const SYSVAR_INSTRUCTIONS = "Sysvar1nstructions1111111111111111111111111";
 
 function hash(value: string): Uint8Array {
@@ -98,7 +98,7 @@ function finalizedTransaction(signature: string) {
         accountKeys: [h.reserveAuthority],
         instructions: [
           {
-            programId: TOKEN_2022_PROGRAM_ADDRESS,
+            programId: h.tokenProgram,
             accounts: [h.reserveToken, h.mint, h.destination, "TransferAuthority111", h.context1],
             data: encodeBase58(new Uint8Array([27, 7]))
           },
@@ -224,14 +224,14 @@ vi.mock("@solana/kit", () => ({
     throw new Error("Unexpected PDA seed.");
   },
   fetchEncodedAccount: async (_rpc: unknown, accountAddress: string) => {
-    if (accountAddress === h.reserveToken) return { exists: h.reserveAccountExists, owner: TOKEN_2022_PROGRAM_ADDRESS };
-    return { exists: false, owner: TOKEN_2022_PROGRAM_ADDRESS };
+    if (accountAddress === h.reserveToken) return { exists: h.reserveAccountExists, owner: h.tokenProgram };
+    return { exists: false, owner: h.tokenProgram };
   },
   isSome: (value: unknown) => value !== null && value !== undefined
 }));
 
 vi.mock("@solana-program/token-2022", () => ({
-  TOKEN_2022_PROGRAM_ADDRESS,
+  h.tokenProgram,
   fetchMint: vi.fn(async () => ({
     data: { decimals: 6, extensions: [{ __kind: "ConfidentialTransferMint", autoApproveNewAccounts: true }] }
   })),
@@ -248,7 +248,7 @@ vi.mock("@solana-program/token-2022", () => ({
     255
   ]),
   getConfidentialDepositInstruction: vi.fn(() => ({
-    programAddress: TOKEN_2022_PROGRAM_ADDRESS,
+    programAddress: h.tokenProgram,
     accounts: [],
     data: new Uint8Array([202])
   }))
@@ -270,7 +270,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
     return { availableBalance, pendingBalance };
   }),
   getApplyConfidentialPendingBalanceInstructionFromToken: vi.fn(() => ({
-    programAddress: TOKEN_2022_PROGRAM_ADDRESS,
+    programAddress: h.tokenProgram,
     accounts: [],
     data: new Uint8Array([201])
   })),
@@ -280,7 +280,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
       {
         kind: "single",
         instruction: {
-          programAddress: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+          programAddress: h.zkProofProgram,
           accounts: [{ address: h.context1 }],
           data: new Uint8Array([3])
         }
@@ -288,7 +288,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
       {
         kind: "single",
         instruction: {
-          programAddress: TOKEN_2022_PROGRAM_ADDRESS,
+          programAddress: h.tokenProgram,
           accounts: [
             { address: h.reserveToken }, { address: h.mint }, { address: h.destination },
             { address: "TransferAuthority111" }, { address: h.context1 }
@@ -301,7 +301,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
         plans: [h.context1, h.context2, h.context3].map((context) => ({
           kind: "single",
           instruction: {
-            programAddress: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+            programAddress: h.zkProofProgram,
             accounts: [{ address: context }],
             data: new Uint8Array([1])
           }
@@ -312,7 +312,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
   getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async () => ({
     kind: "single",
     instruction: {
-      programAddress: TOKEN_2022_PROGRAM_ADDRESS,
+      programAddress: h.tokenProgram,
       accounts: [],
       data: new Uint8Array([200])
     },
@@ -321,9 +321,9 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
 }));
 
 vi.mock("@solana-program/zk-elgamal-proof", () => ({
-  ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+  h.zkProofProgram,
   closeContextStateProof: vi.fn(() => ({
-    programAddress: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+    programAddress: h.zkProofProgram,
     accounts: [],
     data: new Uint8Array([4])
   }))
