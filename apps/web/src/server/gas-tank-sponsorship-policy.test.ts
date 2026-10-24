@@ -22,6 +22,7 @@ const commitment = "ab".repeat(32);
 const claim = {
   claimId: "01".repeat(32),
   contributorAddress: "contributor-wallet",
+  amountCommitment: "ab".repeat(32),
   claimAddress: "claim-pda"
 };
 const encoder = new TextEncoder();
