@@ -151,4 +151,57 @@ describe("payroll recovery route", () => {
 
     expect(response.status).toBe(403);
   });
+
+  it.each(["claimed", "settlement_pending", "recovered", "cancelled"] as const)(
+    "rejects a %s allocation before accepting a recovery transaction",
+    async (status) => {
+      mocks.getWorkspacePayrollRun.mockResolvedValue({
+        run: { allocationCommitment: "ab".repeat(32) },
+        allocations: [{
+          id: "allocation-a",
+          claimId: "01".repeat(32),
+          claimAddress: "claim-address",
+          contributorWalletAddress: "contributor-wallet",
+          status
+        }]
+      });
+
+      const response = await POST(
+        new Request("https://paylore.test/api/recovery", {
+          method: "POST",
+          headers: { origin: "https://paylore.test", "content-type": "application/json" },
+          body: JSON.stringify({
+            signature: "5".repeat(64),
+            reason: "payroll_correction"
+          })
+        }),
+        routeContext
+      );
+
+      expect(response.status).toBe(409);
+      expect(mocks.verifyPayrollRecoveryTransaction).not.toHaveBeenCalled();
+      expect(mocks.recordPayrollRecovery).not.toHaveBeenCalled();
+    }
+  );
+
+  it("does not reconcile a competing claim when the finalized on-chain recovery check loses the race", async () => {
+    mocks.verifyPayrollRecoveryTransaction.mockRejectedValueOnce(
+      new Error("The finalized Claim PDA is not in the expected RECOVERED state.")
+    );
+
+    const response = await POST(
+      new Request("https://paylore.test/api/recovery", {
+        method: "POST",
+        headers: { origin: "https://paylore.test", "content-type": "application/json" },
+        body: JSON.stringify({
+          signature: "5".repeat(64),
+          reason: "payroll_correction"
+        })
+      }),
+      routeContext
+    );
+
+    expect(response.status).toBe(503);
+    expect(mocks.recordPayrollRecovery).not.toHaveBeenCalled();
+  });
 });
