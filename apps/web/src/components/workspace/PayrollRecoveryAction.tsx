@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type RecoveryReason =
   | "incorrect_allocation"
@@ -55,6 +55,48 @@ export function PayrollRecoveryAction({
     text: string;
   } | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    void fetch(
+      `/api/workspaces/${workspaceId}/payroll/runs/${runId}/allocations/${allocationId}/recovery`,
+      { cache: "no-store", credentials: "same-origin" }
+    ).then(async (response) => {
+      if (!response.ok) return null;
+      return await response.json() as {
+        status?: string;
+        reason?: string | null;
+        note?: string | null;
+        recoverySignature?: string | null;
+        recoveryApplySignature?: string | null;
+        proofSetupSignature?: string | null;
+      };
+    }).then((current) => {
+      if (!active || !current || current.status !== "recovery_pending") return;
+      if (current.reason && isRecoveryReason(current.reason)) setReason(current.reason);
+      if (current.reason === "other" && current.note) setNote(current.note);
+      if (current.recoveryApplySignature) {
+        setPendingSignature(current.recoveryApplySignature);
+        setPendingPhase("reserve_balance_apply");
+      } else if (current.recoverySignature) {
+        setPendingSignature(current.recoverySignature);
+        setPendingPhase("recovery");
+      } else if (current.proofSetupSignature) {
+        setPendingSignature(current.proofSetupSignature);
+        setPendingPhase("proof_setup");
+      } else {
+        setPendingPhase("recovery");
+      }
+      setReconciliationPending(true);
+      setMessage({
+        state: "partial",
+        text: "An earlier recovery attempt needs reconciliation. Check its status before starting another recovery."
+      });
+    }).catch(() => {
+      // The recovery read is advisory; the server remains authoritative when an action is submitted.
+    });
+    return () => { active = false; };
+  }, [workspaceId, runId, allocationId]);
+
   async function submitRecovery() {
     if (busy || !canRecover) return;
     const recoveryNote = reason === "other" ? note.trim() || null : null;
@@ -99,6 +141,7 @@ export function PayrollRecoveryAction({
         error?: string;
         message?: string;
         warning?: string;
+        valueTransferred?: boolean;
       } | null;
 
       if (response.status === 202 || result?.status === "pending") {
