@@ -7,6 +7,7 @@ import {
   subscriptionPaymentSignature
 } from "./subscription-payment-transaction";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
+import { beginSubscriptionWalletApproval } from "./subscription-payment-submission";
 import { isWalletCancellation } from "../auth/walletErrors";
 
 type PreparedActivationPayment = {
@@ -242,11 +243,9 @@ export function SubscriptionPaymentAction({
     try {
       walletSubmissionStarted = true;
       // The wallet request starts synchronously from this approval click; no asynchronous preparation remains between the click and wallet invocation.
-      const submission = wallet.signAndSendTransaction({
-        account: wallet.account,
-        transaction: prepared.transaction,
-        chain: "solana:devnet",
-        options: { commitment: "confirmed" }
+      const submission = beginSubscriptionWalletApproval(wallet, {
+        payer: prepared.payer,
+        transaction: prepared.transaction
       });
       setPreparedPayment(null);
       const [sent] = await submission;
