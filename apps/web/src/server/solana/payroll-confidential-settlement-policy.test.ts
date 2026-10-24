@@ -12,6 +12,16 @@ function ix(program: string, data: number[], accounts: string[] = []): Instructi
   return { programAddress: address(program), data: Uint8Array.from(data), accounts: accounts.map((value) => ({ address: address(value), role: 0 })) };
 }
 describe("confidential settlement instruction binding", () => {
+  it("treats only finalized signatures as authoritative", async () => {
+    const { classifyTransactionFinality } = await import("./payroll-confidential-settlement-policy");
+    expect(classifyTransactionFinality(null)).toBe("pending");
+    expect(classifyTransactionFinality({ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "processed" })).toBe("pending");
+    expect(classifyTransactionFinality({ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "confirmed" })).toBe("pending");
+    expect(classifyTransactionFinality({ err: null, confirmationStatus: "confirmed" })).toBe("pending");
+    expect(classifyTransactionFinality({ err: null, confirmationStatus: "finalized" })).toBe("finalized");
+    expect(classifyTransactionFinality({ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "finalized" })).toBe("failed");
+  });
+
   const transfer = ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 7], [source, mint, destination]);
   const expected = { source, mint, destination };
   it("rejects a mismatched transfer source, mint, destination, program and variant", () => {

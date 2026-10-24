@@ -52,3 +52,13 @@ export function bindClaimedStateToConfidentialTransfer(
     plans: [plan.plans[0]!, nonDivisibleSequentialInstructionPlan([plan.plans[1].instruction, markClaimed]), plan.plans[2]!]
   };
 }
+
+export type TransactionFinality = "finalized" | "failed" | "pending";
+
+/** Only finalized outcomes are authoritative; processed failures can disappear on a fork. */
+export function classifyTransactionFinality(
+  status: { err?: unknown; confirmationStatus?: string | null } | null | undefined
+): TransactionFinality {
+  if (!status || status.confirmationStatus !== "finalized") return "pending";
+  return status.err === null || status.err === undefined ? "finalized" : "failed";
+}
