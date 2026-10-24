@@ -40,7 +40,7 @@ describe("confidential allocation amount commitments", () => {
       amountBaseUnits: "1", claimId, secretHex: "not-secret"
     })).toThrow("32-byte hexadecimal key");
     expect(() => derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1", claimId: "bad", allocationCommitment, secretHex
-    })).toThrow("32-byte hexadecimal values");
+      amountBaseUnits: "1", claimId: "bad", secretHex
+    })).toThrow("claim ID must be a 32-byte hexadecimal value");
   });
 });
