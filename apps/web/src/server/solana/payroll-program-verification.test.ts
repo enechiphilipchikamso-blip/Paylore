@@ -194,16 +194,13 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [
-              { pubkey: authorityAddress, signer: true },
-              { pubkey: reserveAuthorityAddress, signer: true }
-            ],
-            instructions: instruction.instructions
+            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            instructions: [instruction]
           }
         },
         meta: { err: null }
       })
-      .mockResolvedValueOnce(claimStateAccount(instruction));
+      .mockResolvedValueOnce(claimStateAccount(instruction, { escrowFunded: false }));
 
     await expect(
       verifyPayrollClaimTransaction({
@@ -252,7 +249,8 @@ describe("payroll program transaction verification", () => {
           contributorAddress,
           amountCommitment,
           amountCommitmentProof,
-          amountCommitmentLeafIndex
+          amountCommitmentLeafIndex,
+        escrowTokenAccount
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -284,7 +282,8 @@ describe("payroll program transaction verification", () => {
         contributorAddress,
         amountCommitment,
         amountCommitmentProof: ["ff".repeat(32)],
-        amountCommitmentLeafIndex
+        amountCommitmentLeafIndex,
+      escrowTokenAccount
       }]
     })).rejects.toThrow("does not match the expected workspace");
   });
@@ -317,7 +316,8 @@ describe("payroll program transaction verification", () => {
         contributorAddress,
         amountCommitment,
         amountCommitmentProof,
-        amountCommitmentLeafIndex
+        amountCommitmentLeafIndex,
+      escrowTokenAccount
       }]
     })).rejects.toThrow("does not match the expected workspace");
   });
@@ -354,7 +354,8 @@ describe("payroll program transaction verification", () => {
           contributorAddress,
           amountCommitment,
           amountCommitmentProof,
-          amountCommitmentLeafIndex
+          amountCommitmentLeafIndex,
+        escrowTokenAccount
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -386,7 +387,8 @@ describe("payroll program transaction verification", () => {
           contributorAddress,
           amountCommitment,
           amountCommitmentProof,
-          amountCommitmentLeafIndex
+          amountCommitmentLeafIndex,
+        escrowTokenAccount
         }]
       })
     ).rejects.toThrow("not finalized successfully");
@@ -421,7 +423,8 @@ describe("payroll program transaction verification", () => {
           contributorAddress,
           amountCommitment,
           amountCommitmentProof,
-          amountCommitmentLeafIndex
+          amountCommitmentLeafIndex,
+        escrowTokenAccount
         }]
       })
     ).rejects.toThrow("does not match this allocation");
@@ -436,8 +439,11 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
-            instructions: [instruction]
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: reserveAuthorityAddress, signer: true }
+            ],
+            instructions: instruction.instructions
           }
         },
         meta: { err: null }
@@ -453,6 +459,11 @@ describe("payroll program transaction verification", () => {
         claimId,
         claimAddress: claim.claimAddress,
         allocationCommitment: commitment,
+        amountCommitment,
+        escrowTokenAccount,
+        reserveTokenAccount,
+        mint: mintAddress,
+        reserveAuthorityAddress,
         recoveryReasonCommitment
       })
     ).resolves.toBeUndefined();
@@ -467,8 +478,11 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
-            instructions: [instruction]
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: reserveAuthorityAddress, signer: true }
+            ],
+            instructions: instruction.instructions
           }
         },
         meta: { err: null }
@@ -484,6 +498,11 @@ describe("payroll program transaction verification", () => {
         claimId,
         claimAddress: claim.claimAddress,
         allocationCommitment: commitment,
+        amountCommitment,
+        escrowTokenAccount,
+        reserveTokenAccount,
+        mint: mintAddress,
+        reserveAuthorityAddress,
         recoveryReasonCommitment
       })
     ).rejects.toThrow("not in the expected RECOVERED state");
