@@ -36,6 +36,7 @@ import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses, matchesExactConfidentialDebit
 } from "./payroll-confidential-settlement-policy";
+import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
