@@ -37,6 +37,11 @@ import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
+import {
+  advanceConfidentialSequence,
+  assertConfidentialStepAllowed,
+  createConfidentialSequenceProgress
+} from "../../components/workspace/confidential-operation-sequence";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
@@ -716,6 +721,7 @@ export async function settleContributorPayrollAllocation(
       let submittedSignature: string | undefined;
       let proofDurationMs: number | undefined;
       let proofContexts: string[] = [];
+      let sequence = createConfidentialSequenceProgress();
       try {
         await ensureReserveConfidentialAccount({
           rpc, signer, mint, mintAccount, tokenAddress: reserveToken, elgamal, aesKey
@@ -729,6 +735,7 @@ export async function settleContributorPayrollAllocation(
         if (!configured.successful || configured.pending || configured.trackingFailed) {
           throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
         }
+        sequence = advanceConfidentialSequence(sequence, "reserve_configure", "finalized");
 
         let balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         if (balance.confidential.pendingBalance > 0n) {
@@ -738,6 +745,8 @@ export async function settleContributorPayrollAllocation(
           if (!apply.successful || apply.pending || apply.trackingFailed) {
             throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
           }
+          assertConfidentialStepAllowed(sequence, "pending_apply_before_deposit");
+          sequence = advanceConfidentialSequence(sequence, "pending_apply_before_deposit", "finalized");
           balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         }
         const amount = BigInt(allocation.amountBaseUnits);
@@ -752,6 +761,8 @@ export async function settleContributorPayrollAllocation(
           if (!deposit.successful || deposit.pending || deposit.trackingFailed) {
             throw new PayrollConfidentialSettlementError("reserve_confidential_deposit_failed", 503);
           }
+          assertConfidentialStepAllowed(sequence, "deposit");
+          sequence = advanceConfidentialSequence(sequence, "deposit", "finalized");
           balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           if (balance.confidential.pendingBalance > 0n) {
             const applied = await executePlan(rpc, signer, singleInstructionPlan(getApplyConfidentialPendingBalanceInstructionFromToken({
@@ -760,6 +771,8 @@ export async function settleContributorPayrollAllocation(
             if (!applied.successful || applied.pending || applied.trackingFailed) {
               throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
             }
+            assertConfidentialStepAllowed(sequence, "pending_apply_after_deposit");
+            sequence = advanceConfidentialSequence(sequence, "pending_apply_after_deposit", "finalized");
             balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           }
         }
@@ -816,6 +829,9 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("confidential_transfer_proof_setup_failed", 503);
         }
 
+        assertConfidentialStepAllowed(sequence, "proof_setup");
+        sequence = advanceConfidentialSequence(sequence, "proof_setup", "finalized");
+
         const boundPlan = bindSettlementPendingStateToConfidentialTransfer(
           transferPlan,
           markSettlementPendingInstruction({
@@ -864,6 +880,10 @@ export async function settleContributorPayrollAllocation(
           authority: evidence.authorityAddress, commitment: evidence.allocationCommitment, workspace, reserveState,
           reserveToken, destination, sourceBefore, proofContexts, proofDurationMs
         });
+        if (reconciled.status === "claimed") {
+          assertConfidentialStepAllowed(sequence, "confidential_transfer");
+          sequence = advanceConfidentialSequence(sequence, "confidential_transfer", "finalized");
+        }
         return reconciled;
       } catch (error) {
         if (!submittedSignature) {
