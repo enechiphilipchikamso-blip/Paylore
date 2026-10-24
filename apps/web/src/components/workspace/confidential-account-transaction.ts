@@ -8,7 +8,10 @@ import {
   getConfidentialWithdrawInstructionPlan
 } from "@solana-program/token-2022/confidential";
 import { getConfidentialAccountClosureBlocker } from "./confidential-account-closure-policy";
-import { assertExactConfidentialWithdrawal } from "./confidential-operation-sequence";
+import {
+  assertConfidentialAccountAutoApproval,
+  assertExactConfidentialWithdrawal
+} from "./confidential-operation-sequence";
 import { buildWrappedUsdcUnwrapPlan } from "./token-wrap-transaction";
 import {
   assertDevnetTokenWrapIdentity,
@@ -283,10 +286,19 @@ export async function setupConfidentialAccount(
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const mint = address(mintAddress);
   const mintAccount = await fetchMint(rpc, mint);
-  const includeConfidentialTransferFeeAmount = requireConfidentialMintExtensions(
-    isSome(mintAccount.data.extensions)
-      ? mintAccount.data.extensions.value
-      : []
+  const mintExtensions = isSome(mintAccount.data.extensions)
+    ? mintAccount.data.extensions.value
+    : [];
+  requireConfidentialMintExtensions(mintExtensions);
+  const confidentialTransferMint = mintExtensions.find(
+    (extension) => extension.__kind === "ConfidentialTransferMint"
+  ) as { autoApproveNewAccounts?: boolean } | undefined;
+  assertConfidentialAccountAutoApproval({
+    confidentialTransferExtensionPresent: confidentialTransferMint !== undefined,
+    autoApproveNewAccounts: confidentialTransferMint?.autoApproveNewAccounts === true
+  });
+  const includeConfidentialTransferFeeAmount = mintExtensions.some(
+    (extension) => extension.__kind === "TransferFeeConfig"
   );
   const { owner, keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
