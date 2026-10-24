@@ -1,4 +1,5 @@
 import type { findAuthenticatedWallet } from "./authenticated-wallet";
+import { isWalletCancellation } from "../auth/walletErrors";
 
 type AuthenticatedWallet = ReturnType<typeof findAuthenticatedWallet>;
 
@@ -16,4 +17,10 @@ export function beginSubscriptionWalletApproval(
     chain: "solana:devnet",
     options: { commitment: "confirmed" }
   });
+}
+
+/** An abort can happen after wallet submission begins, so only explicit wallet rejection is a safe cancellation. */
+export function isConfirmedWalletCancellation(cause: unknown): boolean {
+  if (cause instanceof Error && cause.name === "AbortError") return false;
+  return isWalletCancellation(cause);
 }
