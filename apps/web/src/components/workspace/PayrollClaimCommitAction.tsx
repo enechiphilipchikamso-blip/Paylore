@@ -53,7 +53,7 @@ export function PayrollClaimCommitAction({
         !Number.isSafeInteger(claim.amountCommitmentLeafIndex) ||
         claim.amountCommitmentLeafIndex < 0 ||
         !Array.isArray(claim.amountCommitmentProof) ||
-        claim.amountCommitmentProof.length > 32 ||
+        claim.amountCommitmentProof.length > 16 ||
         !claim.amountCommitmentProof.every((sibling) => /^[0-9a-f]{64}$/i.test(sibling))
       )
     ) {
@@ -70,14 +70,15 @@ export function PayrollClaimCommitAction({
     setMessage(null);
     try {
       const wallet = await findAuthenticatedWallet(walletAddress);
-      const batchCount = Math.ceil(
-        claims.length / PAYROLL_CLAIMS_PER_TRANSACTION
-      );
+      const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 9)
+        ? 1
+        : PAYROLL_CLAIMS_PER_TRANSACTION;
+      const batchCount = Math.ceil(claims.length / claimsPerTransaction);
       const decoder = getBase58Decoder();
       for (let index = 0; index < batchCount; index += 1) {
         const claimBatch = claims.slice(
-          index * PAYROLL_CLAIMS_PER_TRANSACTION,
-          (index + 1) * PAYROLL_CLAIMS_PER_TRANSACTION
+          index * claimsPerTransaction,
+          (index + 1) * claimsPerTransaction
         );
         const sponsorshipResponse = await fetch(
           `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
