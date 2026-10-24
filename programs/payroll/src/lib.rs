@@ -724,6 +724,7 @@ mod tests {
                 Pubkey::new_unique(),
                 [1; 32],
                 [2; 32],
+                [8; 32],
             ),
             Ok(false)
         ));
@@ -742,6 +743,7 @@ mod tests {
             Pubkey::new_unique(),
             [1; 32],
             [2; 32],
+            [8; 32],
         )
         .is_err());
         let matching = ClaimState {
@@ -749,6 +751,7 @@ mod tests {
             contributor: existing.contributor,
             claim_id: existing.claim_id,
             allocation_commitment: existing.allocation_commitment,
+            amount_commitment: existing.amount_commitment,
             status: ClaimStatus::Unclaimed,
             bump: existing.bump,
         };
@@ -758,7 +761,8 @@ mod tests {
                 existing.workspace,
                 existing.contributor,
                 existing.claim_id,
-                existing.allocation_commitment
+                existing.allocation_commitment,
+                existing.amount_commitment
             ),
             Ok(true)
         ));
@@ -767,6 +771,7 @@ mod tests {
             contributor: matching.contributor,
             claim_id: matching.claim_id,
             allocation_commitment: matching.allocation_commitment,
+            amount_commitment: matching.amount_commitment,
             status: ClaimStatus::Claimed,
             bump: matching.bump,
         };
@@ -775,7 +780,8 @@ mod tests {
             existing.workspace,
             existing.contributor,
             existing.claim_id,
-            existing.allocation_commitment
+            existing.allocation_commitment,
+            existing.amount_commitment
         )
         .is_err());
     }
