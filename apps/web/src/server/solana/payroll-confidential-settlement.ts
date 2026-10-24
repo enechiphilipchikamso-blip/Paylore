@@ -49,7 +49,7 @@ type DerivedKeys = Awaited<ReturnType<typeof deriveConfidentialKeys>>;
 type Finality = "finalized" | "failed" | "pending";
 
 export type PayrollSettlementResult = {
-  status: "claimed" | "already_settled" | "pending" | "retry_ready" | "workspace_busy";
+  status: "claimed" | "already_settled" | "pending" | "retry_ready" | "workspace_busy" | "state_conflict";
   signature?: string;
   amountBaseUnits?: string;
   proofDurationMs?: number;
@@ -321,6 +321,45 @@ function programOf(instruction: Record<string, unknown>, keys: string[]): string
   if (typeof instruction.programId === "string") return instruction.programId;
   return typeof instruction.programIdIndex === "number" ? keys[instruction.programIdIndex] ?? "" : "";
 }
+type FinalizedClaimState = "unclaimed" | "claimed" | "recovered";
+
+async function readFinalizedClaimState(input: {
+  rpc: ReturnType<typeof createSolanaRpc>;
+  programId: string;
+  workspace: string;
+  contributor: string;
+  claim: string;
+  claimId: string;
+  allocationCommitment: string;
+}): Promise<FinalizedClaimState> {
+  if (!/^[0-9a-f]{64}$/i.test(input.claimId) ||
+      !/^[0-9a-f]{64}$/i.test(input.allocationCommitment)) {
+    throw new PayrollConfidentialSettlementError("settlement_claim_commitment_invalid", 409);
+  }
+  const claimId = Uint8Array.from(input.claimId.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
+  const commitment = Uint8Array.from(input.allocationCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
+  const [derivedClaim, bump] = await getProgramDerivedAddress({
+    programAddress: address(input.programId),
+    seeds: [encoder.encode("claim"), getAddressEncoder().encode(address(input.workspace)),
+      getAddressEncoder().encode(address(input.contributor)), claimId]
+  });
+  const response = await input.rpc.getAccountInfo(address(input.claim), {
+    commitment: "finalized", encoding: "base64"
+  }).send();
+  const account = object(response.value);
+  const data = decodeAccountData(account?.data);
+  if (derivedClaim !== input.claim || !account || account.owner !== input.programId ||
+      account.executable === true || !data || data.length !== 138 ||
+      !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
+      !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
+      !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
+      !sameBytes(data.subarray(72, 104), claimId) ||
+      !sameBytes(data.subarray(104, 136), commitment) || data[137] !== bump || data[136] > 2) {
+    throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
+  }
+  return data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : "recovered";
+}
+
 async function verifyFinalizedSettlement(input: {
   rpc: ReturnType<typeof createSolanaRpc>; signature: string; programId: string; workspace: string;
   reserveState: string; reserveAuthority: string; reserveToken: string; contributor: string;
@@ -421,17 +460,12 @@ async function reconcileSettlement(
     if (!cleaned) {
       return { status: "pending", signature: input.settlementSignature, warning: "proof_context_cleanup_pending" };
     }
-    let claimState: string;
+    let claimState: FinalizedClaimState;
     try {
-      const state = await input.rpc.getAccountInfo(address(input.claim), {
-        commitment: "finalized", encoding: "base64"
-      }).send();
-      const account = object(state.value);
-      const data = decodeAccountData(account?.data);
-      if (!account || account.owner !== input.programId || !data || data.length !== 138 ||
-          !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
-          data[136] > 2) return { status: "pending", signature: input.settlementSignature };
-      claimState = data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : "recovered";
+      claimState = await readFinalizedClaimState({
+        rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
+        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+      });
     } catch {
       return { status: "pending", signature: input.settlementSignature };
     }
