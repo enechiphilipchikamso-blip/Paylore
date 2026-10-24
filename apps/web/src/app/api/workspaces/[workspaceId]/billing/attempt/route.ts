@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { applyVerifiedSubscriptionPayment, createWorkspaceNotificationForFinanceMembers, getSubscriptionPaymentAttempt, getWorkspaceForUser, recordSubscriptionPaymentAttemptSignature, updateSubscriptionPaymentAttemptStatus } from "@paylore/database";
+import { applyVerifiedSubscriptionPayment, getSubscriptionPaymentAttempt, getWorkspaceForUser, recordSubscriptionPaymentAttemptSignature, updateSubscriptionPaymentAttemptStatus } from "@paylore/database";
 import { getDatabase } from "../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../server/security";
 import { clearSessionCookie, getSessionState } from "../../../../../server/session";
@@ -70,7 +70,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       });
       if (decision.kind === "submitted") {
         if (decision.failedOnChain) {
-          await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "failed", signature: null });
+          attempt = await recordSubscriptionPaymentAttemptSignature(db, {
+            attemptId: attempt.id,
+            signature: decision.signature
+          });
+          await updateSubscriptionPaymentAttemptStatus(db, {
+            attemptId: attempt.id,
+            status: "failed",
+            signature: decision.signature
+          });
           return NextResponse.json({ status: "safe_to_retry" });
         }
         attempt = await recordSubscriptionPaymentAttemptSignature(db, { attemptId: attempt.id, signature: decision.signature });
@@ -83,20 +91,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     }
 
     try {
-      const verified = await verifySubscriptionPayment(attempt.signature, session.session.walletAddress);
+      const verified = await verifySubscriptionPayment(attempt.signature, session.session.walletAddress, attempt.memo);
       if (verified.recipient !== attempt.recipient || verified.mint !== attempt.mint || verified.amountBaseUnits !== attempt.amountBaseUnits) {
         await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "failed", signature: attempt.signature });
         return NextResponse.json({ error: "payment_attempt_mismatch" }, { status: 422 });
       }
       await applyVerifiedSubscriptionPayment(db, { workspaceId, userId: session.session.userId, ...verified });
       await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "confirmed", signature: attempt.signature });
-      await createWorkspaceNotificationForFinanceMembers(db, {
-        workspaceId, eventKey: `subscription-payment:${attempt.signature}`, category: "workspace_billing",
-        title: "Subscription payment confirmed",
-        body: "A verified USDC payment activated or renewed this workspace subscription.",
-        destination: `/workspace/${workspaceId}/billing`
-      });
-      return NextResponse.json({ status: "active" });
+            return NextResponse.json({ status: "active" });
     } catch (error) {
       if (error instanceof PaymentVerificationError && error.reason === "not_found") return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
       if (error instanceof PaymentVerificationError) return NextResponse.json({ error: "payment_could_not_be_verified" }, { status: 422 });

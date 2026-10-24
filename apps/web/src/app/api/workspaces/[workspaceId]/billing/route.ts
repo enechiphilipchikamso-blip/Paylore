@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   applyVerifiedSubscriptionPayment,
-  createWorkspaceNotificationForFinanceMembers,
   getWorkspaceForUser,
   getWorkspaceSubscription,
   keepSubscriptionActive,
@@ -121,16 +120,7 @@ export async function POST(
         ...verified
       }
     );
-    await createWorkspaceNotificationForFinanceMembers(access.db, {
-      workspaceId,
-      eventKey: `subscription-payment:${parsed.data.signature}`,
-      category: "workspace_billing",
-      title: "Subscription payment confirmed",
-      body: "A verified USDC payment activated or renewed this workspace subscription.",
-      destination: `/workspace/${workspaceId}/billing`
-    });
-
-    return NextResponse.json({
+        return NextResponse.json({
       status: "active",
       duplicate: result.duplicate,
       periodEnd: result.periodEnd
