@@ -34,7 +34,7 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindClaimedStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
+  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -421,7 +421,7 @@ async function verifyFinalizedSettlement(input: {
         accounts[0] === input.reserveToken && accounts[1] === input.mint && accounts[2] === input.destination) {
       transferIndex = index; transfers++;
     }
-    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_claimed")) &&
+    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_settlement_pending")) &&
         accounts.length === 9 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
         accounts[2] === input.reserveState && accounts[3] === input.reserveAuthority &&
         accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.destination &&
@@ -820,7 +820,7 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("confidential_transfer_proof_setup_failed", 503);
         }
 
-        const boundPlan = bindClaimedStateToConfidentialTransfer(
+        const boundPlan = bindSettlementPendingStateToConfidentialTransfer(
           transferPlan,
           markSettlementPendingInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
