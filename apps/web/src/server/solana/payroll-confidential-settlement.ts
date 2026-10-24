@@ -34,7 +34,7 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindClaimedStateToConfidentialTransfer, getProofContextAddresses
+  bindClaimedStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -124,9 +124,8 @@ async function waitForFinality(rpc: ReturnType<typeof createSolanaRpc>, sig: Sig
   const deadline = Date.now() + FINALITY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const response = await rpc.getSignatureStatuses([sig], { searchTransactionHistory: true }).send();
-    const status = response.value[0];
-    if (status?.err) return "failed";
-    if (status?.confirmationStatus === "finalized") return "finalized";
+    const finality = classifyTransactionFinality(response.value[0]);
+    if (finality !== "pending") return finality;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   return "pending";
@@ -209,8 +208,9 @@ async function proofSetupFinality(
 ): Promise<Finality> {
   for (const value of signatures) {
     const status = (await rpc.getSignatureStatuses([value as Signature], { searchTransactionHistory: true }).send()).value[0];
-    if (status?.err) return "failed";
-    if (status?.confirmationStatus !== "finalized") return "pending";
+    const finality = classifyTransactionFinality(status);
+    if (finality === "failed") return "failed";
+    if (finality === "pending") return "pending";
   }
   return "finalized";
 }
@@ -407,20 +407,42 @@ async function reconcileSettlement(
   ]);
   const status = statusResult.value[0];
   const sourceAfter = balances.confidential.availableBalance.toString();
-  if (status?.err) {
-    if (sourceAfter !== input.sourceBefore) return { status: "pending", signature: input.settlementSignature };
+  const finality = classifyTransactionFinality(status);
+  if (finality === "pending") {
+    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
+  }
+  if (finality === "failed") {
+    if (sourceAfter !== input.sourceBefore) {
+      return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
+    }
     const cleaned = await cleanupProofContexts(db, rpc, signer, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: input.proofContexts
     });
-    if (!cleaned) return { status: "pending", signature: input.settlementSignature, warning: "proof_context_cleanup_pending" };
+    if (!cleaned) {
+      return { status: "pending", signature: input.settlementSignature, warning: "proof_context_cleanup_pending" };
+    }
+    let claimState: string;
+    try {
+      const state = await input.rpc.getAccountInfo(address(input.claim), {
+        commitment: "finalized", encoding: "base64"
+      }).send();
+      const account = object(state.value);
+      const data = decodeAccountData(account?.data);
+      if (!account || account.owner !== input.programId || !data || data.length !== 138 ||
+          !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
+          data[136] > 2) return { status: "pending", signature: input.settlementSignature };
+      claimState = data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : "recovered";
+    } catch {
+      return { status: "pending", signature: input.settlementSignature };
+    }
+    if (claimState !== "unclaimed") {
+      return { status: "state_conflict", signature: input.settlementSignature };
+    }
     const released = await releaseFailedPayrollSettlementAttempt(db, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
       settlementSignature: input.settlementSignature
     });
     return released ? { status: "retry_ready", signature: input.settlementSignature } : { status: "pending", signature: input.settlementSignature };
-  }
-  if (status?.confirmationStatus !== "finalized") {
-    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
   }
   await verifyFinalizedSettlement({
     rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
@@ -696,13 +718,18 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("confidential_transfer_proof_setup_failed", 503);
         }
 
-        const atomic = nonDivisibleSequentialInstructionPlan([
-          transferIx,
+        const boundPlan = bindClaimedStateToConfidentialTransfer(
+          transferPlan,
           markClaimedInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
             reserveAuthority: signer.address, reserveToken, mint, destination, claim: allocation.claimAddress
-          })
-        ]);
+          }),
+          { source: reserveToken, mint, destination }
+        );
+        if (boundPlan.kind !== "sequential" || boundPlan.plans[1]?.kind !== "sequential") {
+          throw new PayrollConfidentialSettlementError("confidential_transfer_plan_invalid", 503);
+        }
+        const atomic = boundPlan.plans[1];
         let attached = false;
         const result = await executePlan(rpc, signer, atomic, async (sig) => {
           submittedSignature = sig;
