@@ -64,6 +64,18 @@ describe("confidential amount proof binding", () => {
     )).toThrowError(PayrollAmountProofBindingError);
   });
 
+  it("rejects a ciphertext encrypted for a different amount", () => {
+    const keypair = ElGamalKeypair.new_rand();
+    const material = derivePayrollAmountCommitmentMaterial({
+      amountBaseUnits, claimId, secretHex
+    });
+    expect(() => bindAmountCommitmentProof(
+      equalityProofPlan(keypair, BigInt(amountBaseUnits) + 1n),
+      keypair,
+      material
+    )).toThrow();
+  });
+
   it("rejects a plan without a ciphertext-commitment equality proof", () => {
     const keypair = ElGamalKeypair.new_rand();
     const material = derivePayrollAmountCommitmentMaterial({
