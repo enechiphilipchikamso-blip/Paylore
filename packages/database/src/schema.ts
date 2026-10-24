@@ -791,6 +791,8 @@ export const workspaceReserves =
           .notNull()
           .defaultNow(),
 
+      confidentialAccountSetupSignature: text("confidential_account_setup_signature"),
+      programReserveSetupSignature: text("program_reserve_setup_signature"),
       updatedAt:
         timestamp("updated_at", {
           withTimezone: true
