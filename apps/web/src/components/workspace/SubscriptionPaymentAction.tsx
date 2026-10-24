@@ -62,6 +62,8 @@ export function SubscriptionPaymentAction({
   const [partial, setPartial] = useState<string | null>(null);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
+  const [requiresReview, setRequiresReview] = useState(false);
+  const [failedSignature, setFailedSignature] = useState<string | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [preparedPayment, setPreparedPayment] = useState<PreparedActivationPayment | null>(null);
   const [progress, setProgress] = useState<string | null>(
@@ -97,6 +99,8 @@ export function SubscriptionPaymentAction({
       setPreparedPayment(null);
       setProgress(null);
       setError(VERIFICATION_FAILURE);
+      setRequiresReview(true);
+      setFailedSignature(signature);
     }
     return outcome;
   }
@@ -166,6 +170,8 @@ export function SubscriptionPaymentAction({
     setError(null);
     setPartial(null);
     setSubmissionUncertain(false);
+    setRequiresReview(false);
+    setFailedSignature(null);
     setPreparedPayment(null);
     setProgress("Preparing your $49 USDC payment…");
     try {
@@ -225,6 +231,7 @@ export function SubscriptionPaymentAction({
       setPreparedPayment(null);
       setProgress(null);
       const reason = cause instanceof Error ? cause.message : PREPARATION_FAILURE;
+      if (reason === SUBSCRIPTION_PAYMENT_MISMATCH) setRequiresReview(true);
       setError(
         reason === SUBSCRIPTION_PAYMENT_MISMATCH
           ? reason
@@ -265,6 +272,8 @@ export function SubscriptionPaymentAction({
 
     if (wallet.account.address !== prepared.payer || wallet.account.address !== walletAddress) {
       setPreparedPayment(null);
+      setRequiresReview(true);
+      setFailedSignature(null);
       setError(SUBSCRIPTION_PAYMENT_MISMATCH);
       return;
     }
@@ -368,6 +377,30 @@ export function SubscriptionPaymentAction({
         >
           Check payment status
         </button>
+      ) : requiresReview ? (
+        failedSignature ? (
+          <div className="subscription-payment-review-actions">
+            <a
+              className="button button--secondary"
+              href={`https://explorer.solana.com/tx/${encodeURIComponent(failedSignature)}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Review transaction in Solana Explorer (Devnet)
+            </a>
+            <button
+              className="button"
+              onClick={() => {
+                setRequiresReview(false);
+                setFailedSignature(null);
+                void prepareActivation();
+              }}
+              type="button"
+            >
+              I reviewed the transaction status — prepare another payment
+            </button>
+          </div>
+        ) : null
       ) : preparedPayment ? (
         <button
           className="button"
