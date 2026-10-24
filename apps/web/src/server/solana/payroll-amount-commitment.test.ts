@@ -3,11 +3,10 @@ import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitme
 
 const secretHex = "42".repeat(32);
 const claimId = "11".repeat(32);
-const allocationCommitment = "22".repeat(32);
 
 describe("confidential allocation amount commitments", () => {
   it("reproduces the same hiding commitment and opening for the same allocation", () => {
-    const input = { amountBaseUnits: "1250000", claimId, allocationCommitment, secretHex };
+    const input = { amountBaseUnits: "1250000", claimId, secretHex };
     const first = derivePayrollAmountCommitmentMaterial(input);
     const second = derivePayrollAmountCommitmentMaterial(input);
     expect(first.amountCommitment).toBe(second.amountCommitment);
@@ -17,16 +16,13 @@ describe("confidential allocation amount commitments", () => {
 
   it("binds the commitment to both the approved amount and allocation identity", () => {
     const baseline = derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1250000", claimId, allocationCommitment, secretHex
+      amountBaseUnits: "1250000", claimId, secretHex
     });
     expect(derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1250001", claimId, allocationCommitment, secretHex
+      amountBaseUnits: "1250001", claimId, secretHex
     }).amountCommitment).not.toBe(baseline.amountCommitment);
     expect(derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1250000", claimId: "33".repeat(32), allocationCommitment, secretHex
-    }).amountCommitment).not.toBe(baseline.amountCommitment);
-    expect(derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1250000", claimId, allocationCommitment: "44".repeat(32), secretHex
+      amountBaseUnits: "1250000", claimId: "33".repeat(32), secretHex
     }).amountCommitment).not.toBe(baseline.amountCommitment);
   });
 
@@ -34,14 +30,14 @@ describe("confidential allocation amount commitments", () => {
     "rejects invalid base-unit amount %s",
     (amountBaseUnits) => {
       expect(() => derivePayrollAmountCommitmentMaterial({
-        amountBaseUnits, claimId, allocationCommitment, secretHex
+        amountBaseUnits, claimId, secretHex
       })).toThrow();
     }
   );
 
   it("rejects malformed secret and allocation identifiers", () => {
     expect(() => derivePayrollAmountCommitmentMaterial({
-      amountBaseUnits: "1", claimId, allocationCommitment, secretHex: "not-secret"
+      amountBaseUnits: "1", claimId, secretHex: "not-secret"
     })).toThrow("32-byte hexadecimal key");
     expect(() => derivePayrollAmountCommitmentMaterial({
       amountBaseUnits: "1", claimId: "bad", allocationCommitment, secretHex
