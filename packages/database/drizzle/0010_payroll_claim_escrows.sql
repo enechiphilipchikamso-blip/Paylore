@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS payroll_claim_escrows (
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   payroll_run_id uuid NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
   claim_id text NOT NULL,
-  token_account_address text NOT NULL UNIQUE,
+  token_account_address text NOT NULL CONSTRAINT payroll_claim_escrows_token_account_address_unique UNIQUE,
   status text NOT NULL DEFAULT 'preparing'
     CHECK (status IN ('preparing', 'ready', 'funding', 'funded', 'settlement_pending', 'recovery_pending', 'claimed', 'recovered', 'failed')),
   encrypted_private_key text,
