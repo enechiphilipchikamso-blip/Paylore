@@ -6153,7 +6153,13 @@ export async function resetFailedPayrollClaimEscrowFunding(
 
 export async function beginPayrollRecoveryAttempt(
   db: Database,
-  input: { workspaceId: string; runId: string; allocationId: string }
+  input: {
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    reason: "incorrect_allocation" | "contributor_left_before_claim" | "payroll_correction" | "other";
+    reasonNote: string | null;
+  }
 ) {
   return db.transaction(async (tx) => {
     const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
@@ -6208,6 +6214,16 @@ export async function beginPayrollRecoveryAttempt(
 
     const updatedEscrow = await tx.update(payrollClaimEscrows).set({
       status: "recovery_pending",
+      recoverySignature: null,
+      recoveryApplySignature: null,
+      recoveryReason: input.reason,
+      recoveryReasonNote: input.reasonNote,
+      recoveryProofContextAddresses: [],
+      recoveryContextSignatures: [],
+      recoverySourceAvailableBefore: null,
+      recoverySourceAvailableAfter: null,
+      recoveryDestinationAvailableBefore: null,
+      recoveryDestinationAvailableAfter: null,
       updatedAt: new Date()
     }).where(and(
       eq(payrollClaimEscrows.workspaceId, input.workspaceId),
@@ -6272,6 +6288,9 @@ export async function releasePayrollRecoveryAttempt(
       recoveryDestinationAvailableBefore: null,
       recoveryDestinationAvailableAfter: null,
       recoverySignature: null,
+      recoveryApplySignature: null,
+      recoveryReason: null,
+      recoveryReasonNote: null,
       updatedAt: new Date()
     }).where(and(
       eq(payrollClaimEscrows.workspaceId, input.workspaceId),
@@ -6387,6 +6406,9 @@ export async function resetFailedPayrollRecoveryAttempt(
       recoverySourceAvailableAfter: null,
       recoveryDestinationAvailableBefore: null,
       recoveryDestinationAvailableAfter: null,
+      recoveryApplySignature: null,
+      recoveryReason: null,
+      recoveryReasonNote: null,
       updatedAt: new Date()
     }).where(and(
       eq(payrollClaimEscrows.workspaceId, input.workspaceId),
