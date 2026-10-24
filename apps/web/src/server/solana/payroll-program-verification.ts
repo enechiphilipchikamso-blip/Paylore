@@ -409,7 +409,7 @@ export async function verifyPayrollRecoveryTransaction(input: {
     accountRecord.owner !== programId ||
     accountRecord.executable !== false ||
     !data ||
-    data.length !== 138 ||
+    data.length !== 170 ||
     !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
     !sameBytes(data.subarray(8, 40), workspaceBytes) ||
     !sameBytes(data.subarray(40, 72), contributorBytes) ||
