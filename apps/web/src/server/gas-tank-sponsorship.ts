@@ -203,7 +203,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
   signature: string;
   feeLamports: string;
   gasTankAddress: string;
-  claims: Array<{ claimId: string; claimAddress: string }>;
+  claims: Array<{ claimId: string; claimAddress: string; amountCommitment: string }>;
   blockhash: string;
   lastValidBlockHeight: number;
 }> {
@@ -318,7 +318,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
     });
     return {
       ...prepared,
-      claims: derivedClaims.map(({ claimId, claimAddress }) => ({ claimId, claimAddress }))
+      claims: derivedClaims.map(({ claimId, claimAddress, amountCommitment }) => ({ claimId, claimAddress, amountCommitment }))
     };
   } finally {
     secretCopy.fill(0);
