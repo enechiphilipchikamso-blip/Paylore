@@ -123,8 +123,7 @@ export function ReserveActions({
       if (!response.ok) {
         setNotice({
           state: "error",
-          text: result?.error === "reserve_mint_authority_approval_required" ||
-            result?.error === "reserve_mint_authority_approval_required"
+          text: result?.error === "reserve_mint_authority_approval_required"
             ? "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready."
             : result?.error === "workspace_program_not_initialized"
               ? "The confidential token account is ready, but the Paylore Program workspace state is not initialized. No program reserve was configured."
@@ -207,7 +206,7 @@ export function ReserveActions({
     } catch {
       setNotice({
         state: "partial",
-        text: activeAction === "initialize_confidential"
+        text: action === "initialize_confidential"
           ? "The reserve response was interrupted. Check the existing on-chain setup state before starting another attempt."
           : "Reserve unavailable — try again. No private-key material is shown here."
       });
