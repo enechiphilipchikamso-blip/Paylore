@@ -612,6 +612,16 @@ export async function settleContributorPayrollAllocation(
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: proofContexts
         });
         if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
+        let claimState: FinalizedClaimState;
+        try {
+          claimState = await readFinalizedClaimState({
+            rpc, programId, workspace, contributor: input.contributorAddress, claim: allocation.claimAddress,
+            claimId: allocation.claimId, allocationCommitment: evidence.allocationCommitment
+          });
+        } catch {
+          return { status: "pending" };
+        }
+        if (claimState !== "unclaimed") return { status: "state_conflict" };
         const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
         });
