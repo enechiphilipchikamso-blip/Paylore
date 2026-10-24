@@ -8,6 +8,10 @@ import {
 } from "./subscription-payment-transaction";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import {
+  classifySubscriptionPaymentVerificationResponse,
+  type SubscriptionPaymentVerificationOutcome
+} from "./subscription-payment-verification-outcome";
+import {
   beginSubscriptionWalletApproval,
   isConfirmedWalletCancellation,
   SUBSCRIPTION_PAYMENT_MISMATCH
@@ -34,7 +38,6 @@ const VERIFICATION_FAILURE =
   "The payment could not be verified. Your workspace has not been activated. Review the transaction status before retrying.";
 const RECONCILIATION_PENDING =
   "Paylore is checking the network before reporting the final payment status. Do not submit a duplicate payment.";
-type PaymentVerificationOutcome = "active" | "pending" | "failed" | "unavailable";
 
 export function SubscriptionPaymentAction({
   workspaceId,
@@ -66,7 +69,7 @@ export function SubscriptionPaymentAction({
   );
   const preparedOnLoadKey = useRef<string | null>(null);
 
-  async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<PaymentVerificationOutcome> {
+  async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<SubscriptionPaymentVerificationOutcome> {
     const endpoint = paymentAttemptId
       ? `/api/workspaces/${workspaceId}/billing/attempt`
       : `/api/workspaces/${workspaceId}/billing`;
@@ -78,29 +81,24 @@ export function SubscriptionPaymentAction({
       body: JSON.stringify(body)
     });
     const result = await response.json().catch(() => null) as { status?: string; error?: string } | null;
-    if (response.ok && (!paymentAttemptId || result?.status === "active")) {
+    const outcome = classifySubscriptionPaymentVerificationResponse({
+      ok: response.ok, status: response.status, hasAttempt: Boolean(paymentAttemptId), body: result
+    });
+    if (outcome === "active") {
       setPendingSignature(null);
       setSubmissionUncertain(false);
       setPreparedPayment(null);
       setProgress(null);
       onSuccess?.();
       if (refreshOnSuccess) router.refresh();
-      return "active";
-    }
-    if (response.status === 202 || result?.status === "reconciliation_required") return "pending";
-    if (
-      response.status === 422 ||
-      result?.error === "payment_attempt_mismatch" ||
-      result?.error === "payment_could_not_be_verified"
-    ) {
+    } else if (outcome === "failed") {
       setPendingSignature(null);
       setSubmissionUncertain(false);
       setPreparedPayment(null);
       setProgress(null);
       setError(VERIFICATION_FAILURE);
-      return "failed";
     }
-    return "unavailable";
+    return outcome;
   }
 
   async function retryVerification() {
