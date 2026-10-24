@@ -37,6 +37,7 @@ import {
 import {
   contributorInvitations,
   payrollAllocations,
+  payrollClaimEscrows,
   payrollRecoveries,
   payrollRuns,
   solanaWebhookEvents,
@@ -4466,9 +4467,23 @@ export async function recordPayrollRecovery(
     reasonNote: string | null;
     signature: string;
     claimAddress: string;
+    sourceAvailableBefore: string;
+    sourceAvailableAfter: string;
+    reserveAvailableBefore: string;
+    reserveAvailableAfter: string;
     now?: Date;
   }
 ) {
+  const balances = [
+    input.sourceAvailableBefore,
+    input.sourceAvailableAfter,
+    input.reserveAvailableBefore,
+    input.reserveAvailableAfter
+  ];
+  if (!balances.every((value) => /^(0|[1-9][0-9]*)$/.test(value))) {
+    throw new Error("Finalized payroll recovery balance evidence is invalid.");
+  }
+
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
     const allocationRows = await tx
@@ -4490,17 +4505,40 @@ export async function recordPayrollRecovery(
           eq(contributors.workspaceId, payrollAllocations.workspaceId)
         )
       )
-      .where(
-        and(
-          eq(payrollAllocations.id, input.allocationId),
-          eq(payrollAllocations.workspaceId, input.workspaceId),
-          eq(payrollAllocations.payrollRunId, input.runId)
-        )
-      )
+      .where(and(
+        eq(payrollAllocations.id, input.allocationId),
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        eq(payrollAllocations.payrollRunId, input.runId)
+      ))
       .for("update")
       .limit(1);
     const allocation = allocationRows[0];
     if (!allocation) return { status: "not_found" as const };
+
+    const escrowRows = await tx
+      .select()
+      .from(payrollClaimEscrows)
+      .where(and(
+        eq(payrollClaimEscrows.allocationId, input.allocationId),
+        eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+        eq(payrollClaimEscrows.payrollRunId, input.runId)
+      ))
+      .for("update")
+      .limit(1);
+    const escrow = escrowRows[0];
+    if (!escrow) return { status: "escrow_not_found" as const };
+
+    const amount = BigInt(allocation.amountBaseUnits);
+    const sourceBefore = BigInt(input.sourceAvailableBefore);
+    const sourceAfter = BigInt(input.sourceAvailableAfter);
+    const reserveBefore = BigInt(input.reserveAvailableBefore);
+    const reserveAfter = BigInt(input.reserveAvailableAfter);
+    if (
+      sourceBefore < sourceAfter ||
+      sourceBefore - sourceAfter !== amount ||
+      reserveAfter < reserveBefore ||
+      reserveAfter - reserveBefore !== amount
+    ) return { status: "balance_mismatch" as const };
 
     const existingRows = await tx
       .select()
@@ -4511,21 +4549,22 @@ export async function recordPayrollRecovery(
     if (existing) {
       if (
         allocation.status === "recovered" &&
+        escrow.status === "recovered" &&
+        escrow.recoverySignature === input.signature &&
         existing.status === "confirmed" &&
         existing.transactionSignature === input.signature &&
         existing.reason === input.reason &&
         existing.reasonNote === input.reasonNote
-      ) {
-        return { status: "duplicate" as const };
-      }
+      ) return { status: "duplicate" as const };
       return { status: "conflict" as const };
     }
+
     if (
-      allocation.status !== "unclaimed" ||
-      allocation.claimAddress !== input.claimAddress
-    ) {
-      return { status: "conflict" as const };
-    }
+      allocation.status !== "recovery_pending" ||
+      allocation.claimAddress !== input.claimAddress ||
+      escrow.status !== "recovery_pending" ||
+      escrow.recoverySignature !== input.signature
+    ) return { status: "conflict" as const };
 
     const recoveryRows = await tx
       .insert(payrollRecoveries)
@@ -4540,13 +4579,11 @@ export async function recordPayrollRecovery(
         createdAt: now,
         confirmedAt: now
       })
-      .onConflictDoNothing({
-        target: payrollRecoveries.allocationId
-      })
+      .onConflictDoNothing({ target: payrollRecoveries.allocationId })
       .returning({ id: payrollRecoveries.id });
     if (!recoveryRows[0]) return { status: "conflict" as const };
 
-    const updated = await tx
+    const updatedAllocation = await tx
       .update(payrollAllocations)
       .set({
         status: "recovered",
@@ -4554,17 +4591,37 @@ export async function recordPayrollRecovery(
         transactionSignature: input.signature,
         updatedAt: now
       })
-      .where(
-        and(
-          eq(payrollAllocations.id, input.allocationId),
-          eq(payrollAllocations.workspaceId, input.workspaceId),
-          eq(payrollAllocations.status, "unclaimed"),
-          eq(payrollAllocations.claimAddress, input.claimAddress)
-        )
-      )
+      .where(and(
+        eq(payrollAllocations.id, input.allocationId),
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        eq(payrollAllocations.status, "recovery_pending"),
+        eq(payrollAllocations.claimAddress, input.claimAddress)
+      ))
       .returning({ id: payrollAllocations.id });
-    if (!updated[0]) {
+    if (!updatedAllocation[0]) {
       throw new Error("The payroll allocation changed during recovery reconciliation.");
+    }
+
+    const updatedEscrow = await tx
+      .update(payrollClaimEscrows)
+      .set({
+        status: "recovered",
+        recoverySourceAvailableBefore: input.sourceAvailableBefore,
+        recoverySourceAvailableAfter: input.sourceAvailableAfter,
+        recoveryDestinationAvailableBefore: input.reserveAvailableBefore,
+        recoveryDestinationAvailableAfter: input.reserveAvailableAfter,
+        recoveredAt: now,
+        updatedAt: now
+      })
+      .where(and(
+        eq(payrollClaimEscrows.allocationId, input.allocationId),
+        eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+        eq(payrollClaimEscrows.status, "recovery_pending"),
+        eq(payrollClaimEscrows.recoverySignature, input.signature)
+      ))
+      .returning({ allocationId: payrollClaimEscrows.allocationId });
+    if (!updatedEscrow[0]) {
+      throw new Error("The claim escrow changed during reserve restoration reconciliation.");
     }
 
     await tx
@@ -4573,8 +4630,9 @@ export async function recordPayrollRecovery(
         workspaceId: input.workspaceId,
         idempotencyKey: `payroll-recovery:${input.allocationId}`,
         category: "recovery",
-        entryType: "claim_entitlement_cancelled",
+        entryType: "confidential_claim_recovery",
         status: "finalized",
+        amountBaseUnits: allocation.amountBaseUnits,
         referenceType: "payroll_allocation",
         referenceId: input.allocationId,
         transactionSignature: input.signature,
@@ -4582,8 +4640,15 @@ export async function recordPayrollRecovery(
           runId: input.runId,
           claimId: allocation.claimId,
           reason: input.reason,
-          cancelledEntitlementBaseUnits: allocation.amountBaseUnits,
-          valueTransferred: false
+          restoredReserveBaseUnits: allocation.amountBaseUnits,
+          escrowTokenAccount: escrow.tokenAccountAddress,
+          confidentialSourceAvailableBefore: input.sourceAvailableBefore,
+          confidentialSourceAvailableAfter: input.sourceAvailableAfter,
+          reserveAvailableBefore: input.reserveAvailableBefore,
+          reserveAvailableAfter: input.reserveAvailableAfter,
+          balanceDeltaVerified: true,
+          valueTransferred: true,
+          sourceOfTruth: "finalized_solana_rpc_and_owner_decrypted_confidential_balances"
         },
         createdAt: now
       })
@@ -4600,18 +4665,16 @@ export async function recordPayrollRecovery(
       .where(eq(walletIdentities.address, allocation.contributorWalletAddress));
     await tx
       .insert(workspaceNotifications)
-      .values(
-        contributorUsers.map((contributor) => ({
-          workspaceId: input.workspaceId,
-          recipientKey: contributor.userId,
-          eventKey: `payroll-recovery:${input.allocationId}`,
-          category: "Recovery & Offboarding",
-          title: "A payroll allocation was recovered",
-          body: "An unclaimed payroll entitlement was marked recovered on Devnet. Contact the workspace administrator if you believe this was made in error.",
-          destination: `/workspace/${input.workspaceId}/compensation`,
-          createdAt: now
-        }))
-      )
+      .values(contributorUsers.map((contributor) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: contributor.userId,
+        eventKey: `payroll-recovery:${input.allocationId}`,
+        category: "Recovery & Offboarding",
+        title: "Unclaimed payroll restored to the reserve",
+        body: `The unclaimed payroll allocation was restored to the workspace's confidential reserve. Finalized transaction: ${input.signature}`,
+        destination: `/workspace/${input.workspaceId}/compensation`,
+        createdAt: now
+      })))
       .onConflictDoNothing({
         target: [
           workspaceNotifications.workspaceId,
@@ -4623,29 +4686,25 @@ export async function recordPayrollRecovery(
     const financeMembers = await tx
       .select({ userId: workspaceMemberships.userId })
       .from(workspaceMemberships)
-      .where(
-        and(
-          eq(workspaceMemberships.workspaceId, input.workspaceId),
-          or(
-            eq(workspaceMemberships.role, "organization_admin"),
-            eq(workspaceMemberships.role, "finance_auditor")
-          )
+      .where(and(
+        eq(workspaceMemberships.workspaceId, input.workspaceId),
+        or(
+          eq(workspaceMemberships.role, "organization_admin"),
+          eq(workspaceMemberships.role, "finance_auditor")
         )
-      );
+      ));
     await tx
       .insert(workspaceNotifications)
-      .values(
-        financeMembers.map((member) => ({
-          workspaceId: input.workspaceId,
-          recipientKey: member.userId,
-          eventKey: `payroll-recovery:${input.allocationId}`,
-          category: "Recovery & Offboarding",
-          title: "Payroll recovery finalized",
-          body: "An unclaimed Claim PDA transitioned to RECOVERED. This ledger entry records the entitlement state, not a public USDC transfer.",
-          destination: `/workspace/${input.workspaceId}/ledger`,
-          createdAt: now
-        }))
-      )
+      .values(financeMembers.map((member) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: member.userId,
+        eventKey: `payroll-recovery:${input.allocationId}`,
+        category: "Recovery & Offboarding",
+        title: "Confidential payroll recovery finalized",
+        body: "The Claim PDA transition and confidential reserve restoration were verified at finality and reconciled to both account balances.",
+        destination: `/workspace/${input.workspaceId}/ledger`,
+        createdAt: now
+      })))
       .onConflictDoNothing({
         target: [
           workspaceNotifications.workspaceId,
@@ -5581,5 +5640,324 @@ export async function getWorkspaceGasTankSponsorshipUsage(
     rows,
     reservedFeeLamports: "100000",
     since
+  });
+}
+
+
+export async function getPayrollClaimEscrow(
+  db: Database,
+  workspaceId: string,
+  allocationId: string
+) {
+  const rows = await db.select().from(payrollClaimEscrows).where(and(
+    eq(payrollClaimEscrows.workspaceId, workspaceId),
+    eq(payrollClaimEscrows.allocationId, allocationId)
+  )).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createPayrollClaimEscrow(
+  db: Database,
+  input: {
+    workspaceId: string;
+    payrollRunId: string;
+    allocationId: string;
+    claimId: string;
+    tokenAccountAddress: string;
+    encryptedPrivateKey: string;
+    privateKeyNonce: string;
+    privateKeyAuthTag: string;
+    encryptedDataKey: string;
+    dataKeyNonce: string;
+    dataKeyAuthTag: string;
+    encryptedBackup: string;
+    backupNonce: string;
+    backupAuthTag: string;
+  }
+) {
+  const allocationRows = await db.select({
+    id: payrollAllocations.id,
+    claimId: payrollAllocations.claimId
+  }).from(payrollAllocations).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.payrollRunId),
+    eq(payrollAllocations.claimId, input.claimId),
+    eq(payrollAllocations.status, "unclaimed")
+  )).limit(1);
+  if (!allocationRows[0]) return { status: "allocation_ineligible" as const };
+
+  const created = await db.insert(payrollClaimEscrows).values({
+    ...input,
+    status: "preparing"
+  }).onConflictDoNothing({
+    target: payrollClaimEscrows.allocationId
+  }).returning();
+  if (created[0]) return { status: "created" as const, escrow: created[0] };
+
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  if (!existing || existing.payrollRunId !== input.payrollRunId || existing.claimId !== input.claimId) {
+    return { status: "conflict" as const };
+  }
+  return { status: "existing" as const, escrow: existing };
+}
+
+export async function markPayrollClaimEscrowReady(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; tokenAccountAddress: string }
+) {
+  const updated = await db.update(payrollClaimEscrows).set({
+    status: "ready",
+    encryptedPrivateKey: null,
+    privateKeyNonce: null,
+    privateKeyAuthTag: null,
+    encryptedDataKey: null,
+    dataKeyNonce: null,
+    dataKeyAuthTag: null,
+    encryptedBackup: null,
+    backupNonce: null,
+    backupAuthTag: null,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.tokenAccountAddress, input.tokenAccountAddress),
+    inArray(payrollClaimEscrows.status, ["preparing", "failed"])
+  )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
+  if (updated[0]) return { status: "ready" as const };
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return existing && existing.tokenAccountAddress === input.tokenAccountAddress &&
+    ["ready", "funding", "funded", "settlement_pending", "recovery_pending", "claimed", "recovered"].includes(existing.status)
+    ? { status: existing.status as "ready" | "funding" | "funded" | "settlement_pending" | "recovery_pending" | "claimed" | "recovered" }
+    : { status: "conflict" as const };
+}
+
+export async function beginPayrollClaimEscrowFunding(
+  db: Database,
+  input: { workspaceId: string; allocationId: string }
+) {
+  const updated = await db.update(payrollClaimEscrows).set({
+    status: "funding",
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    inArray(payrollClaimEscrows.status, ["ready", "funding"])
+  )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
+  if (updated[0]) return { status: "started" as const, tokenAccountAddress: updated[0].tokenAccountAddress };
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return existing ? {
+    status: existing.status === "funded" ? "funded" as const :
+      existing.status === "funding" ? "pending" as const : "conflict" as const,
+    tokenAccountAddress: existing.tokenAccountAddress
+  } : { status: "not_found" as const };
+}
+
+export async function attachPayrollClaimEscrowFundingSignature(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    signature: string;
+    sourceAvailableBefore: string;
+    destinationAvailableBefore: string;
+  }
+) {
+  if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.destinationAvailableBefore)) return false;
+  const updated = await db.update(payrollClaimEscrows).set({
+    fundingSignature: input.signature,
+    fundingSourceAvailableBefore: input.sourceAvailableBefore,
+    fundingDestinationAvailableBefore: input.destinationAvailableBefore,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "funding"),
+    or(
+      isNull(payrollClaimEscrows.fundingSignature),
+      eq(payrollClaimEscrows.fundingSignature, input.signature)
+    )
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  if (updated[0]) return true;
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return Boolean(existing && existing.status === "funded" && existing.fundingSignature === input.signature);
+}
+
+export async function recordVerifiedPayrollClaimEscrowFunding(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    signature: string;
+    amountBaseUnits: string;
+    sourceAvailableBefore: string;
+    sourceAvailableAfter: string;
+    destinationAvailableBefore: string;
+    destinationAvailableAfter: string;
+    now?: Date;
+  }
+) {
+  const values = [
+    input.amountBaseUnits,
+    input.sourceAvailableBefore,
+    input.sourceAvailableAfter,
+    input.destinationAvailableBefore,
+    input.destinationAvailableAfter
+  ];
+  if (!values.every((value) => /^(0|[1-9][0-9]*)$/.test(value)) || BigInt(input.amountBaseUnits) <= 0n) {
+    return { status: "balance_mismatch" as const };
+  }
+  const amount = BigInt(input.amountBaseUnits);
+  const sourceBefore = BigInt(input.sourceAvailableBefore);
+  const sourceAfter = BigInt(input.sourceAvailableAfter);
+  const destinationBefore = BigInt(input.destinationAvailableBefore);
+  const destinationAfter = BigInt(input.destinationAvailableAfter);
+  if (
+    sourceBefore < sourceAfter || sourceBefore - sourceAfter !== amount ||
+    destinationAfter < destinationBefore || destinationAfter - destinationBefore !== amount
+  ) return { status: "balance_mismatch" as const };
+
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = rows[0];
+    if (!escrow) return { status: "not_found" as const };
+    if (escrow.status === "funded" && escrow.fundingSignature === input.signature &&
+        escrow.fundingSourceAvailableBefore === input.sourceAvailableBefore &&
+        escrow.fundingSourceAvailableAfter === input.sourceAvailableAfter &&
+        escrow.fundingDestinationAvailableBefore === input.destinationAvailableBefore &&
+        escrow.fundingDestinationAvailableAfter === input.destinationAvailableAfter) {
+      return { status: "duplicate" as const };
+    }
+    if (escrow.status !== "funding" || escrow.fundingSignature !== input.signature ||
+        escrow.fundingSourceAvailableBefore !== input.sourceAvailableBefore ||
+        escrow.fundingDestinationAvailableBefore !== input.destinationAvailableBefore) {
+      return { status: "conflict" as const };
+    }
+    const updated = await tx.update(payrollClaimEscrows).set({
+      status: "funded",
+      fundingSourceAvailableAfter: input.sourceAvailableAfter,
+      fundingDestinationAvailableAfter: input.destinationAvailableAfter,
+      fundedAt: now,
+      updatedAt: now
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "funding"),
+      eq(payrollClaimEscrows.fundingSignature, input.signature)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return updated[0] ? { status: "funded" as const } : { status: "conflict" as const };
+  });
+}
+
+export async function beginPayrollRecoveryAttempt(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string }
+) {
+  return db.transaction(async (tx) => {
+    const allocationRows = await tx.select({
+      status: payrollAllocations.status
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId)
+    )).for("update").limit(1);
+    if (!allocationRows[0]) return { status: "not_found" as const };
+    if (allocationRows[0].status !== "unclaimed") return { status: "state_conflict" as const };
+
+    const escrowRows = await tx.select({
+      status: payrollClaimEscrows.status,
+      tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress
+    }).from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.payrollRunId, input.runId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = escrowRows[0];
+    if (!escrow) return { status: "escrow_not_found" as const };
+    if (escrow.status !== "funded") return { status: "escrow_not_funded" as const };
+
+    const updatedAllocation = await tx.update(payrollAllocations).set({
+      status: "recovery_pending",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.status, "unclaimed")
+    )).returning({ id: payrollAllocations.id });
+    if (!updatedAllocation[0]) return { status: "state_conflict" as const };
+
+    const updatedEscrow = await tx.update(payrollClaimEscrows).set({
+      status: "recovery_pending",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "funded")
+    )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
+    if (!updatedEscrow[0]) throw new Error("The payroll claim escrow changed during recovery reservation.");
+    return { status: "started" as const, tokenAccountAddress: updatedEscrow[0].tokenAccountAddress };
+  });
+}
+
+export async function attachPayrollClaimEscrowRecoverySignature(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  const updated = await db.update(payrollClaimEscrows).set({
+    recoverySignature: input.signature,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "recovery_pending"),
+    or(
+      isNull(payrollClaimEscrows.recoverySignature),
+      eq(payrollClaimEscrows.recoverySignature, input.signature)
+    )
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  if (updated[0]) return true;
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return Boolean(existing && existing.status === "recovered" && existing.recoverySignature === input.signature);
+}
+
+export async function releasePayrollRecoveryAttempt(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string }
+) {
+  return db.transaction(async (tx) => {
+    const escrowRows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.payrollRunId, input.runId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "recovery_pending"),
+      isNull(payrollClaimEscrows.recoverySignature)
+    )).for("update").limit(1);
+    if (!escrowRows[0]) return false;
+    const allocation = await tx.update(payrollAllocations).set({
+      status: "unclaimed",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.status, "recovery_pending")
+    )).returning({ id: payrollAllocations.id });
+    if (!allocation[0]) return false;
+    const escrow = await tx.update(payrollClaimEscrows).set({
+      status: "funded",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "recovery_pending"),
+      isNull(payrollClaimEscrows.recoverySignature)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return Boolean(escrow[0]);
   });
 }
