@@ -222,6 +222,50 @@ describe("contributor confidential-account sponsorship relay", () => {
     expect(mocks.submitSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
   });
 
+  it("does not release or resubmit a stale reservation when another request wins the expiry compare-and-swap", async () => {
+    const operation = {
+      id: "operation-stale",
+      status: "prepared",
+      transactionSignature: "5".repeat(88),
+      feeLamports: "5000",
+      failureCode: null,
+      updatedAt: new Date("2026-10-22T00:00:00.000Z"),
+      operationData: {
+        ownerAddress: "contributor-wallet",
+        mintAddress: "wrapped-mint",
+        tokenAccountAddress: "token-account",
+        recentBlockhash: "recent-blockhash",
+        reservedRentLamports: "10000000"
+      }
+    };
+    mocks.listPreparedGasTankConfidentialSetupOperations.mockResolvedValue([operation]);
+    mocks.getWorkspaceGasTankOperationByIdempotencyKey.mockResolvedValue(operation);
+    mocks.readSolanaRpc.mockImplementation(async (method: string) =>
+      method === "getSignatureStatuses"
+        ? { value: [null] }
+        : method === "getTransaction"
+          ? null
+          : method === "isBlockhashValid"
+            ? { value: false }
+            : { value: [] }
+    );
+    mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
+
+    const response = await POST(request({ transactionBase64: "AQ==" }), context);
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      signature: "5".repeat(88),
+      status: "pending",
+      error: "confidential_setup_sponsorship_pending"
+    });
+    expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
+      operationId: "operation-stale",
+      status: "cancelled",
+      expectedUpdatedAt: operation.updatedAt
+    }));
+    expect(mocks.submitSponsoredConfidentialSetupTransaction).not.toHaveBeenCalled();
+  });
+
   it("does not allow an already-ready account to create a new sponsored setup", async () => {
     mocks.getContributorConfidentialAccount.mockResolvedValue({ status: "ready" });
     const response = await POST(request({ transactionBase64: "AQ==" }), context);
