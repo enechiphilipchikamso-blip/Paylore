@@ -426,6 +426,7 @@ export async function recoverPayrollAllocation(
       const secret = ElGamalSecretKey.fromBytes(derived.elgamalKeypair.secretKey);
       const elgamal = ElGamalKeypair.fromSecretKey(secret);
       const aesKey = AeKey.fromBytes(derived.aeKey);
+      let submittedRecoverySignature: string | undefined;
       try {
         const [sourceTokenRaw, reserveTokenRaw] = await Promise.all([
           fetchEncodedAccount(rpc, address(escrow.tokenAccountAddress)),
@@ -553,7 +554,6 @@ export async function recoverPayrollAllocation(
           amountCommitmentContext, reasonCommitment
         });
         const atomic = nonDivisibleSequentialInstructionPlan([transferIx, ix]);
-        let submittedRecoverySignature: string | undefined;
         const result = await executePlan(rpc, signer, atomic, async (signature) => {
           submittedRecoverySignature = signature;
           await attachPayrollClaimEscrowRecoverySignature(db, {
@@ -565,7 +565,7 @@ export async function recoverPayrollAllocation(
           throw new PayrollConfidentialRecoveryError("confidential_recovery_submission_failed", 503);
         }
         if (result.pending) return { status: "pending", signature, phase: "recovery" };
-        return reconcileSubmittedRecovery(db, rpc, signer, input, {
+        return reconcileSubmittedRecovery(db, rpc, signer, effectiveInput, {
           allocation, escrow: await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId) ?? escrow,
           evidence, amount, mint, programId, reserveTokenAddress, workspace, reserveState,
           escrowTokenAddress: escrow.tokenAccountAddress
