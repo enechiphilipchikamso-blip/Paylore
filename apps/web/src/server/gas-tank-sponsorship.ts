@@ -272,7 +272,8 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
             decodeHex32(claim.amountCommitment),
             encodeU32(claim.amountCommitmentLeafIndex),
             encodeU32(claim.amountCommitmentProof.length),
-            ...claim.amountCommitmentProof.map((sibling) => decodeHex32(sibling))
+            ...claim.amountCommitmentProof.map((sibling) => decodeHex32(sibling)),
+            getAddressEncoder().encode(address(claim.escrowTokenAccount))
           )
         } as const
       };
@@ -311,10 +312,11 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       workspaceAddress: workspace,
       allocationCommitment: input.allocationCommitment,
       workspaceSeed,
-      claims: derivedClaims.map(({ claimId, contributorAddress, claimAddress }) => ({
+      claims: derivedClaims.map(({ claimId, contributorAddress, claimAddress, escrowTokenAccount }) => ({
         claimId,
         contributorAddress,
-        claimAddress
+        claimAddress,
+        escrowTokenAccount
       })),
       initializeDiscriminator,
       createClaimDiscriminator,
@@ -334,8 +336,8 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
     return {
       ...prepared,
       claims: derivedClaims.map(({
-        claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex
-      }) => ({ claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex }))
+        claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex, escrowTokenAccount
+      }) => ({ claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex, escrowTokenAccount }))
     };
   } finally {
     secretCopy.fill(0);
