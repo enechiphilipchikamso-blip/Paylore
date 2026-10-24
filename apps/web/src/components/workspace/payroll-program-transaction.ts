@@ -185,7 +185,7 @@ export async function buildPayrollClaimTransactions(input: {
     input.claims.map(async (claim) => {
       const claimId = decodeHex32(claim.claimId, "Claim identifier");
       const amountCommitment = decodeHex32(claim.amountCommitment, "Amount commitment");
-      if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 32) {
+      if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 16) {
         throw new Error("Allocation Merkle proof depth is invalid.");
       }
       const proofSiblings = claim.amountCommitmentProof.map((sibling) =>
@@ -226,11 +226,14 @@ export async function buildPayrollClaimTransactions(input: {
   );
 
   const rpc = createSolanaRpc("https://api.devnet.solana.com");
+  const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 9)
+    ? 1
+    : PAYROLL_CLAIMS_PER_TRANSACTION;
   const batches: typeof claimInstructions[] = [];
   for (
     let index = 0;
     index < claimInstructions.length;
-    index += PAYROLL_CLAIMS_PER_TRANSACTION
+    index += claimsPerTransaction
   ) {
     batches.push(
       claimInstructions.slice(index, index + PAYROLL_CLAIMS_PER_TRANSACTION)
