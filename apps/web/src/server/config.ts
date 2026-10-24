@@ -76,6 +76,10 @@ const payloreConfigSchema = z.object({
   PAYLORE_SUBSCRIPTION_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_WRAPPED_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_PAYROLL_PROGRAM_ID: optionalSolanaAddressSchema,
+  PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, "Must be a 32-byte hexadecimal secret.")
+    .optional(),
   PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: z
     .enum(["true", "false"])
     .default("true"),
