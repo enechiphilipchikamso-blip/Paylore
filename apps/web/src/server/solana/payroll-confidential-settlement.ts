@@ -8,7 +8,7 @@ import {
   getBase64EncodedWireTransaction, getProgramDerivedAddress, isSome,
   partiallySignTransactionMessageWithSigners,
   setTransactionMessageFeePayerSigner, setTransactionMessageLifetimeUsingBlockhash,
-  singleInstructionPlan, type Instruction, type InstructionPlan, type Signature
+  nonDivisibleSequentialInstructionPlan, singleInstructionPlan, type Instruction, type InstructionPlan, type Signature
 } from "@solana/kit";
 import {
   fetchMint, fetchToken, findAssociatedTokenPda, getConfidentialDepositInstruction,
@@ -24,9 +24,11 @@ import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler"
 import {
   appendPayrollSettlementContextSignature, attachPayrollSettlementSignature,
   beginPayrollSettlementAttempt, clearPayrollSettlementProofContexts,
-  getContributorConfidentialAccount, getPayrollClaimCreationEvidence,
-  getWorkspacePayrollRun, getWorkspaceReserve, recordVerifiedPayrollClaimSettlement,
-  releaseFailedPayrollSettlementAttempt, releaseUnsubmittedPayrollSettlementAttempt,
+  attachPayrollClaimEscrowFundingSignature, beginPayrollClaimEscrowFunding,
+  getContributorConfidentialAccount, getPayrollClaimCreationEvidence, getPayrollClaimEscrow,
+  getWorkspacePayrollRun, getWorkspaceReserve, recordVerifiedPayrollClaimEscrowFunding,
+  recordVerifiedPayrollClaimSettlement, releaseFailedPayrollSettlementAttempt,
+  releaseUnsubmittedPayrollSettlementAttempt, resetFailedPayrollClaimEscrowFunding,
   setPayrollSettlementProofContexts, updatePendingPayrollSettlementBalanceSnapshot,
   type Database
 } from "@paylore/database";
@@ -308,8 +310,8 @@ function configureReserveInstruction(input: {
 }
 function markClaimedInstruction(input: {
   programId: string; contributor: string; workspace: string; reserveState: string;
-  reserveAuthority: string; reserveToken: string; mint: string; destination: string; claim: string;
-  amountCommitmentContext: string;
+  reserveAuthority: string; reserveToken: string; mint: string; claim: string; escrowTokenAccount: string;
+  destination: string; amountCommitmentContext: string;
 }): Instruction {
   return {
     programAddress: address(input.programId),
@@ -320,8 +322,9 @@ function markClaimedInstruction(input: {
       { address: address(input.reserveAuthority), role: AccountRole.READONLY_SIGNER },
       { address: address(input.reserveToken), role: AccountRole.READONLY },
       { address: address(input.mint), role: AccountRole.READONLY },
-      { address: address(input.destination), role: AccountRole.WRITABLE },
       { address: address(input.claim), role: AccountRole.WRITABLE },
+      { address: address(input.escrowTokenAccount), role: AccountRole.WRITABLE },
+      { address: address(input.destination), role: AccountRole.WRITABLE },
       { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY },
       { address: address(input.amountCommitmentContext), role: AccountRole.READONLY }
     ],
@@ -361,7 +364,12 @@ function programOf(instruction: Record<string, unknown>, keys: string[]): string
   if (typeof instruction.programId === "string") return instruction.programId;
   return typeof instruction.programIdIndex === "number" ? keys[instruction.programIdIndex] ?? "" : "";
 }
-type FinalizedClaimState = "unclaimed" | "settlement_pending" | "claimed" | "recovered";
+type FinalizedClaimStatus = "unclaimed" | "settlement_pending" | "claimed" | "recovered";
+type FinalizedClaimState = {
+  status: FinalizedClaimStatus;
+  escrowTokenAccount: string;
+  escrowFunded: boolean;
+};
 
 async function readFinalizedClaimState(input: {
   rpc: ReturnType<typeof createSolanaRpc>;
@@ -372,6 +380,7 @@ async function readFinalizedClaimState(input: {
   claimId: string;
   allocationCommitment: string;
   amountCommitment: string;
+  escrowTokenAccount: string;
 }): Promise<FinalizedClaimState> {
   if (!/^[0-9a-f]{64}$/i.test(input.claimId) ||
       !/^[0-9a-f]{64}$/i.test(input.allocationCommitment) ||
@@ -381,6 +390,7 @@ async function readFinalizedClaimState(input: {
   const claimId = Uint8Array.from(input.claimId.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const commitment = Uint8Array.from(input.allocationCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const amountCommitment = Uint8Array.from(input.amountCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
+  const escrowTokenAccount = getAddressEncoder().encode(address(input.escrowTokenAccount));
   const [derivedClaim, bump] = await getProgramDerivedAddress({
     programAddress: address(input.programId),
     seeds: [encoder.encode("claim"), getAddressEncoder().encode(address(input.workspace)),
@@ -392,23 +402,28 @@ async function readFinalizedClaimState(input: {
   const account = object(response.value);
   const data = decodeAccountData(account?.data);
   if (derivedClaim !== input.claim || !account || account.owner !== input.programId ||
-      account.executable === true || !data || data.length !== 170 ||
+      account.executable === true || !data || data.length !== 203 ||
       !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
       !sameBytes(data.subarray(136, 168), amountCommitment) ||
-      data[169] !== bump || data[168] > 3) {
+      !sameBytes(data.subarray(168, 200), escrowTokenAccount) ||
+      data[200] > 1 || data[202] !== bump || data[201] > 3) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
-  return data[168] === 0 ? "unclaimed" : data[168] === 1 ? "claimed" : data[168] === 2 ? "recovered" : "settlement_pending";
+  return {
+    status: data[201] === 0 ? "unclaimed" : data[201] === 1 ? "claimed" : data[201] === 2 ? "recovered" : "settlement_pending",
+    escrowTokenAccount: input.escrowTokenAccount,
+    escrowFunded: data[200] === 1
+  };
 }
 
 async function verifyFinalizedSettlement(input: {
   rpc: ReturnType<typeof createSolanaRpc>; signature: string; programId: string; workspace: string;
   reserveState: string; reserveAuthority: string; reserveToken: string; contributor: string;
-  destination: string; mint: string; claim: string; claimId: string; allocationCommitment: string;
+  destination: string; mint: string; claim: string; escrowTokenAccount: string; claimId: string; allocationCommitment: string;
   amountCommitment: string;
 }): Promise<void> {
   const txResult = await input.rpc.getTransaction(input.signature as Signature, {
@@ -438,17 +453,17 @@ async function verifyFinalizedSettlement(input: {
     const accounts = accountsOf(ix, keys);
     const data = typeof ix.data === "string" ? decodeBase58(ix.data) : null;
     if (programId === TOKEN_2022_PROGRAM_ADDRESS && data && data.length >= 2 && data[0] === 27 && data[1] === 7 &&
-        accounts[0] === input.reserveToken && accounts[1] === input.mint && accounts[2] === input.destination) {
+        accounts[0] === input.escrowTokenAccount && accounts[1] === input.mint && accounts[2] === input.destination) {
       transferIndex = index;
       transferContext = accounts[4] ?? "";
       transfers++;
     }
     if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_claimed")) &&
-        accounts.length === 10 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
+        accounts.length === 11 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
         accounts[2] === input.reserveState && accounts[3] === input.reserveAuthority &&
-        accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.destination &&
-        accounts[7] === input.claim && accounts[8] === INSTRUCTIONS_SYSVAR &&
-        accounts[9] === transferContext) {
+        accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.claim &&
+        accounts[7] === input.escrowTokenAccount && accounts[8] === input.destination &&
+        accounts[9] === INSTRUCTIONS_SYSVAR && accounts[10] === transferContext) {
       markIndex = index; marks++;
     }
   }
@@ -472,14 +487,15 @@ async function verifyFinalizedSettlement(input: {
   const account = object(response.value);
   const data = decodeAccountData(account?.data);
   if (derivedClaim !== input.claim || !account || account.owner !== input.programId ||
-      account.executable === true || !data || data.length !== 170 ||
+      account.executable === true || !data || data.length !== 203 ||
       !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
       !sameBytes(data.subarray(136, 168), amountCommitment) ||
-      data[168] !== 1 || data[169] !== bump) {
+      !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
+      data[200] !== 1 || data[201] !== 1 || data[202] !== bump) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
 }
@@ -498,7 +514,7 @@ async function reconcileSettlement(
 ): Promise<PayrollSettlementResult> {
   const [statusResult, balances] = await Promise.all([
     rpc.getSignatureStatuses([input.settlementSignature as Signature], { searchTransactionHistory: true }).send(),
-    readReserveBalance(rpc, input.reserveToken, secret, aesKey)
+    readReserveBalance(rpc, input.escrowTokenAccount, secret, aesKey)
   ]);
   const status = statusResult.value[0];
   const sourceAfter = balances.confidential.availableBalance.toString();
@@ -539,8 +555,8 @@ async function reconcileSettlement(
     rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
     reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
     contributor: input.contributor, destination: input.destination, mint: input.mint,
-    claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
-    amountCommitment: input.amountCommitment
+    claim: input.claim, escrowTokenAccount: input.escrowTokenAccount, claimId: input.claimId,
+    allocationCommitment: input.commitment, amountCommitment: input.amountCommitment
   });
   if (!matchesExactConfidentialDebit({
     amountBaseUnits: input.amount,
@@ -565,8 +581,8 @@ async function reconcileSettlement(
     readFinalizedClaimState: async () => readFinalizedClaimState({
       rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
       claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
-      amountCommitment: input.amountCommitment
-    }),
+      amountCommitment: input.amountCommitment, escrowTokenAccount: input.escrowTokenAccount
+    }).then((claim) => claim.status),
     finalizeClaimed: async () => {
       const tx = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
         programId: input.programId, contributor: input.contributor, workspace: input.workspace,
