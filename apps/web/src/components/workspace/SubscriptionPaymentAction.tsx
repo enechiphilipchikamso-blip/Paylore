@@ -294,10 +294,8 @@ export function SubscriptionPaymentAction({
       setPendingSignature(signature);
       setSubmissionUncertain(false);
       setProgress("Payment submitted. Waiting for network confirmation…");
-      let verified = false;
       try {
         const outcome = await verifyPayment(signature, prepared.attemptId);
-        verified = outcome === "active";
         if (outcome === "pending") setPartial(RECONCILIATION_PENDING);
         if (outcome === "unavailable") {
           setPartial("The wallet sent the transaction, but Paylore could not check it yet. Retry verification here; do not send another payment.");
@@ -307,11 +305,6 @@ export function SubscriptionPaymentAction({
           "The wallet sent the transaction, but Paylore could not check it yet. Retry verification here; do not send another payment."
         );
         return;
-      }
-      if (!verified) {
-        setPartial(
-          "The wallet sent the transaction, but Paylore has not confirmed activation yet. Retry verification here; do not send another payment."
-        );
       }
     } catch (cause) {
       if (isConfirmedWalletCancellation(cause)) {
