@@ -729,6 +729,43 @@ mod tests {
     }
 
     #[test]
+    fn allocation_merkle_root_matches_the_typescript_encoding() {
+        let claim_id = [1u8; 32];
+        let contributor = Pubkey::default();
+        let amount_commitment = [0x10u8; 32];
+        let sibling_id = [2u8; 32];
+        let sibling_contributor = "Vote111111111111111111111111111111111111111"
+            .parse::<Pubkey>()
+            .unwrap();
+        let sibling_amount = [0x11u8; 32];
+        let leaf = hashv(&[
+            b"paylore:allocation-leaf:v1\0",
+            &claim_id,
+            contributor.as_ref(),
+            &amount_commitment,
+        ]).to_bytes();
+        let sibling = hashv(&[
+            b"paylore:allocation-leaf:v1\0",
+            &sibling_id,
+            sibling_contributor.as_ref(),
+            &sibling_amount,
+        ]).to_bytes();
+        let root = hashv(&[b"paylore:allocation-node:v1\0", &leaf, &sibling]).to_bytes();
+        assert_eq!(
+            root,
+            [
+                0xf8, 0xb9, 0x52, 0x17, 0x16, 0x55, 0xee, 0x41,
+                0x06, 0x61, 0x62, 0x80, 0x55, 0x26, 0x42, 0x14,
+                0x33, 0x69, 0x7d, 0x65, 0xec, 0xf3, 0x78, 0x2e,
+                0xd0, 0x54, 0xe9, 0xda, 0x36, 0x71, 0x36, 0xac
+            ]
+        );
+        assert!(verify_allocation_merkle_proof(
+            root, claim_id, contributor, amount_commitment, 0, &[sibling]
+        ));
+    }
+
+    #[test]
     fn amount_commitment_requires_the_exact_verified_equality_context() {
         let authority = Pubkey::new_unique();
         let commitment = [7u8; 32];
