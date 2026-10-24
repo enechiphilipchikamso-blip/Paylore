@@ -57,6 +57,13 @@
       "when": 1792840980000,
       "tag": "0007_payroll_settlement_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792840980002,
+      "tag": "0008_payroll_settlement_proof_cleanup",
+      "breakpoints": true
     }
   ]
 }

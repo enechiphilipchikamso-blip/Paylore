@@ -931,6 +931,8 @@ export const payrollAllocations =
       transactionSignature: text("transaction_signature"),
       settlementSignature: text("settlement_signature"),
       settlementSourceAvailableBefore: text("settlement_source_available_before"),
+      settlementProofContextAddresses: jsonb("settlement_proof_context_addresses").$type<string[]>().notNull().default([]),
+      settlementContextSignatures: jsonb("settlement_context_signatures").$type<string[]>().notNull().default([]),
       claimedAt: timestamp("claimed_at", { withTimezone: true }),
       recoveredAt: timestamp("recovered_at", { withTimezone: true }),
       createdAt: timestamp("created_at", { withTimezone: true })

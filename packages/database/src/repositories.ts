@@ -3607,6 +3607,8 @@ export async function getWorkspacePayrollRun(
       transactionSignature: payrollAllocations.transactionSignature,
       settlementSignature: payrollAllocations.settlementSignature,
       settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore,
+      settlementProofContextAddresses: payrollAllocations.settlementProofContextAddresses,
+      settlementContextSignatures: payrollAllocations.settlementContextSignatures,
       claimedAt: payrollAllocations.claimedAt,
       recoveredAt: payrollAllocations.recoveredAt,
       createdAt: payrollAllocations.createdAt,
@@ -4019,8 +4021,13 @@ export async function recordPayrollClaimSubmission(
 export async function beginPayrollSettlementAttempt(
   db: Database,
   input: {
-    workspaceId: string; runId: string; allocationId: string; claimAddress: string;
-    claimCreationSignature: string; sourceAvailableBefore: string; now?: Date;
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    claimAddress: string;
+    claimCreationSignature: string;
+    sourceAvailableBefore: string;
+    now?: Date;
   }
 ) {
   if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore)) {
@@ -4029,8 +4036,10 @@ export async function beginPayrollSettlementAttempt(
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
     const rows = await tx.select({
-      id: payrollAllocations.id, claimAddress: payrollAllocations.claimAddress,
-      status: payrollAllocations.status, transactionSignature: payrollAllocations.transactionSignature,
+      id: payrollAllocations.id,
+      claimAddress: payrollAllocations.claimAddress,
+      status: payrollAllocations.status,
+      transactionSignature: payrollAllocations.transactionSignature,
       settlementSignature: payrollAllocations.settlementSignature,
       settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore
     }).from(payrollAllocations).where(and(
@@ -4040,20 +4049,46 @@ export async function beginPayrollSettlementAttempt(
     )).for("update").limit(1);
     const allocation = rows[0];
     if (!allocation) return { status: "not_found" as const };
+
+    // Serialize access to the single workspace reserve, not only to this allocation.
+    const reserveRows = await tx.select({
+      workspaceId: workspaceReserves.workspaceId
+    }).from(workspaceReserves).where(
+      eq(workspaceReserves.workspaceId, input.workspaceId)
+    ).for("update").limit(1);
+    if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+
     if (
       allocation.status === "settlement_pending" &&
       allocation.claimAddress === input.claimAddress &&
       allocation.transactionSignature === input.claimCreationSignature &&
       allocation.settlementSourceAvailableBefore === input.sourceAvailableBefore
     ) return { status: "pending" as const, signature: allocation.settlementSignature };
+
     if (
-      allocation.status !== "unclaimed" || allocation.claimAddress !== input.claimAddress ||
+      allocation.status !== "unclaimed" ||
+      allocation.claimAddress !== input.claimAddress ||
       allocation.transactionSignature !== input.claimCreationSignature ||
       allocation.settlementSignature !== null
     ) return { status: "conflict" as const };
+
+    const pendingRows = await tx.select({
+      id: payrollAllocations.id
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.status, "settlement_pending")
+    )).for("update").limit(100);
+    if (pendingRows.some((row) => row.id !== input.allocationId)) {
+      return { status: "workspace_busy" as const };
+    }
+
     const updated = await tx.update(payrollAllocations).set({
-      status: "settlement_pending", settlementSignature: null,
-      settlementSourceAvailableBefore: input.sourceAvailableBefore, updatedAt: now
+      status: "settlement_pending",
+      settlementSignature: null,
+      settlementSourceAvailableBefore: input.sourceAvailableBefore,
+      settlementProofContextAddresses: [],
+      settlementContextSignatures: [],
+      updatedAt: now
     }).where(and(
       eq(payrollAllocations.id, input.allocationId),
       eq(payrollAllocations.workspaceId, input.workspaceId),
@@ -4120,14 +4155,92 @@ export async function releaseUnsubmittedPayrollSettlementAttempt(
   input: { workspaceId: string; runId: string; allocationId: string; now?: Date }
 ) {
   const rows = await db.update(payrollAllocations).set({
-    status: "unclaimed", settlementSignature: null,
-    settlementSourceAvailableBefore: null, updatedAt: input.now ?? new Date()
+    status: "unclaimed",
+    settlementSignature: null,
+    settlementSourceAvailableBefore: null,
+    settlementProofContextAddresses: [],
+    settlementContextSignatures: [],
+    updatedAt: input.now ?? new Date()
   }).where(and(
     eq(payrollAllocations.id, input.allocationId),
     eq(payrollAllocations.workspaceId, input.workspaceId),
     eq(payrollAllocations.payrollRunId, input.runId),
     eq(payrollAllocations.status, "settlement_pending"),
     isNull(payrollAllocations.settlementSignature)
+  )).returning({ id: payrollAllocations.id });
+  return Boolean(rows[0]);
+}
+
+export async function setPayrollSettlementProofContexts(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; addresses: string[]; now?: Date }
+) {
+  if (
+    input.addresses.length > 8 ||
+    input.addresses.some((value) => typeof value !== "string" || value.length < 32 || value.length > 64) ||
+    new Set(input.addresses).size !== input.addresses.length
+  ) {
+    throw new Error("The confidential proof-context address list is invalid.");
+  }
+  const rows = await db.update(payrollAllocations).set({
+    settlementProofContextAddresses: input.addresses,
+    updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.runId),
+    eq(payrollAllocations.status, "settlement_pending")
+  )).returning({ id: payrollAllocations.id });
+  return Boolean(rows[0]);
+}
+
+export async function appendPayrollSettlementContextSignature(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; signature: string; now?: Date }
+) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(input.signature)) {
+    throw new Error("The confidential proof transaction signature is invalid.");
+  }
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      settlementContextSignatures: payrollAllocations.settlementContextSignatures
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.status, "settlement_pending")
+    )).for("update").limit(1);
+    if (!rows[0]) return false;
+    const signatures = Array.isArray(rows[0].settlementContextSignatures)
+      ? rows[0].settlementContextSignatures
+      : [];
+    if (signatures.includes(input.signature)) return true;
+    const updated = await tx.update(payrollAllocations).set({
+      settlementContextSignatures: [...signatures, input.signature],
+      updatedAt: input.now ?? new Date()
+    }).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.status, "settlement_pending")
+    )).returning({ id: payrollAllocations.id });
+    return Boolean(updated[0]);
+  });
+}
+
+export async function clearPayrollSettlementProofContexts(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; now?: Date }
+) {
+  const rows = await db.update(payrollAllocations).set({
+    settlementProofContextAddresses: [],
+    settlementContextSignatures: [],
+    updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.runId),
+    inArray(payrollAllocations.status, ["settlement_pending", "claimed"])
   )).returning({ id: payrollAllocations.id });
   return Boolean(rows[0]);
 }
