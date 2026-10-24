@@ -34,7 +34,7 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
+  bindAmountBoundClaimedStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
@@ -303,7 +303,7 @@ function configureReserveInstruction(input: {
     data: discriminator("global:configure_workspace_reserve")
   };
 }
-function markSettlementPendingInstruction(input: {
+function markClaimedInstruction(input: {
   programId: string; contributor: string; workspace: string; reserveState: string;
   reserveAuthority: string; reserveToken: string; mint: string; destination: string; claim: string;
   amountCommitmentContext: string;
@@ -322,7 +322,7 @@ function markSettlementPendingInstruction(input: {
       { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY },
       { address: address(input.amountCommitmentContext), role: AccountRole.READONLY }
     ],
-    data: discriminator("global:mark_settlement_pending")
+    data: discriminator("global:mark_claimed")
   };
 }
 function finalizeClaimedInstruction(input: {
@@ -431,7 +431,7 @@ async function verifyFinalizedSettlement(input: {
         accounts[0] === input.reserveToken && accounts[1] === input.mint && accounts[2] === input.destination) {
       transferIndex = index; transfers++;
     }
-    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_settlement_pending")) &&
+    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_claimed")) &&
         accounts.length === 9 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
         accounts[2] === input.reserveState && accounts[3] === input.reserveAuthority &&
         accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.destination &&
@@ -859,9 +859,9 @@ export async function settleContributorPayrollAllocation(
 
         sequence = advanceConfidentialSequence(sequence, "proof_setup", "finalized");
 
-        const boundPlan = bindSettlementPendingStateToConfidentialTransfer(
+        const boundPlan = bindAmountBoundClaimedStateToConfidentialTransfer(
           transferPlan,
-          markSettlementPendingInstruction({
+          markClaimedInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
             reserveAuthority: signer.address, reserveToken, mint, destination, claim: allocation.claimAddress,
             amountCommitmentContext
