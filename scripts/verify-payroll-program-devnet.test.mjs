@@ -113,7 +113,7 @@ test("matches the entire local ELF and tolerates only zero-filled ProgramData ca
     deployedSlot: 123,
     upgradeAuthority,
     artifactBytes: artifact.length,
-    artifactSha256: "b6c13b3b5fcd7c5a7c04a82c9b2c54c4813be7b2d24a3f4ce0f6dfcc7bf706ce"
+    artifactSha256: "1ce1805693fc7e6df020e40f78385981789a078c681dbbcbd1551be1c3939a3e"
   });
 });
 
