@@ -39,8 +39,30 @@ describe("confidential settlement instruction binding", () => {
     const bound = bindSettlementPendingStateToConfidentialTransfer(plan, mark, expected);
     expect(bound.kind).toBe("sequential");
     if (bound.kind !== "sequential" || bound.plans[1]?.kind !== "sequential") return;
+    expect(bound.plans[0]).toEqual(singleInstructionPlan(setup));
     expect(bound.plans[1].divisible).toBe(false);
     expect(bound.plans[1].plans).toHaveLength(2);
+    if (bound.plans[1].kind !== "sequential") return;
+    expect(bound.plans[1].plans[0]).toEqual(singleInstructionPlan(transfer));
+    expect(bound.plans[1].plans[1]).toEqual(singleInstructionPlan(mark));
+    expect(bound.plans[2]).toEqual(singleInstructionPlan(cleanup));
+  });
+
+  it("rejects a transfer plan whose phase order or transfer accounts differ", () => {
+    const setup = ix(other, [1]), cleanup = ix(other, [2]), mark = ix(other, [3]);
+    const wrongTransfer = ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 7], [source, mint, other]);
+    const wrongOrder = {
+      kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
+      plans: [singleInstructionPlan(setup), singleInstructionPlan(cleanup), singleInstructionPlan(wrongTransfer)]
+    };
+    expect(() => bindSettlementPendingStateToConfidentialTransfer(wrongOrder, mark, expected))
+      .toThrow("plan shape has changed");
+    const wrongAccounts = {
+      kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
+      plans: [singleInstructionPlan(setup), singleInstructionPlan(wrongTransfer), singleInstructionPlan(cleanup)]
+    };
+    expect(() => bindSettlementPendingStateToConfidentialTransfer(wrongAccounts, mark, expected))
+      .toThrow("plan shape has changed");
   });
   it("extracts only ZK proof-context close instructions and deduplicates addresses", () => {
     const contextA = address("ComputeBudget111111111111111111111111111111");
