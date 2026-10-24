@@ -452,11 +452,14 @@ async function verifyFinalizedSettlement(input: {
   if (transfers !== 1 || marks !== 1 || markIndex !== transferIndex + 1) {
     throw new PayrollConfidentialSettlementError("settlement_transfer_binding_invalid", 409);
   }
-  if (!/^[0-9a-f]{64}$/i.test(input.claimId) || !/^[0-9a-f]{64}$/i.test(input.allocationCommitment)) {
+  if (!/^[0-9a-f]{64}$/i.test(input.claimId) ||
+      !/^[0-9a-f]{64}$/i.test(input.allocationCommitment) ||
+      !/^[0-9a-f]{64}$/i.test(input.amountCommitment)) {
     throw new PayrollConfidentialSettlementError("settlement_claim_commitment_invalid", 409);
   }
   const claimId = Uint8Array.from(input.claimId.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const commitment = Uint8Array.from(input.allocationCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
+  const amountCommitment = Uint8Array.from(input.amountCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const [derivedClaim, bump] = await getProgramDerivedAddress({
     programAddress: address(input.programId),
     seeds: [encoder.encode("claim"), getAddressEncoder().encode(address(input.workspace)),
