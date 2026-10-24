@@ -24,6 +24,7 @@ const contributorAddress = "11111111111111111111111111111111";
 const workspaceId = "5f7bbaf7-21ab-4e62-95be-84f5d6bf6bb3";
 const claimId = "01".repeat(32);
 const commitment = "ab".repeat(32);
+const amountCommitment = "ef".repeat(32);
 const recoveryReasonCommitment = "cd".repeat(32);
 const transactionSignature = "5".repeat(64);
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -70,7 +71,8 @@ async function claimInstruction() {
   const data = Buffer.concat([
     discriminator,
     Buffer.from(claimId, "hex"),
-    Buffer.from(commitment, "hex")
+    Buffer.from(commitment, "hex"),
+    Buffer.from(amountCommitment, "hex")
   ]);
   return {
     programId,
@@ -94,6 +96,7 @@ function claimStateAccount(
     status?: number;
     owner?: string;
     allocationCommitment?: string;
+    amountCommitment?: string;
   } = {}
 ) {
   const discriminator = createHash("sha256")
@@ -106,6 +109,7 @@ function claimStateAccount(
     Buffer.from(getAddressEncoder().encode(address(contributorAddress))),
     Buffer.from(claimId, "hex"),
     Buffer.from(options.allocationCommitment ?? commitment, "hex"),
+    Buffer.from(options.amountCommitment ?? amountCommitment, "hex"),
     Buffer.from([options.status ?? 0, instruction.claimBump])
   ]);
   return {
@@ -170,7 +174,8 @@ describe("payroll program transaction verification", () => {
         claims: [{
           claimId,
           claimAddress: instruction.claimAddress,
-          contributorAddress
+          contributorAddress,
+          amountCommitment
         }]
       })
     ).resolves.toBeUndefined();
@@ -201,7 +206,8 @@ describe("payroll program transaction verification", () => {
         claims: [{
           claimId,
           claimAddress: instruction.claimAddress,
-          contributorAddress
+          contributorAddress,
+          amountCommitment
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -236,7 +242,8 @@ describe("payroll program transaction verification", () => {
         claims: [{
           claimId,
           claimAddress: instruction.claimAddress,
-          contributorAddress
+          contributorAddress,
+          amountCommitment
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -265,7 +272,8 @@ describe("payroll program transaction verification", () => {
         claims: [{
           claimId,
           claimAddress: instruction.claimAddress,
-          contributorAddress
+          contributorAddress,
+          amountCommitment
         }]
       })
     ).rejects.toThrow("not finalized successfully");
