@@ -762,7 +762,6 @@ export async function settleContributorPayrollAllocation(
         const amountCommitmentMaterial = derivePayrollAmountCommitmentMaterial({
           amountBaseUnits: allocation.amountBaseUnits,
           claimId: allocation.claimId,
-          allocationCommitment: evidence.allocationCommitment,
           secretHex: config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET!
         });
         if (allocation.amountCommitment !== amountCommitmentMaterial.amountCommitment) {
