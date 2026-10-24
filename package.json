@@ -27,7 +27,7 @@
     "test:program-idl": "node --test scripts/audit-payroll-program-idl.test.mjs",
     "anchor:verify-deployed": "node scripts/verify-payroll-program-devnet.mjs",
     "anchor:verify-release": "pnpm anchor:build:verifiable && pnpm anchor:verify-idl && pnpm anchor:verify-deployed",
-    "anchor:build:verifiable": "cd programs/payroll && anchor build --verifiable",
+    "anchor:build:verifiable": "anchor build --verifiable",
     "test:devnet-program-verify": "node --test scripts/verify-payroll-program-devnet.test.mjs"
   },
   "devDependencies": {
