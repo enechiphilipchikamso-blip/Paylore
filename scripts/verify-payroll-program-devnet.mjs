@@ -92,7 +92,11 @@ export function parseProgramData(programDataAccount, artifactBytes, expectedUpgr
     fail("The ProgramData account does not contain the expected upgradeable-loader state.");
   }
 
-  const deployedSlot = Number(new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(4, true));
+  const deployedSlotValue = new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(4, true);
+  if (deployedSlotValue > BigInt(Number.MAX_SAFE_INTEGER)) {
+    fail("The ProgramData deployment slot cannot be represented safely.");
+  }
+  const deployedSlot = Number(deployedSlotValue);
   const authorityOption = data[12];
   let authorityOffset = 13;
   let upgradeAuthority = null;
@@ -162,7 +166,12 @@ async function rpcRequest(rpcUrl, method, params, { fetchImpl = fetch, headers =
 }
 
 function rpcOptions(env) {
-  const url = new URL(env.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  let url;
+  try {
+    url = new URL(env.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  } catch {
+    fail("The configured Solana RPC URL is invalid.");
+  }
   if (url.protocol !== "https:") fail("Devnet program verification requires an HTTPS RPC endpoint.");
   const provider = String(env.PAYLORE_RPC_PRIMARY_PROVIDER || "direct").toLowerCase();
   const headers = {};
