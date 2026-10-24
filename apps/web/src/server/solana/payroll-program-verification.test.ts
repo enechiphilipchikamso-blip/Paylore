@@ -25,6 +25,8 @@ const workspaceId = "5f7bbaf7-21ab-4e62-95be-84f5d6bf6bb3";
 const claimId = "01".repeat(32);
 const commitment = "ab".repeat(32);
 const amountCommitment = "ef".repeat(32);
+const amountCommitmentProof = ["cd".repeat(32)];
+const amountCommitmentLeafIndex = 0;
 const recoveryReasonCommitment = "cd".repeat(32);
 const transactionSignature = "5".repeat(64);
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -72,7 +74,10 @@ async function claimInstruction() {
     discriminator,
     Buffer.from(claimId, "hex"),
     Buffer.from(commitment, "hex"),
-    Buffer.from(amountCommitment, "hex")
+    Buffer.from(amountCommitment, "hex"),
+    Buffer.from([0, 0, 0, 0]),
+    Buffer.from([1, 0, 0, 0]),
+    Buffer.from(amountCommitmentProof[0]!, "hex")
   ]);
   return {
     programId,
@@ -175,7 +180,9 @@ describe("payroll program transaction verification", () => {
           claimId,
           claimAddress: instruction.claimAddress,
           contributorAddress,
-          amountCommitment
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex
         }]
       })
     ).resolves.toBeUndefined();
@@ -207,7 +214,9 @@ describe("payroll program transaction verification", () => {
           claimId,
           claimAddress: instruction.claimAddress,
           contributorAddress,
-          amountCommitment
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -239,7 +248,9 @@ describe("payroll program transaction verification", () => {
         claimId,
         claimAddress: instruction.claimAddress,
         contributorAddress,
-        amountCommitment
+        amountCommitment,
+        amountCommitmentProof,
+        amountCommitmentLeafIndex
       }]
     })).rejects.toThrow("does not match the expected workspace");
   });
@@ -274,7 +285,9 @@ describe("payroll program transaction verification", () => {
           claimId,
           claimAddress: instruction.claimAddress,
           contributorAddress,
-          amountCommitment
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex
         }]
       })
     ).rejects.toThrow("does not match the expected workspace");
@@ -304,7 +317,9 @@ describe("payroll program transaction verification", () => {
           claimId,
           claimAddress: instruction.claimAddress,
           contributorAddress,
-          amountCommitment
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex
         }]
       })
     ).rejects.toThrow("not finalized successfully");
@@ -334,7 +349,9 @@ describe("payroll program transaction verification", () => {
           claimId,
           claimAddress: authorityAddress,
           contributorAddress,
-          amountCommitment
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex
         }]
       })
     ).rejects.toThrow("does not match this allocation");
