@@ -230,7 +230,7 @@ fn validate_amount_commitment_context(
 }
 
 const ZK_ELGAMAL_PROOF_PROGRAM_ID: Pubkey =
-    pubkey!("ZkE4gkN2R9D3pJ9pF8G6v7k2L3x1bV5uQ4m8wT6sA1c");
+    pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 fn validate_token_account_identity(
     account: &AccountInfo,
@@ -610,22 +610,26 @@ mod tests {
         let mint = Pubkey::new_unique();
         let destination = Pubkey::new_unique();
         let unrelated = Pubkey::new_unique();
+        let context = Pubkey::new_unique();
         let transfer = Instruction {
             program_id: TOKEN_2022_PROGRAM_ID,
             accounts: vec![
                 anchor_lang::solana_program::instruction::AccountMeta::new(source, false),
                 anchor_lang::solana_program::instruction::AccountMeta::new_readonly(mint, false),
                 anchor_lang::solana_program::instruction::AccountMeta::new(destination, false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(context, false),
             ],
             data: vec![27, 7],
         };
-        assert!(is_matching_confidential_transfer_instruction(&transfer, source, mint, destination));
-        assert!(!is_matching_confidential_transfer_instruction(&transfer, source, mint, unrelated));
-        assert!(!is_matching_confidential_transfer_instruction(&transfer, source, unrelated, destination));
+        assert!(is_matching_confidential_transfer_instruction(&transfer, source, mint, destination, context));
+        assert!(!is_matching_confidential_transfer_instruction(&transfer, source, mint, unrelated, context));
+        assert!(!is_matching_confidential_transfer_instruction(&transfer, source, unrelated, destination, context));
+        assert!(!is_matching_confidential_transfer_instruction(&transfer, source, mint, destination, unrelated));
         let wrong_variant = Instruction { data: vec![27, 6], ..transfer.clone() };
-        assert!(!is_matching_confidential_transfer_instruction(&wrong_variant, source, mint, destination));
+        assert!(!is_matching_confidential_transfer_instruction(&wrong_variant, source, mint, destination, context));
         let wrong_program = Instruction { program_id: unrelated, ..transfer };
-        assert!(!is_matching_confidential_transfer_instruction(&wrong_program, source, mint, destination));
+        assert!(!is_matching_confidential_transfer_instruction(&wrong_program, source, mint, destination, context));
     }
 
     #[test]
