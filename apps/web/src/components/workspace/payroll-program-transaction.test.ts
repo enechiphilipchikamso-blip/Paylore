@@ -24,7 +24,9 @@ describe("payroll program transactions", () => {
           {
             claimId: "invalid",
             contributorAddress: "11111111111111111111111111111111",
-            amountCommitment: "cd".repeat(32)
+            amountCommitment: "cd".repeat(32),
+            amountCommitmentProof: ["aa".repeat(32)],
+            amountCommitmentLeafIndex: 0
           }
         ],
         programId,
