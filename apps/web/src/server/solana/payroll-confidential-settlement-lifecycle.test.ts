@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   fetchEncodedAccount: vi.fn(),
+  createTransactionPlanner: vi.fn(),
+  createTransactionPlanExecutorWithConcurrentLeaves: vi.fn(),
   clearPayrollSettlementProofContexts: vi.fn()
 }));
 
@@ -11,7 +13,9 @@ vi.mock("@paylore/database", () => ({
 }));
 vi.mock("@solana/kit", async (importOriginal) => ({
   ...(await importOriginal()),
-  fetchEncodedAccount: mocks.fetchEncodedAccount
+  fetchEncodedAccount: mocks.fetchEncodedAccount,
+  createTransactionPlanner: mocks.createTransactionPlanner,
+  createTransactionPlanExecutorWithConcurrentLeaves: mocks.createTransactionPlanExecutorWithConcurrentLeaves
 }));
 
 import { cleanupProofContexts, proofSetupFinality } from "./payroll-confidential-settlement";
@@ -21,7 +25,13 @@ function rpcWithStatuses(statuses: Status[]) {
   return { getSignatureStatuses: vi.fn().mockResolvedValue({ value: statuses }) };
 }
 
-beforeEach(() => { vi.resetAllMocks(); });
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.createTransactionPlanner.mockImplementation(() => async (plan: unknown) => plan);
+  mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => {
+    throw new Error("proof context close failed");
+  });
+});
 
 describe("confidential proof setup finality", () => {
   it("accepts setup only when every proof-context transaction is finalized successfully", async () => {
@@ -97,4 +107,14 @@ describe("confidential proof-context cleanup", () => {
     expect(mocks.fetchEncodedAccount).toHaveBeenCalledOnce();
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
   });
-});
+
+
+  it("keeps durable tracking when closing an owned proof context fails", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: "ZkE1Gama1Proof11111111111111111111111111111"
+    });
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });});
