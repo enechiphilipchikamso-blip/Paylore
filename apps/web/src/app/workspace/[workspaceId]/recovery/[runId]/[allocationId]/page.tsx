@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getWorkspacePayrollRun } from "@paylore/database";
+import { getPayrollClaimEscrow, getWorkspacePayrollRun } from "@paylore/database";
 import { PayrollRecoveryAction } from "../../../../../../components/workspace/PayrollRecoveryAction";
 import {
   WorkspaceLegalFooter,
@@ -53,8 +53,9 @@ export default async function WorkspaceRecoveryDetailPage({
   if (!payroll || !allocation || !allocation.claimAddress) notFound();
 
   const programId = loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID ?? null;
+  const escrow = await getPayrollClaimEscrow(context.db, workspaceId, allocation.id);
   let finalizedClaimState: FinalizedPayrollClaimState | null = null;
-  if (programId && payroll.run.allocationCommitment && allocation.amountCommitment) {
+  if (programId && escrow?.tokenAccountAddress && payroll.run.allocationCommitment && allocation.amountCommitment) {
     try {
       finalizedClaimState = await getFinalizedPayrollClaimState({
         authorityAddress: context.session.walletAddress,
@@ -63,13 +64,16 @@ export default async function WorkspaceRecoveryDetailPage({
         claimId: allocation.claimId,
         claimAddress: allocation.claimAddress,
         allocationCommitment: payroll.run.allocationCommitment,
-        amountCommitment: allocation.amountCommitment
+        amountCommitment: allocation.amountCommitment,
+        escrowTokenAccount: escrow.tokenAccountAddress
       });
     } catch {
       finalizedClaimState = null;
     }
   }
-  const recoverable = allocation.status === "unclaimed" && finalizedClaimState === "unclaimed";
+  const recoverable = allocation.status === "unclaimed" &&
+    escrow?.status === "funded" &&
+    finalizedClaimState === "unclaimed";
   const chainStatusLabel = finalizedClaimState ? stateLabel(finalizedClaimState) : "Unable to verify";
 
   return (
@@ -99,6 +103,8 @@ export default async function WorkspaceRecoveryDetailPage({
           <div><dt>Stored allocation state</dt><dd>{stateLabel(allocation.status)}</dd></div>
           <div><dt>Finalized Claim PDA state</dt><dd>{chainStatusLabel}</dd></div>
           <div><dt>Claim PDA</dt><dd><code>{allocation.claimAddress}</code></dd></div>
+          <div><dt>Confidential escrow</dt><dd><code>{escrow?.tokenAccountAddress ?? "Not prepared"}</code></dd></div>
+          <div><dt>Escrow funding</dt><dd>{escrow?.status === "funded" ? "Funded" : "Not verified as funded"}</dd></div>
           <div><dt>Claim creation transaction</dt><dd><code>{allocation.transactionSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Settlement transaction</dt><dd><code>{allocation.settlementSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Allocation commitment</dt><dd><code>{payroll.run.allocationCommitment ?? "Not recorded"}</code></dd></div>
