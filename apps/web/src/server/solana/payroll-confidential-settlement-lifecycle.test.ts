@@ -78,7 +78,7 @@ describe("confidential proof-context cleanup", () => {
     workspaceId: "workspace-a",
     runId: "run-a",
     allocationId: "allocation-a",
-    addresses: ["context-a", "context-a", "context-b"]
+    addresses: ["ComputeBudget111111111111111111111111111111", "ComputeBudget111111111111111111111111111111", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"]
   };
 
   it("clears durable context tracking only after every context is already absent", async () => {
