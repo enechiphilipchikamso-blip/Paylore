@@ -3602,6 +3602,8 @@ export async function getWorkspacePayrollRun(
       contributorWalletAddress: contributors.identityWalletAddress,
       amountBaseUnits: payrollAllocations.amountBaseUnits,
       amountCommitment: payrollAllocations.amountCommitment,
+      amountCommitmentProof: payrollAllocations.amountCommitmentProof,
+      amountCommitmentLeafIndex: payrollAllocations.amountCommitmentLeafIndex,
       claimId: payrollAllocations.claimId,
       claimAddress: payrollAllocations.claimAddress,
       status: payrollAllocations.status,
@@ -4669,6 +4671,8 @@ export async function createPayrollDraft(
       contributorId: string;
       amountBaseUnits: string;
       amountCommitment: string;
+      amountCommitmentProof: string[];
+      amountCommitmentLeafIndex: number;
       claimId: string;
     }>;
   }
@@ -4778,6 +4782,8 @@ export async function createPayrollDraft(
           contributorId: allocation.contributorId,
           amountBaseUnits: allocation.amountBaseUnits,
           amountCommitment: allocation.amountCommitment,
+          amountCommitmentProof: allocation.amountCommitmentProof,
+          amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
           claimId: allocation.claimId,
           status: "draft"
         }))
