@@ -76,7 +76,12 @@ function instructions() {
           accounts(claim.claimAddress, AccountRole.WRITABLE),
           accounts(system, AccountRole.READONLY)
         ],
-        data: concat(createDiscriminator, decodedHex(claim.claimId), decodedHex(commitment))
+        data: concat(
+          createDiscriminator,
+          decodedHex(claim.claimId),
+          decodedHex(commitment),
+          decodedHex(claim.amountCommitment)
+        )
       }
     ]
   };
