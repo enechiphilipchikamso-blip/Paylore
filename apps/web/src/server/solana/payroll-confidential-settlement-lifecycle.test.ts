@@ -1,13 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  fetchEncodedAccount: vi.fn(),
+  clearPayrollSettlementProofContexts: vi.fn()
+}));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@paylore/database", () => ({
+  clearPayrollSettlementProofContexts: mocks.clearPayrollSettlementProofContexts
+}));
+vi.mock("@solana/kit", async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchEncodedAccount: mocks.fetchEncodedAccount
+}));
 
-import { proofSetupFinality } from "./payroll-confidential-settlement";
+import { cleanupProofContexts, proofSetupFinality } from "./payroll-confidential-settlement";
 
 type Status = { confirmationStatus?: string | null; err?: unknown } | null;
 function rpcWithStatuses(statuses: Status[]) {
   return { getSignatureStatuses: vi.fn().mockResolvedValue({ value: statuses }) };
 }
+
+beforeEach(() => { vi.resetAllMocks(); });
 
 describe("confidential proof setup finality", () => {
   it("accepts setup only when every proof-context transaction is finalized successfully", async () => {
@@ -56,5 +70,31 @@ describe("confidential proof setup finality", () => {
     const rpc = rpcWithStatuses([]);
     await expect(proofSetupFinality(rpc as never, [])).resolves.toBe("pending");
     expect(rpc.getSignatureStatuses).not.toHaveBeenCalled();
+  });
+});
+
+describe("confidential proof-context cleanup", () => {
+  const cleanupInput = {
+    workspaceId: "workspace-a",
+    runId: "run-a",
+    allocationId: "allocation-a",
+    addresses: ["context-a", "context-a", "context-b"]
+  };
+
+  it("clears durable context tracking only after every context is already absent", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: false });
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    expect(result).toBe(true);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
+  });
+
+  it("retains durable tracking when a context is owned by an unexpected program", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: true, owner: "unexpected-program" });
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledOnce();
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
   });
 });
