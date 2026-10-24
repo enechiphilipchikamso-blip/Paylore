@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { address, singleInstructionPlan, type Instruction } from "@solana/kit";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
-import { bindSettlementPendingStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer } from "./payroll-confidential-settlement-policy";
+import { bindSettlementPendingStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer, matchesExactConfidentialDebit } from "./payroll-confidential-settlement-policy";
 
 const source = address("So11111111111111111111111111111111111111112");
 const mint = address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -53,5 +53,26 @@ describe("confidential settlement instruction binding", () => {
         singleInstructionPlan(ix(ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS, [1], [contextA, source, destination]))
       ] };
     expect(getProofContextAddresses(plan)).toEqual([contextA, contextB]);
+  });
+});
+
+describe("confidential settlement amount reconciliation", () => {
+  it("accepts only the exact positive integer reserve debit", () => {
+    expect(matchesExactConfidentialDebit({
+      amountBaseUnits: "1250000",
+      sourceAvailableBefore: "5000000",
+      sourceAvailableAfter: "3750000"
+    })).toBe(true);
+  });
+
+  it.each([
+    ["wrong amount", { amountBaseUnits: "1250000", sourceAvailableBefore: "5000000", sourceAvailableAfter: "4000000" }],
+    ["balance increased", { amountBaseUnits: "100", sourceAvailableBefore: "1000", sourceAvailableAfter: "1100" }],
+    ["zero amount", { amountBaseUnits: "0", sourceAvailableBefore: "1000", sourceAvailableAfter: "1000" }],
+    ["negative syntax", { amountBaseUnits: "-1", sourceAvailableBefore: "1000", sourceAvailableAfter: "999" }],
+    ["non-integer amount", { amountBaseUnits: "1.5", sourceAvailableBefore: "1000", sourceAvailableAfter: "998" }],
+    ["non-canonical balance", { amountBaseUnits: "1", sourceAvailableBefore: "010", sourceAvailableAfter: "9" }]
+  ])("rejects %s", (_label, input) => {
+    expect(matchesExactConfidentialDebit(input)).toBe(false);
   });
 });
