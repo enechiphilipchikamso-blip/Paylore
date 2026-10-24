@@ -5961,3 +5961,128 @@ export async function releasePayrollRecoveryAttempt(
     return Boolean(escrow[0]);
   });
 }
+
+
+export async function setPayrollClaimEscrowProofContexts(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    phase: "funding" | "recovery";
+    addresses: string[];
+  }
+) {
+  const addresses = [...new Set(input.addresses)];
+  if (addresses.length === 0 || addresses.length > 4 ||
+      addresses.some((value) => typeof value !== "string" || value.length < 32 || value.length > 64)) {
+    return false;
+  }
+  const fields = input.phase === "funding"
+    ? { addressesColumn: payrollClaimEscrows.fundingProofContextAddresses, status: "funding" }
+    : { addressesColumn: payrollClaimEscrows.recoveryProofContextAddresses, status: "recovery_pending" };
+  const current = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  if (!current || current.status !== fields.status) return false;
+  const existing = input.phase === "funding"
+    ? current.fundingProofContextAddresses
+    : current.recoveryProofContextAddresses;
+  if (existing.length > 0 && JSON.stringify(existing) !== JSON.stringify(addresses)) return false;
+  const updated = await db.update(payrollClaimEscrows).set({
+    ...(input.phase === "funding"
+      ? { fundingProofContextAddresses: addresses }
+      : { recoveryProofContextAddresses: addresses }),
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, fields.status)
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  return Boolean(updated[0]);
+}
+
+export async function appendPayrollClaimEscrowContextSignature(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    phase: "funding" | "recovery";
+    signature: string;
+  }
+) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature)) return false;
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = rows[0];
+    if (!escrow) return false;
+    const validStatus = input.phase === "funding" ? escrow.status === "funding" :
+      escrow.status === "recovery_pending";
+    if (!validStatus) return false;
+    const existing = input.phase === "funding"
+      ? escrow.fundingContextSignatures
+      : escrow.recoveryContextSignatures;
+    if (existing.includes(input.signature)) return true;
+    const signatures = [...existing, input.signature];
+    const updated = await tx.update(payrollClaimEscrows).set({
+      ...(input.phase === "funding"
+        ? { fundingContextSignatures: signatures }
+        : { recoveryContextSignatures: signatures }),
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, escrow.status)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return Boolean(updated[0]);
+  });
+}
+
+export async function clearPayrollClaimEscrowProofContexts(
+  db: Database,
+  input: {
+    workspaceId: string;
+    allocationId: string;
+    phase: "funding" | "recovery";
+  }
+) {
+  const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  if (!escrow) return false;
+  const allowed = input.phase === "funding"
+    ? ["funding", "funded", "settlement_pending", "claimed", "recovery_pending", "recovered"].includes(escrow.status)
+    : ["recovery_pending", "recovered"].includes(escrow.status);
+  if (!allowed) return false;
+  const updated = await db.update(payrollClaimEscrows).set({
+    ...(input.phase === "funding"
+      ? { fundingProofContextAddresses: [] }
+      : { recoveryProofContextAddresses: [] }),
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, escrow.status)
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  return Boolean(updated[0]);
+}
+
+export async function attachPayrollClaimEscrowRecoveryApplySignature(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature)) return false;
+  const updated = await db.update(payrollClaimEscrows).set({
+    recoveryApplySignature: input.signature,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    inArray(payrollClaimEscrows.status, ["recovery_pending", "recovered"]),
+    or(
+      isNull(payrollClaimEscrows.recoveryApplySignature),
+      eq(payrollClaimEscrows.recoveryApplySignature, input.signature)
+    )
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  if (updated[0]) return true;
+  const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return Boolean(escrow && escrow.recoveryApplySignature === input.signature);
+}
