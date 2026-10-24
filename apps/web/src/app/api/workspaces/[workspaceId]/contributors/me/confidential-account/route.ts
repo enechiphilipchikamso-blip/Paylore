@@ -91,6 +91,20 @@ export async function GET(
       context.contributor.id
     )
   ]);
+
+  // The owner-readiness endpoint is the canonical reconciliation point after
+  // wallet signing, so a prepared sponsor reservation cannot remain stranded
+  // merely because the client retries verification through this route.
+  if (account?.status === "ready" && account.setupTransactionSignature && config.PAYLORE_WRAPPED_USDC_MINT) {
+    await finalizeGasTankConfidentialAccountSetupForVerifiedAccount(context.db, {
+      workspaceId,
+      transactionSignature: account.setupTransactionSignature,
+      ownerAddress: context.session.walletAddress,
+      mintAddress: config.PAYLORE_WRAPPED_USDC_MINT,
+      tokenAccountAddress: account.tokenAccountAddress
+    });
+  }
+
   return NextResponse.json(
     {
       account,
