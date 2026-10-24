@@ -11,6 +11,7 @@ import { waitForDevnetFinality } from "./payroll-transaction-finality";
 type Claim = {
   claimId: string;
   contributorAddress: string;
+  amountCommitment: string;
 };
 
 export function PayrollClaimCommitAction({
@@ -44,7 +45,8 @@ export function PayrollClaimCommitAction({
       !canCommit ||
       !programId ||
       !allocationCommitment ||
-      claims.length === 0
+      claims.length === 0 ||
+      claims.some((claim) => !/^[0-9a-f]{64}$/i.test(claim.amountCommitment))
     ) {
       return;
     }
