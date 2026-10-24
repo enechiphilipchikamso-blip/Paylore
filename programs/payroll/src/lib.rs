@@ -94,7 +94,7 @@ pub mod paylore_payroll {
         Ok(())
     }
 
-    pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
+    pub fn mark_settlement_pending(ctx: Context<MarkSettlementPending>) -> Result<()> {
         validate_token_account_identity(
             &ctx.accounts.reserve_token_account.to_account_info(),
             ctx.accounts.reserve_authority.key(),
@@ -114,8 +114,10 @@ pub mod paylore_payroll {
             )?,
             PayrollError::SettlementTransferMissing
         );
-        // Confidential amounts stay encrypted. The reserve-only signer authorizes
-        // the database-bound amount, and transfer plus Claim PDA transition are atomic.
+        transition_claim_to_settlement_pending(&mut ctx.accounts.claim)
+    }
+
+    pub fn finalize_claimed(ctx: Context<FinalizeClaimed>) -> Result<()> {
         transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
 
@@ -135,9 +137,18 @@ pub mod paylore_payroll {
     }
 }
 
-fn transition_claim_to_claimed(claim: &mut ClaimState) -> Result<()> {
+fn transition_claim_to_settlement_pending(claim: &mut ClaimState) -> Result<()> {
     require!(
         claim.status == ClaimStatus::Unclaimed,
+        PayrollError::InvalidClaimTransition
+    );
+    claim.status = ClaimStatus::SettlementPending;
+    Ok(())
+}
+
+fn transition_claim_to_claimed(claim: &mut ClaimState) -> Result<()> {
+    require!(
+        claim.status == ClaimStatus::SettlementPending,
         PayrollError::InvalidClaimTransition
     );
     claim.status = ClaimStatus::Claimed;
@@ -340,7 +351,7 @@ pub struct ConfigureWorkspaceReserve<'info> {
 }
 
 #[derive(Accounts)]
-pub struct MarkClaimed<'info> {
+pub struct MarkSettlementPending<'info> {
     /// CHECK: ClaimState has_one plus its PDA seeds bind this identity.
     pub contributor: UncheckedAccount<'info>,
     #[account(
@@ -387,6 +398,44 @@ pub struct MarkClaimed<'info> {
     /// CHECK: The program reads the current transaction's instruction list only.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct FinalizeClaimed<'info> {
+    /// CHECK: The claim PDA seeds bind this contributor identity.
+    pub contributor: UncheckedAccount<'info>,
+    #[account(
+        seeds = [
+            b"workspace",
+            workspace.authority.as_ref(),
+            workspace.workspace_seed.as_ref()
+        ],
+        bump = workspace.bump,
+        constraint = claim.workspace == workspace.key()
+    )]
+    pub workspace: Account<'info, WorkspaceState>,
+    #[account(
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump = reserve_state.bump,
+        has_one = workspace
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    #[account(address = reserve_state.reserve_authority)]
+    pub reserve_authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [
+            b"claim",
+            workspace.key().as_ref(),
+            contributor.key().as_ref(),
+            claim.claim_id.as_ref()
+        ],
+        bump = claim.bump,
+        has_one = contributor,
+        constraint = claim.workspace == workspace.key(),
+        constraint = claim.status == ClaimStatus::SettlementPending
+    )]
+    pub claim: Account<'info, ClaimState>,
 }
 
 #[derive(Accounts)]
@@ -463,6 +512,7 @@ pub enum ClaimStatus {
     Unclaimed,
     Claimed,
     Recovered,
+    SettlementPending,
 }
 
 #[error_code]
@@ -575,6 +625,9 @@ mod tests {
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
+        assert!(transition_claim_to_settlement_pending(&mut claim).is_ok());
+        assert_eq!(claim.status, ClaimStatus::SettlementPending);
+        assert!(transition_claim_to_recovered(&mut claim).is_err());
         assert!(transition_claim_to_claimed(&mut claim).is_ok());
         assert_eq!(claim.status, ClaimStatus::Claimed);
         assert!(transition_claim_to_recovered(&mut claim).is_err());
