@@ -98,7 +98,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       }
       await applyVerifiedSubscriptionPayment(db, { workspaceId, userId: session.session.userId, ...verified });
       await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "confirmed", signature: attempt.signature });
-            return NextResponse.json({ status: "active" });
+      return NextResponse.json({ status: "active" });
     } catch (error) {
       if (error instanceof PaymentVerificationError && error.reason === "not_found") return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
       if (error instanceof PaymentVerificationError) return NextResponse.json({ error: "payment_could_not_be_verified" }, { status: 422 });

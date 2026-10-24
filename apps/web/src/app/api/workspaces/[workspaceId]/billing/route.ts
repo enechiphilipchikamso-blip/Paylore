@@ -120,7 +120,7 @@ export async function POST(
         ...verified
       }
     );
-        return NextResponse.json({
+    return NextResponse.json({
       status: "active",
       duplicate: result.duplicate,
       periodEnd: result.periodEnd
