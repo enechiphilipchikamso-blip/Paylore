@@ -121,7 +121,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
       signature: "prepared-signature",
       feeLamports: "5000",
       gasTankAddress: "gas-tank-address",
-      claims: [{ claimId, claimAddress: "claim-pda" }],
+      claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }],
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 123
     });
