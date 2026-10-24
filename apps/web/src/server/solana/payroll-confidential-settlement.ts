@@ -178,41 +178,52 @@ async function executePlan(
     throw error;
   }
 }
-async function cleanupProofContexts(
+export async function cleanupProofContexts(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   input: { workspaceId: string; runId: string; allocationId: string; addresses: string[] }
 ): Promise<boolean> {
-  for (const addressText of input.addresses) {
+  let allContextsResolved = true;
+  for (const addressText of new Set(input.addresses)) {
     try {
       const encoded = await fetchEncodedAccount(rpc, address(addressText));
       if (!encoded.exists) continue;
-      if (encoded.owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) return false;
+      if (encoded.owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) {
+        allContextsResolved = false;
+        continue;
+      }
       const ix = closeContextStateProof({
         contextState: address(addressText),
         authority: signer,
         destination: address(signer.address)
       });
       const result = await executePlan(rpc, signer, singleInstructionPlan(ix));
-      if (!result.successful || result.pending || result.trackingFailed) return false;
+      if (!result.successful || result.pending || result.trackingFailed) {
+        allContextsResolved = false;
+      }
     } catch {
-      return false;
+      allContextsResolved = false;
     }
   }
-  return clearPayrollSettlementProofContexts(db, input);
+  // Durable tracking is retained unless every known context is absent or finalized closed.
+  return allContextsResolved ? clearPayrollSettlementProofContexts(db, input) : false;
 }
-async function proofSetupFinality(
+export async function proofSetupFinality(
   rpc: ReturnType<typeof createSolanaRpc>,
   signatures: string[]
 ): Promise<Finality> {
-  for (const value of signatures) {
-    const status = (await rpc.getSignatureStatuses([value as Signature], { searchTransactionHistory: true }).send()).value[0];
-    const finality = classifyTransactionFinality(status);
-    if (finality === "failed") return "failed";
-    if (finality === "pending") return "pending";
+  if (signatures.length === 0) return "pending";
+  try {
+    for (const value of signatures) {
+      const status = (await rpc.getSignatureStatuses([value as Signature], { searchTransactionHistory: true }).send()).value[0];
+      const finality = classifyTransactionFinality(status);
+      if (finality !== "finalized") return finality;
+    }
+    return "finalized";
+  } catch {
+    return "pending";
   }
-  return "finalized";
 }
 async function readReserveBalance(
   rpc: ReturnType<typeof createSolanaRpc>, tokenAddress: string, secret: ElGamalSecretKey, aesKey: AeKey
