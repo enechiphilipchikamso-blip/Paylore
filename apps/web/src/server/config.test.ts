@@ -76,6 +76,21 @@ describe("parsePayloreConfig", () => {
     );
   });
 
+  it("accepts a dedicated 32-byte payroll amount commitment secret", () => {
+    const secret = "42".repeat(32);
+    expect(parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: secret
+    }).PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET).toBe(secret);
+  });
+
+  it("rejects a malformed payroll amount commitment secret", () => {
+    expect(() => parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: "not-a-key"
+    })).toThrow(ConfigurationError);
+  });
+
   it("rejects reuse of the reserve envelope key for the Gas Tank", () => {
     expect(() =>
       parsePayloreConfig({
