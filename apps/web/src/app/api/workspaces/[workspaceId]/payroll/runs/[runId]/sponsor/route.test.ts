@@ -90,7 +90,7 @@ function preparedOperation(overrides: Record<string, unknown> = {}) {
       authorityAddress: "manager-wallet",
       programId: "payroll-program",
       allocationCommitment: commitment,
-      claims: [{ claimId, claimAddress: "claim-pda" }],
+      claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }],
       blockhash: "blockhash",
       transactionBase64: "AQIDBA=="
     },
@@ -162,7 +162,7 @@ describe("payroll sponsor route", () => {
       signature: "5".repeat(64),
       feeLamports: "5000",
       gasTankAddress: "gas-tank-wallet",
-      claims: [{ claimId, claimAddress: "claim-pda" }],
+      claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }],
       blockhash: "blockhash",
       lastValidBlockHeight: 123
     });
@@ -177,7 +177,7 @@ describe("payroll sponsor route", () => {
       operationId: "operation-a",
       signature: "5".repeat(64),
       feeLamports: "5000",
-      claims: [{ claimId, claimAddress: "claim-pda" }]
+      claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }]
     });
     expect(body.transactionBase64).toBe("AQIDBA==");
     expect(JSON.stringify(body)).not.toContain("privateKey");
@@ -191,7 +191,7 @@ describe("payroll sponsor route", () => {
       operationData: {
         runId: "run-a", claimIds: [claimId], authorityAddress: "manager-wallet",
         programId: "payroll-program", allocationCommitment: commitment,
-        claims: [{ claimId, claimAddress: "claim-pda" }], blockhash: "blockhash",
+        claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }], blockhash: "blockhash",
         transactionBase64: "AQIDBA=="
       }
     });
@@ -310,7 +310,7 @@ describe("payroll sponsor route", () => {
       authorityAddress: "manager-wallet",
       workspaceId: "workspace-a",
       allocationCommitment: commitment,
-      claims: [{ claimId, claimAddress: "claim-pda", contributorAddress: "contributor-wallet" }]
+      claims: [{ claimId, claimAddress: "claim-pda", contributorAddress: "contributor-wallet", amountCommitment: "ab".repeat(32) }]
     });
     expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
       workspaceId: "workspace-a",
