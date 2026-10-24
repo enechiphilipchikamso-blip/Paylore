@@ -13,7 +13,10 @@ import { assertSameOrigin, RequestSecurityError } from "../../../../../../server
 import { getDatabase } from "../../../../../../server/db";
 import { loadPayloreConfig } from "../../../../../../server/config";
 import { derivePayrollAmountCommitmentMaterial } from "../../../../../../server/solana/payroll-amount-commitment";
-import { buildPayrollAllocationMerkleTree } from "../../../../../../server/solana/payroll-allocation-merkle";
+import {
+  buildPayrollAllocationMerkleTree,
+  verifyPayrollAllocationMerkleProof
+} from "../../../../../../server/solana/payroll-allocation-merkle";
 import {
   previewPayrollFile,
   type PayrollContributor
@@ -228,7 +231,18 @@ export async function POST(request: Request, { params }: RouteContext) {
     const allocationCommitment = merkleTree.allocationCommitment;
     const allocationInputs = committedRows.map((row) => {
       const proof = merkleTree.proofs.find((candidate) => candidate.claimId === row.claimId);
-      if (!proof) throw new Error("The allocation Merkle proof could not be derived.");
+      if (!proof || !verifyPayrollAllocationMerkleProof({
+        allocationCommitment,
+        leaf: {
+          claimId: row.claimId,
+          contributorAddress: row.identityWalletAddress,
+          amountCommitment: row.amountCommitment
+        },
+        leafIndex: proof.leafIndex,
+        siblings: proof.siblings
+      })) {
+        throw new Error("The allocation Merkle proof could not be derived or verified.");
+      }
       return {
         contributorId: row.contributorId,
         amountBaseUnits: row.amountBaseUnits,
