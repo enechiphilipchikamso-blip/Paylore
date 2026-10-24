@@ -44,6 +44,7 @@ pub mod paylore_payroll {
         amount_commitment: [u8; 32],
         amount_commitment_leaf_index: u32,
         amount_commitment_proof: Vec<[u8; 32]>,
+        escrow_token_account: Pubkey,
     ) -> Result<()> {
         require!(
             verify_allocation_merkle_proof(
@@ -64,6 +65,7 @@ pub mod paylore_payroll {
             claim_id,
             allocation_commitment,
             amount_commitment,
+            escrow_token_account,
         )? {
             return Ok(());
         }
@@ -72,6 +74,8 @@ pub mod paylore_payroll {
         claim.claim_id = claim_id;
         claim.allocation_commitment = allocation_commitment;
         claim.amount_commitment = amount_commitment;
+        claim.escrow_token_account = escrow_token_account;
+        claim.escrow_funded = false;
         claim.status = ClaimStatus::Unclaimed;
         claim.bump = ctx.bumps.claim;
         Ok(())
@@ -118,14 +122,20 @@ pub mod paylore_payroll {
             ctx.accounts.mint.key(),
         )?;
         validate_token_account_identity(
+            &ctx.accounts.escrow_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
             &ctx.accounts.destination_token_account.to_account_info(),
             ctx.accounts.contributor.key(),
             ctx.accounts.mint.key(),
         )?;
+        require!(ctx.accounts.claim.escrow_funded, PayrollError::ClaimEscrowNotFunded);
         require!(
             has_matching_confidential_transfer(
                 &ctx.accounts.instructions_sysvar.to_account_info(),
-                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.escrow_token_account.key(),
                 ctx.accounts.mint.key(),
                 ctx.accounts.destination_token_account.key(),
                 ctx.accounts.amount_commitment_context.key(),
@@ -147,14 +157,20 @@ pub mod paylore_payroll {
             ctx.accounts.mint.key(),
         )?;
         validate_token_account_identity(
+            &ctx.accounts.escrow_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
             &ctx.accounts.destination_token_account.to_account_info(),
             ctx.accounts.contributor.key(),
             ctx.accounts.mint.key(),
         )?;
+        require!(ctx.accounts.claim.escrow_funded, PayrollError::ClaimEscrowNotFunded);
         require!(
             has_matching_confidential_transfer(
                 &ctx.accounts.instructions_sysvar.to_account_info(),
-                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.escrow_token_account.key(),
                 ctx.accounts.mint.key(),
                 ctx.accounts.destination_token_account.key(),
                 ctx.accounts.amount_commitment_context.key(),
@@ -169,6 +185,44 @@ pub mod paylore_payroll {
         transition_claim_to_claimed_after_transfer(&mut ctx.accounts.claim)
     }
 
+    pub fn mark_claim_escrow_funded(ctx: Context<MarkClaimEscrowFunded>) -> Result<()> {
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
+            &ctx.accounts.escrow_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        require!(
+            has_matching_confidential_transfer(
+                &ctx.accounts.instructions_sysvar.to_account_info(),
+                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.mint.key(),
+                ctx.accounts.escrow_token_account.key(),
+                ctx.accounts.amount_commitment_context.key(),
+            )?,
+            PayrollError::SettlementTransferMissing
+        );
+        validate_amount_commitment_context(
+            &ctx.accounts.amount_commitment_context.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.claim.amount_commitment,
+        )?;
+        require!(
+            ctx.accounts.claim.status == ClaimStatus::Unclaimed,
+            PayrollError::InvalidClaimTransition
+        );
+        require!(
+            !ctx.accounts.claim.escrow_funded,
+            PayrollError::ClaimEscrowAlreadyFunded
+        );
+        ctx.accounts.claim.escrow_funded = true;
+        Ok(())
+    }
+
     pub fn finalize_claimed(ctx: Context<FinalizeClaimed>) -> Result<()> {
         transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
@@ -181,10 +235,32 @@ pub mod paylore_payroll {
             recovery_reason_commitment != [0; 32],
             PayrollError::InvalidRecoveryReason
         );
-
-        // Payroll entitlements are funded from the shared reserve only when
-        // claimed. Cancelling an unclaimed entitlement releases the reservation;
-        // no token transfer is needed because the reserve has not been debited.
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
+            &ctx.accounts.escrow_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        require!(ctx.accounts.claim.escrow_funded, PayrollError::ClaimEscrowNotFunded);
+        require!(
+            has_matching_confidential_transfer(
+                &ctx.accounts.instructions_sysvar.to_account_info(),
+                ctx.accounts.escrow_token_account.key(),
+                ctx.accounts.mint.key(),
+                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.amount_commitment_context.key(),
+            )?,
+            PayrollError::RecoveryTransferMissing
+        );
+        validate_amount_commitment_context(
+            &ctx.accounts.amount_commitment_context.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.claim.amount_commitment,
+        )?;
         transition_claim_to_recovered(&mut ctx.accounts.claim)
     }
 }
@@ -349,6 +425,7 @@ fn validate_claim_initialization(
     claim_id: [u8; 32],
     allocation_commitment: [u8; 32],
     amount_commitment: [u8; 32],
+    escrow_token_account: Pubkey,
 ) -> Result<bool> {
     if claim.workspace == Pubkey::default() {
         return Ok(false);
@@ -359,6 +436,7 @@ fn validate_claim_initialization(
             && claim.claim_id == claim_id
             && claim.allocation_commitment == allocation_commitment
             && claim.amount_commitment == amount_commitment
+            && claim.escrow_token_account == escrow_token_account
             && claim.status == ClaimStatus::Unclaimed,
         PayrollError::ClaimInitializationConflict
     );
@@ -491,7 +569,6 @@ pub struct MarkSettlementPending<'info> {
     )]
     pub workspace: Account<'info, WorkspaceState>,
     #[account(
-        mut,
         seeds = [b"reserve", workspace.key().as_ref()],
         bump = reserve_state.bump,
         has_one = workspace
@@ -500,19 +577,16 @@ pub struct MarkSettlementPending<'info> {
     #[account(address = reserve_state.reserve_authority)]
     pub reserve_authority: Signer<'info>,
     #[account(address = reserve_state.reserve_token_account)]
-    /// CHECK: Identity is confirmed against the configured reserve owner and mint.
+    /// CHECK: The reserve authority and mint are validated in the instruction.
     pub reserve_token_account: UncheckedAccount<'info>,
     #[account(address = reserve_state.mint)]
-    /// CHECK: The mint is bound to the configured Token-2022 reserve account.
+    /// CHECK: The mint is bound to the workspace reserve.
     pub mint: UncheckedAccount<'info>,
-    #[account(mut)]
-    /// CHECK: Identity is confirmed against this claim's contributor and mint.
-    pub destination_token_account: UncheckedAccount<'info>,
     #[account(
         mut,
         seeds = [
             b"claim",
-            claim.workspace.as_ref(),
+            workspace.key().as_ref(),
             contributor.key().as_ref(),
             claim.claim_id.as_ref()
         ],
@@ -521,10 +595,16 @@ pub struct MarkSettlementPending<'info> {
         constraint = claim.workspace == workspace.key()
     )]
     pub claim: Account<'info, ClaimState>,
-    /// CHECK: The program reads the current transaction's instruction list only.
+    #[account(mut, address = claim.escrow_token_account)]
+    /// CHECK: Only the per-allocation escrow may fund the claim.
+    pub escrow_token_account: UncheckedAccount<'info>,
+    #[account(mut)]
+    /// CHECK: The destination owner and mint are checked before transition.
+    pub destination_token_account: UncheckedAccount<'info>,
+    /// CHECK: The program reads the current transaction instruction list.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
-    /// CHECK: The ZK proof program owns and validates this typed context.
+    /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
 }
 
@@ -543,7 +623,6 @@ pub struct MarkClaimed<'info> {
     )]
     pub workspace: Account<'info, WorkspaceState>,
     #[account(
-        mut,
         seeds = [b"reserve", workspace.key().as_ref()],
         bump = reserve_state.bump,
         has_one = workspace
@@ -552,19 +631,16 @@ pub struct MarkClaimed<'info> {
     #[account(address = reserve_state.reserve_authority)]
     pub reserve_authority: Signer<'info>,
     #[account(address = reserve_state.reserve_token_account)]
-    /// CHECK: Identity is confirmed against the configured reserve owner and mint.
+    /// CHECK: The configured reserve's identity is checked in the handler.
     pub reserve_token_account: UncheckedAccount<'info>,
     #[account(address = reserve_state.mint)]
-    /// CHECK: The mint is bound to the configured Token-2022 reserve account.
+    /// CHECK: The mint is bound to the configured reserve.
     pub mint: UncheckedAccount<'info>,
-    #[account(mut)]
-    /// CHECK: Identity is confirmed against this claim's contributor and mint.
-    pub destination_token_account: UncheckedAccount<'info>,
     #[account(
         mut,
         seeds = [
             b"claim",
-            claim.workspace.as_ref(),
+            workspace.key().as_ref(),
             contributor.key().as_ref(),
             claim.claim_id.as_ref()
         ],
@@ -573,12 +649,70 @@ pub struct MarkClaimed<'info> {
         constraint = claim.workspace == workspace.key()
     )]
     pub claim: Account<'info, ClaimState>,
-    /// CHECK: The program reads the current transaction's instruction list only.
+    #[account(mut, address = claim.escrow_token_account)]
+    /// CHECK: Only the per-allocation escrow may fund this claim.
+    pub escrow_token_account: UncheckedAccount<'info>,
+    #[account(mut)]
+    /// CHECK: The destination owner and mint are checked before transition.
+    pub destination_token_account: UncheckedAccount<'info>,
+    /// CHECK: The program reads the current transaction instruction list.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
-    /// CHECK: The ZK proof program owns and validates this typed context.
+    /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
 }
+
+#[derive(Accounts)]
+pub struct MarkClaimEscrowFunded<'info> {
+    /// CHECK: ClaimState has_one plus its PDA seeds bind this identity.
+    pub contributor: UncheckedAccount<'info>,
+    #[account(
+        seeds = [
+            b"workspace",
+            workspace.authority.as_ref(),
+            workspace.workspace_seed.as_ref()
+        ],
+        bump = workspace.bump,
+        constraint = claim.workspace == workspace.key()
+    )]
+    pub workspace: Account<'info, WorkspaceState>,
+    #[account(
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump = reserve_state.bump,
+        has_one = workspace
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    #[account(address = reserve_state.reserve_authority)]
+    pub reserve_authority: Signer<'info>,
+    #[account(address = reserve_state.reserve_token_account)]
+    /// CHECK: Only the configured reserve can fund a claim escrow.
+    pub reserve_token_account: UncheckedAccount<'info>,
+    #[account(address = reserve_state.mint)]
+    /// CHECK: The mint is bound to the configured reserve.
+    pub mint: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        seeds = [
+            b"claim",
+            workspace.key().as_ref(),
+            contributor.key().as_ref(),
+            claim.claim_id.as_ref()
+        ],
+        bump = claim.bump,
+        has_one = contributor,
+        constraint = claim.workspace == workspace.key()
+    )]
+    pub claim: Account<'info, ClaimState>,
+    #[account(mut, address = claim.escrow_token_account)]
+    /// CHECK: The Claim PDA determines its only permitted escrow.
+    pub escrow_token_account: UncheckedAccount<'info>,
+    /// CHECK: The program reads the current transaction instruction list.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
+    /// CHECK: Token-2022 validates the amount-bound proof context.
+    pub amount_commitment_context: UncheckedAccount<'info>,
+}
+
 
 #[derive(Accounts)]
 pub struct FinalizeClaimed<'info> {
@@ -634,6 +768,20 @@ pub struct RecoverClaim<'info> {
     )]
     pub workspace: Account<'info, WorkspaceState>,
     #[account(
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump = reserve_state.bump,
+        has_one = workspace
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    #[account(address = reserve_state.reserve_authority)]
+    pub reserve_authority: Signer<'info>,
+    #[account(address = reserve_state.reserve_token_account, mut)]
+    /// CHECK: The workspace reserve is the only recovery destination.
+    pub reserve_token_account: UncheckedAccount<'info>,
+    #[account(address = reserve_state.mint)]
+    /// CHECK: The mint is bound to the configured reserve.
+    pub mint: UncheckedAccount<'info>,
+    #[account(
         mut,
         seeds = [
             b"claim",
@@ -646,7 +794,16 @@ pub struct RecoverClaim<'info> {
         constraint = claim.contributor == contributor.key()
     )]
     pub claim: Account<'info, ClaimState>,
+    #[account(mut, address = claim.escrow_token_account)]
+    /// CHECK: Only this Claim PDA's escrow may be restored.
+    pub escrow_token_account: UncheckedAccount<'info>,
+    /// CHECK: The program reads the current transaction instruction list.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
+    /// CHECK: Token-2022 validates the amount-bound proof context.
+    pub amount_commitment_context: UncheckedAccount<'info>,
 }
+
 
 #[account]
 pub struct WorkspaceState {
@@ -680,12 +837,14 @@ pub struct ClaimState {
     pub claim_id: [u8; 32],
     pub allocation_commitment: [u8; 32],
     pub amount_commitment: [u8; 32],
+    pub escrow_token_account: Pubkey,
+    pub escrow_funded: bool,
     pub status: ClaimStatus,
     pub bump: u8,
 }
 
 impl ClaimState {
-    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 32 + 1 + 1;
+    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 1;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
@@ -718,6 +877,12 @@ pub enum PayrollError {
     InvalidAllocationMerkleProof,
     #[msg("The verified confidential-transfer amount commitment does not match this allocation.")]
     SettlementAmountBindingUnavailable,
+    #[msg("The claim escrow has not been funded by the workspace reserve.")]
+    ClaimEscrowNotFunded,
+    #[msg("The claim escrow was already funded for this allocation.")]
+    ClaimEscrowAlreadyFunded,
+    #[msg("Recovery must include a matching confidential transfer from the claim escrow to the reserve.")]
+    RecoveryTransferMissing,
 }
 
 #[cfg(test)]
