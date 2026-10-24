@@ -192,6 +192,7 @@ vi.mock("@solana-program/token-2022", () => ({
     data: {
       owner: h.reserve,
       mint: h.mint,
+      amount: 0n,
       extensions: [{
         __kind: "ConfidentialTransferAccount",
         approved: true,
@@ -341,6 +342,7 @@ describe("workspace confidential reserve initialization", () => {
       status: "confidential_account_ready",
       tokenAccount: h.reserveToken,
       confidentialTransferReady: true,
+      publicBalanceBaseUnits: "0",
       availableBalanceBaseUnits: "0",
       pendingBalanceBaseUnits: "0",
       programReserveConfigured: false
