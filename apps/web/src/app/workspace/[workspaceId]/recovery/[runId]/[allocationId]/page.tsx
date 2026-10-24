@@ -9,6 +9,7 @@ import {
 } from "../../../../../../components/workspace/WorkspaceNavigation";
 import { loadPayloreConfig } from "../../../../../../server/config";
 import { getWorkspacePageContext } from "../../../../../../server/workspace-page-context";
+import { getFinalizedPayrollClaimState, type FinalizedPayrollClaimState } from "../../../../../../server/solana/payroll-program-verification";
 
 export const metadata: Metadata = {
   title: "Payroll recovery detail",
@@ -52,7 +53,24 @@ export default async function WorkspaceRecoveryDetailPage({
   if (!payroll || !allocation || !allocation.claimAddress) notFound();
 
   const programId = loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID ?? null;
-  const recoverable = allocation.status === "unclaimed";
+  let finalizedClaimState: FinalizedPayrollClaimState | null = null;
+  if (programId && payroll.run.allocationCommitment && allocation.amountCommitment) {
+    try {
+      finalizedClaimState = await getFinalizedPayrollClaimState({
+        authorityAddress: context.session.walletAddress,
+        workspaceId,
+        contributorAddress: allocation.contributorWalletAddress,
+        claimId: allocation.claimId,
+        claimAddress: allocation.claimAddress,
+        allocationCommitment: payroll.run.allocationCommitment,
+        amountCommitment: allocation.amountCommitment
+      });
+    } catch {
+      finalizedClaimState = null;
+    }
+  }
+  const recoverable = allocation.status === "unclaimed" && finalizedClaimState === "unclaimed";
+  const chainStatusLabel = finalizedClaimState ? stateLabel(finalizedClaimState) : "Unable to verify";
 
   return (
     <main className="protected-wrap workspace-page">
@@ -78,26 +96,32 @@ export default async function WorkspaceRecoveryDetailPage({
           <div><dt>Allocation</dt><dd><code>{allocation.id}</code></dd></div>
           <div><dt>Contributor wallet</dt><dd><code>{allocation.contributorWalletAddress}</code></dd></div>
           <div><dt>Allocation amount</dt><dd>{formatUsdc(allocation.amountBaseUnits)} wrapped USDC</dd></div>
-          <div><dt>Claim state</dt><dd>{stateLabel(allocation.status)}</dd></div>
+          <div><dt>Stored allocation state</dt><dd>{stateLabel(allocation.status)}</dd></div>
+          <div><dt>Finalized Claim PDA state</dt><dd>{chainStatusLabel}</dd></div>
           <div><dt>Claim PDA</dt><dd><code>{allocation.claimAddress}</code></dd></div>
           <div><dt>Claim creation transaction</dt><dd><code>{allocation.transactionSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Settlement transaction</dt><dd><code>{allocation.settlementSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Allocation commitment</dt><dd><code>{payroll.run.allocationCommitment ?? "Not recorded"}</code></dd></div>
         </dl>
-        {allocation.status === "claimed" ? (
+        {finalizedClaimState === "claimed" || allocation.status === "claimed" ? (
           <div className="state-callout" data-state="error" role="alert">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>This allocation has already been claimed and cannot be recovered by the organization.</p>
           </div>
-        ) : allocation.status === "recovered" ? (
+        ) : finalizedClaimState === "recovered" || allocation.status === "recovered" ? (
           <div className="state-callout" data-state="partial" role="status">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>This allocation is already recorded as recovered. No second recovery may be submitted.</p>
           </div>
-        ) : allocation.status === "settlement_pending" ? (
+        ) : finalizedClaimState === "settlement_pending" || allocation.status === "settlement_pending" ? (
           <div className="state-callout" data-state="partial" role="status">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>Settlement is pending. Reconcile the existing claim transaction before considering any recovery; do not submit a competing operation.</p>
+          </div>
+        ) : allocation.status !== "unclaimed" || finalizedClaimState !== "unclaimed" ? (
+          <div className="state-callout" data-state="partial" role="alert">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Paylore could not confirm that this allocation remains unclaimed at finalized network state. No recovery action is available until the Claim PDA state matches the stored allocation.</p>
           </div>
         ) : null}
       </section>
