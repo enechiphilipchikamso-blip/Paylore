@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -84,7 +85,8 @@ beforeEach(() => {
 
 describe("contributor compensation page authorization scope", () => {
   it("loads account and allocations only for the contributor resolved from the session wallet", async () => {
-    await CompensationPage({ params: Promise.resolve({ workspaceId: "workspace-a" }) });
+    const page = await CompensationPage({ params: Promise.resolve({ workspaceId: "workspace-a" }) });
+    renderToStaticMarkup(page);
 
     expect(mocks.findWorkspaceContributorByWallet).toHaveBeenCalledWith(db, "workspace-a", "wallet-a");
     expect(mocks.getContributorConfidentialAccount).toHaveBeenCalledWith(db, "workspace-a", "contributor-a");
