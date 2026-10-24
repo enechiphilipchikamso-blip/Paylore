@@ -32,7 +32,7 @@ describe("confidential settlement instruction binding", () => {
     expect(isExpectedConfidentialTransfer(ix(other, [27, 7], [source, mint, destination]), expected)).toBe(false);
     expect(isExpectedConfidentialTransfer(ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 6], [source, mint, destination]), expected)).toBe(false);
   });
-  it("binds the settlement-pending transition to the exact transfer as an indivisible stage", () => {
+  it("binds the CLAIMED transition to the exact transfer as an indivisible stage", () => {
     const setup = ix(other, [1]), cleanup = ix(other, [2]), mark = ix(other, [3]);
     const plan = { kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
       plans: [singleInstructionPlan(setup), singleInstructionPlan(transfer), singleInstructionPlan(cleanup)] };
