@@ -34,7 +34,7 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
+  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses, matchesExactConfidentialDebit
 } from "./payroll-confidential-settlement-policy";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -511,10 +511,11 @@ async function reconcileSettlement(
     contributor: input.contributor, destination: input.destination, mint: input.mint,
     claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
   });
-  const before = BigInt(input.sourceBefore);
-  const after = BigInt(sourceAfter);
-  const amount = BigInt(input.amount);
-  if (before < after || before - after !== amount) {
+  if (!matchesExactConfidentialDebit({
+    amountBaseUnits: input.amount,
+    sourceAvailableBefore: input.sourceBefore,
+    sourceAvailableAfter: sourceAfter
+  })) {
     return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
   }
   let claimState: FinalizedClaimState;
