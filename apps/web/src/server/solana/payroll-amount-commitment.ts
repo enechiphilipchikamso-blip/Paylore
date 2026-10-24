@@ -27,11 +27,9 @@ function scalarToLittleEndian(value: bigint): Uint8Array {
   return output;
 }
 
-function deriveOpening(secret: Buffer, claimId: string, allocationCommitment: string): Uint8Array {
+function deriveOpening(secret: Buffer, claimId: string): Uint8Array {
   const digest = createHmac("sha512", secret)
     .update("paylore:confidential-allocation-amount-opening:v1\0")
-    .update(allocationCommitment.toLowerCase())
-    .update("\0")
     .update(claimId.toLowerCase())
     .digest();
   const scalar = BigInt(`0x${Buffer.from(digest).reverse().toString("hex")}`) % SCALAR_ORDER;
@@ -42,7 +40,6 @@ function deriveOpening(secret: Buffer, claimId: string, allocationCommitment: st
 export function derivePayrollAmountCommitmentMaterial(input: {
   amountBaseUnits: string;
   claimId: string;
-  allocationCommitment: string;
   secretHex: string;
 }): PayrollAmountCommitmentMaterial {
   if (!/^(0|[1-9][0-9]*)$/.test(input.amountBaseUnits)) {
@@ -52,11 +49,11 @@ export function derivePayrollAmountCommitmentMaterial(input: {
   if (amountBaseUnits <= 0n || amountBaseUnits > U64_MAX) {
     throw new Error("The payroll allocation amount must fit a positive u64 value.");
   }
-  if (!/^[0-9a-f]{64}$/i.test(input.claimId) || !/^[0-9a-f]{64}$/i.test(input.allocationCommitment)) {
-    throw new Error("The claim ID and allocation commitment must each be 32-byte hexadecimal values.");
+  if (!/^[0-9a-f]{64}$/i.test(input.claimId)) {
+    throw new Error("The claim ID must be a 32-byte hexadecimal value.");
   }
   const secret = readSecret(input.secretHex);
-  const opening = deriveOpening(secret, input.claimId, input.allocationCommitment);
+  const opening = deriveOpening(secret, input.claimId);
   try {
     const pedersenOpening = PedersenOpening.fromBytes(opening);
     const commitment = PedersenCommitment.from(amountBaseUnits, pedersenOpening);
