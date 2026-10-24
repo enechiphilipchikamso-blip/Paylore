@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  AccountRole,
   address,
   blockhash,
   createKeyPairSignerFromBytes,
@@ -244,6 +243,10 @@ export async function preparePayrollClaimEscrowAccount(
   if (config.PAYLORE_NETWORK !== "devnet") {
     throw new PayrollClaimEscrowError("payroll_claim_escrow_devnet_only", 503);
   }
+  if (config.PAYLORE_PAYROLL_PROGRAM_ID !== input.programId) {
+    throw new PayrollClaimEscrowError("payroll_program_identity_mismatch", 409);
+  }
+  address(input.authorityAddress);
 
   const escrowContext = escrowEnvelopeContext(input.workspaceId, input.allocationId);
   let escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
@@ -276,7 +279,7 @@ export async function preparePayrollClaimEscrowAccount(
     }
   }
   if (!escrow) throw new PayrollClaimEscrowError("payroll_claim_escrow_not_persisted", 503);
-  if (["ready", "funded", "settlement_pending", "recovery_pending", "claimed", "recovered"].includes(escrow.status)) {
+  if (["ready", "funding", "funded", "settlement_pending", "recovery_pending", "claimed", "recovered"].includes(escrow.status)) {
     return { status: "ready", tokenAccountAddress: escrow.tokenAccountAddress };
   }
   if (!escrow.encryptedPrivateKey || !escrow.privateKeyNonce || !escrow.privateKeyAuthTag ||
