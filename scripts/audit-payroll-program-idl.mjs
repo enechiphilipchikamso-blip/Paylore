@@ -212,7 +212,8 @@ function auditClaimStateIdl(idl, source) {
     }
   }
 
-  const stateSpace = source.match(/pub\s+const\s+SPACE\s*:\s*usize\s*=\s*([0-9\s+]+);/);
+  const claimStateImpl = source.match(/impl\s+ClaimState\s*\{([\s\S]*?)\}/);
+  const stateSpace = claimStateImpl?.[1].match(/pub\s+const\s+SPACE\s*:\s*usize\s*=\s*([0-9\s+]+);/);
   const stateSpaceBytes = stateSpace?.[1].split("+").map((term) => Number(term.trim()));
   if (!stateSpaceBytes || stateSpaceBytes.some((value) => !Number.isSafeInteger(value)) ||
       stateSpaceBytes.reduce((sum, value) => sum + value, 0) !== 203) {
