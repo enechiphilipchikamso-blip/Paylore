@@ -2832,6 +2832,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "confidential_account_setup_signature": {
+          "name": "confidential_account_setup_signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "program_reserve_setup_signature": {
+          "name": "program_reserve_setup_signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
