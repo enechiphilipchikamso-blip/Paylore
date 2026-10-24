@@ -45,6 +45,15 @@ function decodeHex32(value: string): Uint8Array {
   return Uint8Array.from(value.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16));
 }
 
+function encodeU32(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new GasTankSponsorshipPolicyError("allocation_proof_index_invalid");
+  }
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return bytes;
+}
+
 function encodeAnchorString(value: string): Uint8Array {
   const bytes = ENCODER.encode(value);
   const length = new Uint8Array(4);
@@ -203,7 +212,10 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
   signature: string;
   feeLamports: string;
   gasTankAddress: string;
-  claims: Array<{ claimId: string; claimAddress: string; amountCommitment: string }>;
+  claims: Array<{
+    claimId: string; claimAddress: string; amountCommitment: string;
+    amountCommitmentProof: string[]; amountCommitmentLeafIndex: number
+  }>;
   blockhash: string;
   lastValidBlockHeight: number;
 }> {
@@ -257,7 +269,10 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
             createClaimDiscriminator,
             claimIdBytes,
             allocationCommitment,
-            decodeHex32(claim.amountCommitment)
+            decodeHex32(claim.amountCommitment),
+            encodeU32(claim.amountCommitmentLeafIndex),
+            encodeU32(claim.amountCommitmentProof.length),
+            ...claim.amountCommitmentProof.map((sibling) => decodeHex32(sibling))
           )
         } as const
       };
@@ -318,7 +333,9 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
     });
     return {
       ...prepared,
-      claims: derivedClaims.map(({ claimId, claimAddress, amountCommitment }) => ({ claimId, claimAddress, amountCommitment }))
+      claims: derivedClaims.map(({
+        claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex
+      }) => ({ claimId, claimAddress, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex }))
     };
   } finally {
     secretCopy.fill(0);
