@@ -61,6 +61,25 @@ describe("confidential operation sequencing", () => {
     expect(() => advanceConfidentialSequence(progress, "confidential_transfer", "finalized")).toThrow("not allowed");
   });
 
+  it.each([
+    ["reserve_configure", []],
+    ["pending_apply_before_deposit", ["reserve_configure"]],
+    ["deposit", ["reserve_configure"]],
+    ["pending_apply_after_deposit", ["reserve_configure", "deposit"]],
+    ["proof_setup", ["reserve_configure"]],
+    ["confidential_transfer", ["reserve_configure", "proof_setup"]]
+  ] as const)("does not advance %s when its transaction is pending or failed", (step, prefix) => {
+    for (const finality of ["pending", "failed"] as const) {
+      let progress = createConfidentialSequenceProgress();
+      for (const completed of prefix) {
+        progress = advanceConfidentialSequence(progress, completed, "finalized");
+      }
+      const before = [...progress.completed];
+      expect(() => advanceConfidentialSequence(progress, step, finality)).toThrow(finality);
+      expect(progress.completed).toEqual(before);
+    }
+  });
+
   it("requires mint auto-approval instead of pretending the owner can approve itself", () => {
     expect(() => assertConfidentialAccountAutoApproval({
       confidentialTransferExtensionPresent: true, autoApproveNewAccounts: false
