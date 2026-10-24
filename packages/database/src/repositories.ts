@@ -5644,6 +5644,69 @@ export async function getWorkspaceGasTankSponsorshipUsage(
 }
 
 
+export async function attachPayrollClaimEscrowAccountSetupSignature(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature)) return false;
+  const updated = await db.update(payrollClaimEscrows).set({
+    accountSetupSignature: input.signature,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "preparing"),
+    or(
+      isNull(payrollClaimEscrows.accountSetupSignature),
+      eq(payrollClaimEscrows.accountSetupSignature, input.signature)
+    )
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  if (updated[0]) return true;
+  const current = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return Boolean(current && current.accountSetupSignature === input.signature);
+}
+
+export async function resetFailedPayrollClaimEscrowAccountSetup(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  const updated = await db.update(payrollClaimEscrows).set({
+    accountSetupSignature: null,
+    updatedAt: new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "preparing"),
+    eq(payrollClaimEscrows.accountSetupSignature, input.signature)
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  return Boolean(updated[0]);
+}
+
+export async function appendPayrollClaimEscrowConfidentialSetupSignature(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string }
+) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature)) return false;
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).for("update").limit(1);
+    const escrow = rows[0];
+    if (!escrow || !["preparing", "ready"].includes(escrow.status)) return false;
+    if (escrow.confidentialSetupSignatures.includes(input.signature)) return true;
+    const updated = await tx.update(payrollClaimEscrows).set({
+      confidentialSetupSignatures: [...escrow.confidentialSetupSignatures, input.signature],
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, escrow.status)
+    )).returning({ allocationId: payrollClaimEscrows.allocationId });
+    return Boolean(updated[0]);
+  });
+}
+
 export async function getPayrollClaimEscrow(
   db: Database,
   workspaceId: string,
