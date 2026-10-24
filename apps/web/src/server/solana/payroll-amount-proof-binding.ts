@@ -33,8 +33,11 @@ export function bindAmountCommitmentProof(
   material: PayrollAmountCommitmentMaterial
 ): InstructionPlan {
   let matched = 0;
+  if (!/^[0-9a-f]{64}$/i.test(material.amountCommitment)) {
+    throw new PayrollAmountProofBindingError("confidential_amount_commitment_invalid");
+  }
   const commitmentBytes = Uint8Array.from(
-    material.amountCommitment.match(/.{2}/g) ?? [],
+    material.amountCommitment.match(/.{2}/g)!,
     (byte) => Number.parseInt(byte, 16)
   );
   if (commitmentBytes.length !== 32) {
