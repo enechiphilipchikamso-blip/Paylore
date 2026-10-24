@@ -12,6 +12,8 @@ type Claim = {
   claimId: string;
   contributorAddress: string;
   amountCommitment: string;
+  amountCommitmentProof: string[];
+  amountCommitmentLeafIndex: number;
 };
 
 export function PayrollClaimCommitAction({
@@ -46,7 +48,14 @@ export function PayrollClaimCommitAction({
       !programId ||
       !allocationCommitment ||
       claims.length === 0 ||
-      claims.some((claim) => !/^[0-9a-f]{64}$/i.test(claim.amountCommitment))
+      claims.some((claim) =>
+        !/^[0-9a-f]{64}$/i.test(claim.amountCommitment) ||
+        !Number.isSafeInteger(claim.amountCommitmentLeafIndex) ||
+        claim.amountCommitmentLeafIndex < 0 ||
+        !Array.isArray(claim.amountCommitmentProof) ||
+        claim.amountCommitmentProof.length > 32 ||
+        !claim.amountCommitmentProof.every((sibling) => /^[0-9a-f]{64}$/i.test(sibling))
+      )
     ) {
       return;
     }
