@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
 import { readSolanaRpc } from "./rpc";
 import {
+  getFinalizedPayrollClaimState,
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
@@ -448,6 +449,49 @@ describe("payroll program transaction verification", () => {
         recoveryReasonCommitment
       })
     ).rejects.toThrow("not in the expected RECOVERED state");
+  });
+
+  it.each([
+    [0, "unclaimed"],
+    [1, "claimed"],
+    [2, "recovered"],
+    [3, "settlement_pending"]
+  ] as const)("reads finalized Claim PDA state %s as %s", async (status, expected) => {
+    const instruction = await claimInstruction();
+    vi.mocked(readSolanaRpc).mockResolvedValueOnce(
+      claimStateAccount(instruction, { status })
+    );
+
+    await expect(getFinalizedPayrollClaimState({
+      authorityAddress,
+      workspaceId,
+      contributorAddress,
+      claimId,
+      claimAddress: instruction.claimAddress,
+      allocationCommitment: commitment,
+      amountCommitment
+    })).resolves.toBe(expected);
+    expect(readSolanaRpc).toHaveBeenCalledWith("getAccountInfo", [
+      instruction.claimAddress,
+      { commitment: "finalized", encoding: "base64" }
+    ]);
+  });
+
+  it("does not treat malformed or differently committed finalized Claim PDA data as eligible", async () => {
+    const instruction = await claimInstruction();
+    vi.mocked(readSolanaRpc).mockResolvedValueOnce(
+      claimStateAccount(instruction, { status: 0, amountCommitment: "ff".repeat(32) })
+    );
+
+    await expect(getFinalizedPayrollClaimState({
+      authorityAddress,
+      workspaceId,
+      contributorAddress,
+      claimId,
+      claimAddress: instruction.claimAddress,
+      allocationCommitment: commitment,
+      amountCommitment
+    })).rejects.toThrow("The finalized Claim PDA does not match the expected allocation.");
   });
 
   it("rejects recovery transactions with a different committed reason", async () => {
