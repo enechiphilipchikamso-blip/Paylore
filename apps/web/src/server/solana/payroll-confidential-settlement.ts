@@ -295,7 +295,7 @@ function configureReserveInstruction(input: {
     data: discriminator("global:configure_workspace_reserve")
   };
 }
-function markClaimedInstruction(input: {
+function markSettlementPendingInstruction(input: {
   programId: string; contributor: string; workspace: string; reserveState: string;
   reserveAuthority: string; reserveToken: string; mint: string; destination: string; claim: string;
 }): Instruction {
@@ -312,7 +312,23 @@ function markClaimedInstruction(input: {
       { address: address(input.claim), role: AccountRole.WRITABLE },
       { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY }
     ],
-    data: discriminator("global:mark_claimed")
+    data: discriminator("global:mark_settlement_pending")
+  };
+}
+function finalizeClaimedInstruction(input: {
+  programId: string; contributor: string; workspace: string; reserveState: string;
+  reserveAuthority: string; claim: string;
+}): Instruction {
+  return {
+    programAddress: address(input.programId),
+    accounts: [
+      { address: address(input.contributor), role: AccountRole.READONLY },
+      { address: address(input.workspace), role: AccountRole.READONLY },
+      { address: address(input.reserveState), role: AccountRole.READONLY },
+      { address: address(input.reserveAuthority), role: AccountRole.READONLY_SIGNER },
+      { address: address(input.claim), role: AccountRole.WRITABLE }
+    ],
+    data: discriminator("global:finalize_claimed")
   };
 }
 function keysOf(message: Record<string, unknown>): string[] {
@@ -365,10 +381,10 @@ async function readFinalizedClaimState(input: {
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
-      !sameBytes(data.subarray(104, 136), commitment) || data[137] !== bump || data[136] > 2) {
+      !sameBytes(data.subarray(104, 136), commitment) || data[137] !== bump || data[136] > 3) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
-  return data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : "recovered";
+  return data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : data[136] === 2 ? "recovered" : "settlement_pending";
 }
 
 async function verifyFinalizedSettlement(input: {
@@ -435,7 +451,7 @@ async function verifyFinalizedSettlement(input: {
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
-      !sameBytes(data.subarray(104, 136), commitment) || data[136] !== 1 || data[137] !== bump) {
+      !sameBytes(data.subarray(104, 136), commitment) || (data[136] !== 1 && data[136] !== 3) || data[137] !== bump) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
 }
@@ -500,6 +516,37 @@ async function reconcileSettlement(
   const amount = BigInt(input.amount);
   if (before < after || before - after !== amount) {
     return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
+  }
+  let claimState: FinalizedClaimState;
+  try {
+    claimState = await readFinalizedClaimState({
+      rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
+      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+    });
+  } catch {
+    return { status: "pending", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
+  }
+  if (claimState === "settlement_pending") {
+    const finalize = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
+      programId: input.programId, contributor: input.contributor, workspace: input.workspace,
+      reserveState: input.reserveState, reserveAuthority: signer.address, claim: input.claim
+    })));
+    if (!finalize.successful || finalize.pending || finalize.trackingFailed) {
+      return { status: "pending", signature: finalize.signatures.at(-1) ?? input.settlementSignature,
+        proofDurationMs: input.proofDurationMs };
+    }
+    try {
+      claimState = await readFinalizedClaimState({
+        rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
+        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+      });
+    } catch {
+      return { status: "pending", signature: finalize.signatures.at(-1) ?? input.settlementSignature,
+        proofDurationMs: input.proofDurationMs };
+    }
+  }
+  if (claimState !== "claimed") {
+    return { status: "state_conflict", signature: input.settlementSignature, proofDurationMs: input.proofDurationMs };
   }
   const attached = await attachPayrollSettlementSignature(db, {
     workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
@@ -775,7 +822,7 @@ export async function settleContributorPayrollAllocation(
 
         const boundPlan = bindClaimedStateToConfidentialTransfer(
           transferPlan,
-          markClaimedInstruction({
+          markSettlementPendingInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
             reserveAuthority: signer.address, reserveToken, mint, destination, claim: allocation.claimAddress
           }),
