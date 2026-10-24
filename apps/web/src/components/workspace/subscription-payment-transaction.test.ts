@@ -28,8 +28,11 @@ describe("subscription payment transaction", () => {
       )
     )).toBe(true);
     expect(Buffer.from(transaction).includes(
-      Buffer.from("Paylore workspace activation | 49 USDC | recipient Vote111111111111111111111111111111111111111 | workspace workspace-test")
+      Buffer.from("Paylore activation attempt test | workspace workspace-test")
     )).toBe(true);
+    expect(Buffer.from(transaction).includes(
+      Buffer.from("Paylore workspace activation | 49 USDC | recipient ")
+    )).toBe(false);
   });
  
   it("builds a classic SPL Token payment for a classic USDC mint", async () => {
@@ -50,10 +53,11 @@ describe("subscription payment transaction", () => {
       Buffer.from(getAddressEncoder().encode(address(classicTokenProgram)))
     )).toBe(true);
     expect(Buffer.from(transaction).includes(
-      Buffer.from(
-        `Paylore workspace activation | 49 USDC | recipient ${recipient} | workspace workspace-classic-usdc`
-      )
+      Buffer.from("Paylore activation attempt test | workspace workspace-classic-usdc")
     )).toBe(true);
+    expect(Buffer.from(transaction).includes(
+      Buffer.from("Paylore workspace activation | 49 USDC | recipient ")
+    )).toBe(false);
   });
 
   it("rejects a token program not supported for subscription payments", async () => {

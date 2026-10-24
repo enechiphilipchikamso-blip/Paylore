@@ -108,16 +108,14 @@ export async function createSubscriptionPaymentTransaction({
     data: transferData
   } as const;
 
-  const memo = {
+  const memoInstruction = {
     programAddress: MEMO_PROGRAM_ADDRESS,
     accounts: [],
-    data: new TextEncoder().encode(
-      `Paylore workspace activation | 49 USDC | recipient ${recipient.toString()} | workspace ${workspaceId} | ${memo}`
-    )
+    data: new TextEncoder().encode(memo)
   } as const;
 
   const message = appendTransactionMessageInstructions(
-    [createDestinationAccount, transfer, memo],
+    [createDestinationAccount, transfer, memoInstruction],
     setTransactionMessageLifetimeUsingBlockhash(
       {
         blockhash: recentBlockhash,
