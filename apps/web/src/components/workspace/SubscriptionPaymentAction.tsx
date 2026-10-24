@@ -8,7 +8,7 @@ import {
 } from "./subscription-payment-transaction";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { beginSubscriptionWalletApproval } from "./subscription-payment-submission";
-import { isWalletCancellation } from "../auth/walletErrors";
+import { isConfirmedWalletCancellation } from "./subscription-payment-submission";
 
 type PreparedActivationPayment = {
   attemptId: string;
@@ -273,7 +273,7 @@ export function SubscriptionPaymentAction({
         );
       }
     } catch (cause) {
-      if (isWalletCancellation(cause)) {
+      if (isConfirmedWalletCancellation(cause)) {
         setProgress(null);
         setPreparedPayment(null);
         setPartial("Payment was canceled. No payment was sent.");
