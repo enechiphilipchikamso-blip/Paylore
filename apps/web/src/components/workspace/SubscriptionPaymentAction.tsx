@@ -9,7 +9,8 @@ import {
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import {
   beginSubscriptionWalletApproval,
-  isConfirmedWalletCancellation
+  isConfirmedWalletCancellation,
+  SUBSCRIPTION_PAYMENT_MISMATCH
 } from "./subscription-payment-submission";
 
 type PreparedActivationPayment = {
@@ -29,6 +30,11 @@ const PREPARATION_FAILURE =
   "The activation transaction could not be prepared. No payment was sent. Please try again.";
 const AMBIGUOUS_SUBMISSION =
   "The wallet did not confirm whether it sent the payment. Check your wallet activity before trying again to avoid a duplicate payment. Paylore will reconcile this attempt before allowing a retry.";
+const VERIFICATION_FAILURE =
+  "The payment could not be verified. Your workspace has not been activated. Review the transaction status before retrying.";
+const RECONCILIATION_PENDING =
+  "Paylore is checking the network before reporting the final payment status. Do not submit a duplicate payment.";
+type PaymentVerificationOutcome = "active" | "pending" | "failed" | "unavailable";
 
 export function SubscriptionPaymentAction({
   workspaceId,
@@ -60,7 +66,7 @@ export function SubscriptionPaymentAction({
   );
   const preparedOnLoadKey = useRef<string | null>(null);
 
-  async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<boolean> {
+  async function verifyPayment(signature: string, paymentAttemptId = attemptId): Promise<PaymentVerificationOutcome> {
     const endpoint = paymentAttemptId
       ? `/api/workspaces/${workspaceId}/billing/attempt`
       : `/api/workspaces/${workspaceId}/billing`;
@@ -71,15 +77,30 @@ export function SubscriptionPaymentAction({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    const result = await response.json().catch(() => null) as { status?: string } | null;
-    if (!response.ok || (paymentAttemptId && result?.status !== "active")) return false;
-    setPendingSignature(null);
-    setSubmissionUncertain(false);
-    setPreparedPayment(null);
-    setProgress(null);
-    onSuccess?.();
-    if (refreshOnSuccess) router.refresh();
-    return true;
+    const result = await response.json().catch(() => null) as { status?: string; error?: string } | null;
+    if (response.ok && (!paymentAttemptId || result?.status === "active")) {
+      setPendingSignature(null);
+      setSubmissionUncertain(false);
+      setPreparedPayment(null);
+      setProgress(null);
+      onSuccess?.();
+      if (refreshOnSuccess) router.refresh();
+      return "active";
+    }
+    if (response.status === 202 || result?.status === "reconciliation_required") return "pending";
+    if (
+      response.status === 422 ||
+      result?.error === "payment_attempt_mismatch" ||
+      result?.error === "payment_could_not_be_verified"
+    ) {
+      setPendingSignature(null);
+      setSubmissionUncertain(false);
+      setPreparedPayment(null);
+      setProgress(null);
+      setError(VERIFICATION_FAILURE);
+      return "failed";
+    }
+    return "unavailable";
   }
 
   async function retryVerification() {
@@ -87,10 +108,11 @@ export function SubscriptionPaymentAction({
     setBusy(true);
     setPartial(null);
     try {
-      if (!(await verifyPayment(pendingSignature))) {
-        setPartial(
-          "Paylore has not confirmed activation yet. You can retry verification without sending another payment."
-        );
+      const outcome = await verifyPayment(pendingSignature);
+      if (outcome === "pending") {
+        setPartial(RECONCILIATION_PENDING);
+      } else if (outcome === "unavailable") {
+        setPartial("Paylore could not check the transaction yet. Retry verification; do not send another payment.");
       }
     } catch {
       setPartial(
@@ -188,7 +210,7 @@ export function SubscriptionPaymentAction({
         !Number.isSafeInteger(prepared.lastValidBlockHeight) ||
         !Number.isFinite(Date.parse(prepared.expiresAt))
       ) {
-        throw new Error("The prepared payment details do not match your authenticated wallet.");
+        throw new Error(SUBSCRIPTION_PAYMENT_MISMATCH);
       }
 
       const transaction = await createSubscriptionPaymentTransaction({
@@ -206,7 +228,7 @@ export function SubscriptionPaymentAction({
       setProgress(null);
       const reason = cause instanceof Error ? cause.message : PREPARATION_FAILURE;
       setError(
-        reason === "The prepared payment details do not match your authenticated wallet."
+        reason === SUBSCRIPTION_PAYMENT_MISMATCH
           ? reason
           : reason === PREPARATION_FAILURE || reason.startsWith("Payment setup is incomplete.")
             ? reason
@@ -245,7 +267,7 @@ export function SubscriptionPaymentAction({
 
     if (wallet.account.address !== prepared.payer || wallet.account.address !== walletAddress) {
       setPreparedPayment(null);
-      setError("Your authenticated wallet changed. Sign in again before paying.");
+      setError(SUBSCRIPTION_PAYMENT_MISMATCH);
       return;
     }
 
@@ -274,7 +296,12 @@ export function SubscriptionPaymentAction({
       setProgress("Payment submitted. Waiting for network confirmation…");
       let verified = false;
       try {
-        verified = await verifyPayment(signature, prepared.attemptId);
+        const outcome = await verifyPayment(signature, prepared.attemptId);
+        verified = outcome === "active";
+        if (outcome === "pending") setPartial(RECONCILIATION_PENDING);
+        if (outcome === "unavailable") {
+          setPartial("The wallet sent the transaction, but Paylore could not check it yet. Retry verification here; do not send another payment.");
+        }
       } catch {
         setPartial(
           "The wallet sent the transaction, but Paylore could not check it yet. Retry verification here; do not send another payment."
