@@ -62,3 +62,20 @@ export function classifyTransactionFinality(
   if (!status || status.confirmationStatus !== "finalized") return "pending";
   return status.err === null || status.err === undefined ? "finalized" : "failed";
 }
+
+/** Confirms the decrypted reserve debit equals the server-approved integer USDC amount. */
+export function matchesExactConfidentialDebit(input: {
+  amountBaseUnits: string;
+  sourceAvailableBefore: string;
+  sourceAvailableAfter: string;
+}): boolean {
+  if (!/^[1-9][0-9]*$/.test(input.amountBaseUnits) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableAfter)) {
+    return false;
+  }
+  const amount = BigInt(input.amountBaseUnits);
+  const before = BigInt(input.sourceAvailableBefore);
+  const after = BigInt(input.sourceAvailableAfter);
+  return before >= after && before - after === amount;
+}
