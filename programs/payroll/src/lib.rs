@@ -208,22 +208,32 @@ fn is_matching_confidential_transfer_instruction(
         && instruction.accounts[4].pubkey == amount_commitment_context
 }
 
+fn amount_commitment_context_matches(
+    owner: &Pubkey,
+    data: &[u8],
+    expected_authority: Pubkey,
+    expected_commitment: [u8; 32],
+) -> bool {
+    *owner == ZK_ELGAMAL_PROOF_PROGRAM_ID
+        && data.len() == 161
+        && data[0..32] == expected_authority.to_bytes()[..]
+        && data[32] == 3
+        && data[129..161] == expected_commitment[..]
+}
+
 fn validate_amount_commitment_context(
     account: &AccountInfo,
     expected_authority: Pubkey,
     expected_commitment: [u8; 32],
 ) -> Result<()> {
-    require_keys_eq!(
-        *account.owner,
-        ZK_ELGAMAL_PROOF_PROGRAM_ID,
-        PayrollError::SettlementAmountBindingUnavailable
-    );
     let data = account.try_borrow_data()?;
-    require!(data.len() == 161, PayrollError::SettlementAmountBindingUnavailable);
     require!(
-        data[0..32] == expected_authority.to_bytes()[..]
-            && data[32] == 3
-            && data[129..161] == expected_commitment[..],
+        amount_commitment_context_matches(
+            account.owner,
+            &data,
+            expected_authority,
+            expected_commitment
+        ),
         PayrollError::SettlementAmountBindingUnavailable
     );
     Ok(())
@@ -630,6 +640,36 @@ mod tests {
         assert!(!is_matching_confidential_transfer_instruction(&wrong_variant, source, mint, destination, context));
         let wrong_program = Instruction { program_id: unrelated, ..transfer };
         assert!(!is_matching_confidential_transfer_instruction(&wrong_program, source, mint, destination, context));
+    }
+
+    #[test]
+    fn amount_commitment_requires_the_exact_verified_equality_context() {
+        let authority = Pubkey::new_unique();
+        let commitment = [7u8; 32];
+        let mut data = vec![0u8; 161];
+        data[0..32].copy_from_slice(authority.as_ref());
+        data[32] = 3;
+        data[129..161].copy_from_slice(&commitment);
+        assert!(amount_commitment_context_matches(
+            &ZK_ELGAMAL_PROOF_PROGRAM_ID, &data, authority, commitment
+        ));
+        assert!(!amount_commitment_context_matches(
+            &ZK_ELGAMAL_PROOF_PROGRAM_ID, &data, Pubkey::new_unique(), commitment
+        ));
+        assert!(!amount_commitment_context_matches(
+            &ZK_ELGAMAL_PROOF_PROGRAM_ID, &data, authority, [8u8; 32]
+        ));
+        let mut wrong_proof_type = data.clone();
+        wrong_proof_type[32] = 2;
+        assert!(!amount_commitment_context_matches(
+            &ZK_ELGAMAL_PROOF_PROGRAM_ID, &wrong_proof_type, authority, commitment
+        ));
+        assert!(!amount_commitment_context_matches(
+            &Pubkey::new_unique(), &data, authority, commitment
+        ));
+        assert!(!amount_commitment_context_matches(
+            &ZK_ELGAMAL_PROOF_PROGRAM_ID, &data[..160], authority, commitment
+        ));
     }
 
     #[test]
