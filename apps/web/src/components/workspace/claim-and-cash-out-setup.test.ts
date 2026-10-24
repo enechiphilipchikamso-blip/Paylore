@@ -19,7 +19,7 @@ describe("Claim & Cash Out confidential-account setup gate", () => {
     await expect(ensureClaimAndCashOutAccount({
       accountReady: true,
       setupAccount
-    })).resolves.toBe("settlement_unavailable");
+    })).resolves.toBe("account_already_ready");
 
     expect(setupAccount).not.toHaveBeenCalled();
   });

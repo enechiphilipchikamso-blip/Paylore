@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
+import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 
 import {
   applyConfidentialPendingBalance,
@@ -203,9 +204,12 @@ export function ContributorCompensation({
 
   async function runClaimAndCashOut() {
     if (busy) return;
-    if (!currentAccount || currentAccount.status !== "ready") {
-      const ready = await runSetup();
-      if (!ready) return;
+    const setupOutcome = await ensureClaimAndCashOutAccount({
+      accountReady: currentAccount?.status === "ready",
+      setupAccount: runSetup
+    });
+    if (setupOutcome === "account_setup_incomplete") return;
+    if (setupOutcome === "account_setup_completed") {
       const accountResponse = await fetch(
         `/api/workspaces/${workspaceId}/contributors/me/confidential-account`,
         { credentials: "same-origin", cache: "no-store" }
