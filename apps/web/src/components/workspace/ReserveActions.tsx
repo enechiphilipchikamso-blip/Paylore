@@ -17,6 +17,7 @@ type OnChainAccountState = {
   reserveAddress?: string;
   tokenAccount?: string | null;
   confidentialTransferReady?: boolean;
+  publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
   programReserveConfigured?: boolean;
@@ -113,6 +114,7 @@ export function ReserveActions({
         phase?: ReservePhase | null;
         tokenAccount?: string | null;
         confidentialTransferReady?: boolean;
+        publicBalanceBaseUnits?: string;
         availableBalanceBaseUnits?: string;
         pendingBalanceBaseUnits?: string;
         programReserveConfigured?: boolean;
@@ -257,9 +259,27 @@ export function ReserveActions({
           ) : onChainAccount.status === "program_configured" ? (
             <>
               <p role="status">The finalized reserve token account and Paylore Program reserve state match. The state check does not by itself mean the reserve is funded.</p>
-              <p>Associated token account: <code>{onChainAccount.tokenAccount ?? "Not available"}</code></p>
+              <p>Reserve Token-2022 account: <code>{onChainAccount.tokenAccount ?? "Not available"}</code></p>
+              <p>To fund the reserve manually, send only the configured wrapped-USDC mint on Devnet to this token account. Plain USDC or another mint is not interchangeable. Paylore does not sweep or automatically refill the reserve.</p>
+              <button
+                className="button button--secondary"
+                disabled={!onChainAccount.tokenAccount}
+                onClick={() => {
+                  const tokenAccount = onChainAccount.tokenAccount;
+                  if (!tokenAccount) return;
+                  void navigator.clipboard.writeText(tokenAccount).then(() => {
+                    setNotice({ state: "success", text: "Reserve token-account address copied." });
+                  }).catch(() => {
+                    setNotice({ state: "error", text: "Could not copy the reserve token-account address. Select and copy the address shown above." });
+                  });
+                }}
+                type="button"
+              >
+                Copy reserve token-account address
+              </button>
               <dl className="billing-period">
                 <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
+                <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
                 <div><dt>Available confidential balance</dt><dd>{onChainAccount.availableBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
                 <div><dt>Pending confidential balance</dt><dd>{onChainAccount.pendingBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
               </dl>
