@@ -117,4 +117,5 @@ describe("confidential proof-context cleanup", () => {
     const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
-  });});
+  });
+});
