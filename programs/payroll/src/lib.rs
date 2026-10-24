@@ -754,14 +754,12 @@ pub struct FinalizeClaimed<'info> {
 
 #[derive(Accounts)]
 pub struct RecoverClaim<'info> {
-    pub authority: Signer<'info>,
     /// CHECK: The contributor identity is bound to the Claim PDA seeds.
     pub contributor: UncheckedAccount<'info>,
     #[account(
-        has_one = authority,
         seeds = [
             b"workspace",
-            authority.key().as_ref(),
+            workspace.authority.as_ref(),
             workspace.workspace_seed.as_ref()
         ],
         bump = workspace.bump
