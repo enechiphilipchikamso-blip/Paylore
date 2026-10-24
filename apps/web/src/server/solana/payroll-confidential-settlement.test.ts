@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
+
 import { settleContributorPayrollAllocation } from "./payroll-confidential-settlement";
 
 const h = vi.hoisted(() => ({
