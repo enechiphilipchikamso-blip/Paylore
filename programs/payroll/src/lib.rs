@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
+    hash::hashv,
     instruction::Instruction,
     sysvar::instructions::{load_current_index_checked, load_instruction_at_checked}
 };
@@ -41,7 +42,20 @@ pub mod paylore_payroll {
         claim_id: [u8; 32],
         allocation_commitment: [u8; 32],
         amount_commitment: [u8; 32],
+        amount_commitment_leaf_index: u32,
+        amount_commitment_proof: Vec<[u8; 32]>,
     ) -> Result<()> {
+        require!(
+            verify_allocation_merkle_proof(
+                allocation_commitment,
+                claim_id,
+                ctx.accounts.contributor.key(),
+                amount_commitment,
+                amount_commitment_leaf_index,
+                &amount_commitment_proof,
+            ),
+            PayrollError::InvalidAllocationMerkleProof
+        );
         let claim = &mut ctx.accounts.claim;
         if validate_claim_initialization(
             claim,
@@ -219,6 +233,35 @@ fn amount_commitment_context_matches(
         && data[0..32] == expected_authority.to_bytes()[..]
         && data[32] == 3
         && data[129..161] == expected_commitment[..]
+}
+
+fn verify_allocation_merkle_proof(
+    root: [u8; 32],
+    claim_id: [u8; 32],
+    contributor: Pubkey,
+    amount_commitment: [u8; 32],
+    leaf_index: u32,
+    siblings: &[[u8; 32]],
+) -> bool {
+    if siblings.len() > 32 {
+        return false;
+    }
+    let mut current = hashv(&[
+        b"paylore:allocation-leaf:v1\0",
+        &claim_id,
+        contributor.as_ref(),
+        &amount_commitment,
+    ]).to_bytes();
+    let mut index = leaf_index;
+    for sibling in siblings {
+        current = if index & 1 == 0 {
+            hashv(&[&current, sibling]).to_bytes()
+        } else {
+            hashv(&[sibling, &current]).to_bytes()
+        };
+        index >>= 1;
+    }
+    index == 0 && current == root
 }
 
 fn validate_amount_commitment_context(
@@ -584,6 +627,8 @@ pub enum PayrollError {
     ReserveConfigurationConflict,
     #[msg("Confidential settlement must include a matching Token-2022 transfer in the same transaction.")]
     SettlementTransferMissing,
+    #[msg("The payroll amount commitment is not a member of this allocation root.")]
+    InvalidAllocationMerkleProof,
     #[msg("The verified confidential-transfer amount commitment does not match this allocation.")]
     SettlementAmountBindingUnavailable,
 }
@@ -640,6 +685,47 @@ mod tests {
         assert!(!is_matching_confidential_transfer_instruction(&wrong_variant, source, mint, destination, context));
         let wrong_program = Instruction { program_id: unrelated, ..transfer };
         assert!(!is_matching_confidential_transfer_instruction(&wrong_program, source, mint, destination, context));
+    }
+
+    #[test]
+    fn allocation_merkle_proof_binds_claim_contributor_and_amount_commitment() {
+        let claim_id = [1u8; 32];
+        let contributor = Pubkey::new_unique();
+        let amount_commitment = [2u8; 32];
+        let sibling_id = [3u8; 32];
+        let sibling_contributor = Pubkey::new_unique();
+        let sibling_amount = [4u8; 32];
+        let leaf = hashv(&[
+            b"paylore:allocation-leaf:v1\0",
+            &claim_id,
+            contributor.as_ref(),
+            &amount_commitment,
+        ]).to_bytes();
+        let sibling = hashv(&[
+            b"paylore:allocation-leaf:v1\0",
+            &sibling_id,
+            sibling_contributor.as_ref(),
+            &sibling_amount,
+        ]).to_bytes();
+        let root = hashv(&[&leaf, &sibling]).to_bytes();
+        assert!(verify_allocation_merkle_proof(
+            root, claim_id, contributor, amount_commitment, 0, &[sibling]
+        ));
+        assert!(!verify_allocation_merkle_proof(
+            root, claim_id, contributor, [5u8; 32], 0, &[sibling]
+        ));
+        assert!(!verify_allocation_merkle_proof(
+            root, claim_id, Pubkey::new_unique(), amount_commitment, 0, &[sibling]
+        ));
+        assert!(!verify_allocation_merkle_proof(
+            root, claim_id, contributor, amount_commitment, 1, &[sibling]
+        ));
+        assert!(!verify_allocation_merkle_proof(
+            root, claim_id, contributor, amount_commitment, 0, &[]
+        ));
+        assert!(!verify_allocation_merkle_proof(
+            root, claim_id, contributor, amount_commitment, 0, &[[9u8; 32]; 33]
+        ));
     }
 
     #[test]
