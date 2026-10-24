@@ -11,6 +11,8 @@ import {
 import { clearSessionCookie, getSessionState } from "../../../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../server/security";
 import { getDatabase } from "../../../../../../server/db";
+import { loadPayloreConfig } from "../../../../../../server/config";
+import { derivePayrollAmountCommitmentMaterial } from "../../../../../../server/solana/payroll-amount-commitment";
 import {
   previewPayrollFile,
   type PayrollContributor
@@ -196,13 +198,30 @@ export async function POST(request: Request, { params }: RouteContext) {
     const allocationCommitment = createHash("sha256")
       .update(`paylore:allocation:v1:${workspaceId}:${JSON.stringify(canonicalRows)}`)
       .digest("hex");
-    const allocationInputs = rows.map((row) => ({
-      contributorId: row.contributorId,
-      amountBaseUnits: row.amountBaseUnits,
-      claimId: createHash("sha256")
+    const commitmentSecret = loadPayloreConfig().PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET;
+    if (!commitmentSecret) {
+      return NextResponse.json(
+        { error: "payroll_amount_commitment_not_configured" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    const allocationInputs = rows.map((row) => {
+      const claimId = createHash("sha256")
         .update(`${workspaceId}:${idempotencyValue}:${row.contributorId}`)
-        .digest("hex")
-    }));
+        .digest("hex");
+      const amountCommitment = derivePayrollAmountCommitmentMaterial({
+        amountBaseUnits: row.amountBaseUnits,
+        claimId,
+        allocationCommitment,
+        secretHex: commitmentSecret
+      }).amountCommitment;
+      return {
+        contributorId: row.contributorId,
+        amountBaseUnits: row.amountBaseUnits,
+        amountCommitment,
+        claimId
+      };
+    });
     const saved = await createPayrollDraft(access.db, {
       workspaceId,
       createdByUserId: access.session.userId,
