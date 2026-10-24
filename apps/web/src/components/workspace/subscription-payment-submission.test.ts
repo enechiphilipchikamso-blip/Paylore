@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { findAuthenticatedWallet } from "./authenticated-wallet";
 import {
   beginSubscriptionWalletApproval,
-  isConfirmedWalletCancellation
+  isConfirmedWalletCancellation,
+  SUBSCRIPTION_PAYMENT_MISMATCH
 } from "./subscription-payment-submission";
 
 const PAYER = "11111111111111111111111111111111";
@@ -50,7 +51,7 @@ describe("beginSubscriptionWalletApproval", () => {
     expect(() => beginSubscriptionWalletApproval(fixture.wallet, {
       payer: OTHER_PAYER,
       transaction
-    })).toThrow("Your authenticated wallet changed. Sign in again before paying.");
+    })).toThrow(SUBSCRIPTION_PAYMENT_MISMATCH);
     expect(fixture.signAndSendTransaction).not.toHaveBeenCalled();
   });
 });
