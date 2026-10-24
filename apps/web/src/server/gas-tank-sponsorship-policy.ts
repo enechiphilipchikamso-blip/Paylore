@@ -3,7 +3,7 @@ import {
   getAddressDecoder
 } from "@solana/kit";
 
-export const MAX_SPONSORED_CLAIMS = 4;
+export const MAX_SPONSORED_CLAIMS = 2;
 export const MAX_SPONSORED_TRANSACTION_BYTES = 1_232;
 export const MAX_SPONSORED_FEE_LAMPORTS = 100_000n;
 export const MAX_DAILY_SPONSORED_FEE_LAMPORTS = 5_000_000n;
@@ -15,6 +15,8 @@ export type SponsoredClaimIntent = {
   claimId: string;
   contributorAddress: string;
   amountCommitment: string;
+  amountCommitmentProof: string[];
+  amountCommitmentLeafIndex: number;
   claimAddress?: string;
 };
 
@@ -47,6 +49,15 @@ function concat(...parts: Uint8Array[]): Uint8Array {
     offset += part.length;
   }
   return output;
+}
+
+function encodeU32(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new GasTankSponsorshipPolicyError("allocation_proof_index_invalid");
+  }
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return bytes;
 }
 
 function encodeString(value: string): Uint8Array {
@@ -107,6 +118,11 @@ export function assertSponsoredClaimIntent(input: {
   for (const claim of input.claims) {
     hex32(claim.claimId);
     hex32(claim.amountCommitment);
+    encodeU32(claim.amountCommitmentLeafIndex);
+    if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 32) {
+      throw new GasTankSponsorshipPolicyError("allocation_proof_depth_invalid");
+    }
+    claim.amountCommitmentProof.forEach((sibling) => hex32(sibling));
     if (!claim.contributorAddress ||
         (claim.claimAddress !== undefined && !claim.claimAddress)) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_mapping_invalid");
@@ -181,7 +197,10 @@ export function assertAllowedPayrollInstructionSet(input: {
           input.createClaimDiscriminator,
           hex32(claim.claimId),
           commitment,
-          hex32(claim.amountCommitment)
+          hex32(claim.amountCommitment),
+          encodeU32(claim.amountCommitmentLeafIndex),
+          encodeU32(claim.amountCommitmentProof.length),
+          ...claim.amountCommitmentProof.map((sibling) => hex32(sibling))
         )
       ) ||
       !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
