@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getWorkspaceForUser } from "@paylore/database";
+import { getPayrollClaimEscrow, getWorkspaceForUser } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
@@ -10,11 +10,7 @@ import {
 } from "../../../../../../../../../../server/solana/payroll-confidential-recovery";
 
 type RouteContext = {
-  params: Promise<{
-    workspaceId: string;
-    runId: string;
-    allocationId: string;
-  }>;
+  params: Promise<{ workspaceId: string; runId: string; allocationId: string }>;
 };
 
 const recoverySchema = z.object({
@@ -32,21 +28,60 @@ const recoverySchema = z.object({
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+async function authorize(workspaceId: string) {
+  const session = await getSessionState();
+  if (session.status !== "authenticated") {
+    await clearSessionCookie();
+    return {
+      response: NextResponse.json({ error: "authentication_required" }, { status: 401 })
+    } as const;
+  }
+  const db = getDatabase();
+  const membership = await getWorkspaceForUser(db, session.session.userId, workspaceId);
+  if (!membership || membership.role !== "organization_admin") {
+    return {
+      response: NextResponse.json({ error: "workspace_access_denied" }, { status: 403 })
+    } as const;
+  }
+  return { db, session: session.session } as const;
+}
+
+export async function GET(_request: Request, { params }: RouteContext) {
+  try {
+    const { workspaceId, runId, allocationId } = await params;
+    const access = await authorize(workspaceId);
+    if ("response" in access) return access.response;
+
+    const escrow = await getPayrollClaimEscrow(access.db, workspaceId, allocationId);
+    if (!escrow || escrow.payrollRunId !== runId) {
+      return NextResponse.json({ status: "not_available" }, {
+        headers: { "Cache-Control": "no-store" }
+      });
+    }
+    const status = escrow.status;
+    return NextResponse.json({
+      status,
+      reason: status === "recovery_pending" ? escrow.recoveryReason : null,
+      note: status === "recovery_pending" ? escrow.recoveryReasonNote : null,
+      recoverySignature: status === "recovery_pending" ? escrow.recoverySignature : null,
+      recoveryApplySignature: status === "recovery_pending" ? escrow.recoveryApplySignature : null,
+      proofSetupSignature: status === "recovery_pending"
+        ? escrow.recoveryContextSignatures.at(-1) ?? null
+        : null
+    }, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return NextResponse.json({ error: "payroll_recovery_status_unavailable" }, {
+      status: 503, headers: { "Cache-Control": "no-store" }
+    });
+  }
+}
+
 export async function POST(request: Request, { params }: RouteContext) {
   try {
     assertSameOrigin(request);
     const { workspaceId, runId, allocationId } = await params;
-    const session = await getSessionState();
-    if (session.status !== "authenticated") {
-      await clearSessionCookie();
-      return NextResponse.json({ error: "authentication_required" }, { status: 401 });
-    }
-
-    const db = getDatabase();
-    const workspace = await getWorkspaceForUser(db, session.session.userId, workspaceId);
-    if (!workspace || workspace.role !== "organization_admin") {
-      return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
-    }
+    const access = await authorize(workspaceId);
+    if ("response" in access) return access.response;
 
     let body: unknown;
     try {
@@ -59,34 +94,32 @@ export async function POST(request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: "invalid_recovery_request" }, { status: 400 });
     }
 
-    const result = await recoverPayrollAllocation(db, {
+    const result = await recoverPayrollAllocation(access.db, {
       workspaceId,
       runId,
       allocationId,
-      actorUserId: session.session.userId,
+      actorUserId: access.session.userId,
       reason: parsed.data.reason,
       note: parsed.data.reason === "other" ? parsed.data.note!.trim() : null,
       signature: parsed.data.signature ?? null,
       phase: parsed.data.phase ?? null
     });
-
-    const bodyForResult = {
+    const valueTransferred = result.status === "recovered" || result.status === "already_reconciled";
+    const responseBody = {
       status: result.status,
       signature: result.signature ?? null,
       phase: result.phase ?? null,
-      valueTransferred: result.status === "recovered" || result.status === "already_reconciled",
-      ...(result.status === "pending" ? {
-        message: "Recovery is being reconciled. Do not submit a second recovery."
-      } : {}),
-      ...(result.status === "retry_ready" ? {
-        message: "No recovery transfer was finalized. Review the status before retrying."
-      } : {}),
+      valueTransferred,
+      ...(result.status === "pending"
+        ? { message: "Recovery is being reconciled. Do not submit a second recovery." }
+        : {}),
+      ...(result.status === "retry_ready"
+        ? { message: "No recovery transfer was finalized. Review the status before retrying." }
+        : {}),
       ...(result.warning ? { warning: result.warning } : {})
     };
-    const statusCode = result.status === "pending" ? 202 :
-      result.status === "workspace_busy" ? 409 : 200;
-    return NextResponse.json(bodyForResult, {
-      status: statusCode,
+    return NextResponse.json(responseBody, {
+      status: result.status === "pending" ? 202 : result.status === "workspace_busy" ? 409 : 200,
       headers: { "Cache-Control": "no-store" }
     });
   } catch (error) {
