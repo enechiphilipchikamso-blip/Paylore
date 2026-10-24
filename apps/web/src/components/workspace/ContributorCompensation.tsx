@@ -5,6 +5,7 @@ import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
+import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
 import {
   applyConfidentialPendingBalance,
@@ -335,9 +336,14 @@ export function ContributorCompensation({
         return;
       }
       const amount = parseUsdc(withdrawAmount);
-      if (!balance || amount > balance.availableBalance) {
-        throw new Error("The requested amount is greater than the available confidential balance.");
+      if (!balance) {
+        throw new Error("Refresh the confidential balance before withdrawing.");
       }
+      assertConfidentialWithdrawalAvailable({
+        amountBaseUnits: amount,
+        availableBalance: balance.availableBalance,
+        pendingBalance: balance.pendingBalance
+      });
       if (
         !window.confirm(
           `Withdraw ${formatUsdc(amount)} wrapped USDC to your public wrapped-USDC token account? This does not convert it to Circle Devnet USDC. The withdrawal amount and transaction are public on Solana.`
