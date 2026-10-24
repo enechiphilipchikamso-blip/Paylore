@@ -94,11 +94,12 @@ describe("payroll program transactions", () => {
         claims: [
           {
             claimId: "01".repeat(32),
-        amountCommitment: "cd".repeat(32),
+            amountCommitment: "cd".repeat(32),
             contributorAddress: "Vote111111111111111111111111111111111111111"
           },
           {
             claimId: "01".repeat(32),
+            amountCommitment: "cd".repeat(32),
             contributorAddress: "11111111111111111111111111111111"
           }
         ],
@@ -121,11 +122,12 @@ describe("payroll program transactions", () => {
         claims: [
           {
             claimId: "01".repeat(32),
+            amountCommitment: "cd".repeat(32),
             contributorAddress
           },
           {
             claimId: "02".repeat(32),
-        amountCommitment: "cd".repeat(32),
+            amountCommitment: "cd".repeat(32),
             contributorAddress
           }
         ],
