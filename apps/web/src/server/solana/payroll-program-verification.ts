@@ -6,6 +6,7 @@ import {
   getAddressEncoder,
   getProgramDerivedAddress
 } from "@solana/kit";
+import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { loadPayloreConfig } from "../config";
 import { readSolanaRpc } from "./rpc";
 
@@ -235,7 +236,7 @@ export async function verifyPayrollClaimTransaction(input: {
       data.length >= 8 &&
       sameBytes(data.subarray(0, 8), createClaimDiscriminator)
     ) {
-      if (data.length < 112 || instruction.accounts.length !== 5) {
+      if (data.length < 144 || instruction.accounts.length !== 5) {
         throw new Error("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
@@ -389,11 +390,16 @@ export async function getFinalizedPayrollClaimState(input: {
 export async function verifyPayrollRecoveryTransaction(input: {
   signature: string;
   authorityAddress: string;
+  reserveAuthorityAddress: string;
   workspaceId: string;
   contributorAddress: string;
   claimId: string;
   claimAddress: string;
   allocationCommitment: string;
+  amountCommitment: string;
+  escrowTokenAccount: string;
+  reserveTokenAccount: string;
+  mint: string;
   recoveryReasonCommitment: string;
 }): Promise<void> {
   const config = loadPayloreConfig();
@@ -403,12 +409,14 @@ export async function verifyPayrollRecoveryTransaction(input: {
   }
   const claimId = decodeHex32(input.claimId);
   const allocationCommitment = decodeHex32(input.allocationCommitment);
+  const amountCommitment = decodeHex32(input.amountCommitment);
   const reasonCommitment = decodeHex32(input.recoveryReasonCommitment);
-  const { workspace } = await deriveWorkspaceAddress(
+  const workspaceResult = await deriveWorkspaceAddress(
     input.authorityAddress,
     input.workspaceId,
     programId
   );
+  const workspace = workspaceResult.workspace;
   const claim = await deriveClaimAddress(
     workspace,
     input.contributorAddress,
@@ -418,6 +426,13 @@ export async function verifyPayrollRecoveryTransaction(input: {
   if (claim.address !== input.claimAddress) {
     throw new Error("The recovery Claim PDA does not match the allocation.");
   }
+  const [reserveState] = await getProgramDerivedAddress({
+    programAddress: address(programId),
+    seeds: [
+      textEncoder.encode("reserve"),
+      getAddressEncoder().encode(address(workspace))
+    ]
+  });
 
   const transaction = await readSolanaRpc<ParsedTransaction>(
     "getTransaction",
@@ -445,37 +460,75 @@ export async function verifyPayrollRecoveryTransaction(input: {
     !Array.isArray(signatures) ||
     !signatures.includes(input.signature) ||
     !signedBy(accountKeys, input.authorityAddress) ||
+    !signedBy(accountKeys, input.reserveAuthorityAddress) ||
     !Array.isArray(instructions)
   ) {
-    throw new Error("The recovery transaction is not finalized successfully.");
+    throw new Error("The recovery transaction is not finalized successfully with both required authorities.");
   }
 
-  const discriminator = await instructionDiscriminator("global:recover_claim");
-  const matched = instructions.some((rawInstruction) => {
+  const recoverDiscriminator = await instructionDiscriminator("global:recover_claim");
+  const instructionsSysvar = "Sysvar1nstructions1111111111111111111111111";
+  let transferIndex = -1;
+  let recoveryIndex = -1;
+  let transferContext = "";
+  let matchedTransfers = 0;
+  let matchedRecoveries = 0;
+  for (const [index, rawInstruction] of instructions.entries()) {
     const instruction = object(rawInstruction) as ProgramInstruction | null;
     if (
-      instruction?.programId !== programId ||
+      !instruction ||
+      typeof instruction.programId !== "string" ||
       typeof instruction.data !== "string" ||
       !Array.isArray(instruction.accounts) ||
       !instruction.accounts.every((account) => typeof account === "string")
-    ) {
-      return false;
-    }
-    const data = decodeBase58(instruction.data);
+    ) continue;
     const accounts = instruction.accounts as string[];
-    return (
+    const data = decodeBase58(instruction.data);
+    if (
+      instruction.programId === TOKEN_2022_PROGRAM_ADDRESS &&
+      data.length >= 2 &&
+      data[0] === 27 &&
+      data[1] === 7 &&
+      accounts.length >= 5 &&
+      accounts[0] === input.escrowTokenAccount &&
+      accounts[1] === input.mint &&
+      accounts[2] === input.reserveTokenAccount
+    ) {
+      transferIndex = index;
+      transferContext = accounts[4] ?? "";
+      matchedTransfers++;
+    }
+    if (
+      instruction.programId === programId &&
+      sameBytes(data, recoverDiscriminator) === false &&
       data.length === 40 &&
-      sameBytes(data.subarray(0, 8), discriminator) &&
+      sameBytes(data.subarray(0, 8), recoverDiscriminator) &&
       sameBytes(data.subarray(8), reasonCommitment) &&
-      accounts.length === 4 &&
+      accounts.length === 11 &&
       accounts[0] === input.authorityAddress &&
       accounts[1] === input.contributorAddress &&
       accounts[2] === workspace &&
-      accounts[3] === claim.address
-    );
-  });
-  if (!matched) {
-    throw new Error("The finalized transaction does not perform this Claim PDA recovery.");
+      accounts[3] === reserveState &&
+      accounts[4] === input.reserveAuthorityAddress &&
+      accounts[5] === input.reserveTokenAccount &&
+      accounts[6] === input.mint &&
+      accounts[7] === claim.address &&
+      accounts[8] === input.escrowTokenAccount &&
+      accounts[9] === instructionsSysvar &&
+      accounts[10] === transferContext
+    ) {
+      recoveryIndex = index;
+      matchedRecoveries++;
+    }
+  }
+
+  if (
+    matchedTransfers !== 1 ||
+    matchedRecoveries !== 1 ||
+    recoveryIndex !== transferIndex + 1 ||
+    !transferContext
+  ) {
+    throw new Error("The finalized recovery transaction does not include the exact escrow-to-reserve confidential transfer atomically bound to this Claim PDA.");
   }
 
   const claimStateDiscriminator = await instructionDiscriminator("account:ClaimState");
@@ -488,21 +541,22 @@ export async function verifyPayrollRecoveryTransaction(input: {
   const account = object(accountInfo)?.value;
   const accountRecord = object(account);
   const data = decodeBase64AccountData(accountRecord?.data);
-  const workspaceBytes = getAddressEncoder().encode(workspace);
-  const contributorBytes = getAddressEncoder().encode(address(input.contributorAddress));
   if (
     !accountRecord ||
     accountRecord.owner !== programId ||
     accountRecord.executable !== false ||
     !data ||
-    data.length !== 170 ||
+    data.length !== 203 ||
     !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
-    !sameBytes(data.subarray(8, 40), workspaceBytes) ||
-    !sameBytes(data.subarray(40, 72), contributorBytes) ||
+    !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(workspace))) ||
+    !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributorAddress))) ||
     !sameBytes(data.subarray(72, 104), claimId) ||
     !sameBytes(data.subarray(104, 136), allocationCommitment) ||
-    data[168] !== 2 ||
-    data[169] !== claim.bump
+    !sameBytes(data.subarray(136, 168), amountCommitment) ||
+    !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
+    data[200] !== 1 ||
+    data[201] !== 2 ||
+    data[202] !== claim.bump
   ) {
     throw new Error(
       "The finalized Claim PDA is not in the expected RECOVERED state for this allocation."
