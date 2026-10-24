@@ -278,7 +278,7 @@ vi.mock("@solana/kit", () => ({
 }));
 
 vi.mock("@solana-program/token-2022", () => ({
-  h.tokenProgram,
+  TOKEN_2022_PROGRAM_ADDRESS: h.tokenProgram,
   fetchMint: vi.fn(async () => ({
     data: { decimals: 6, extensions: [{ __kind: "ConfidentialTransferMint", autoApproveNewAccounts: true }] }
   })),
@@ -368,7 +368,7 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
 }));
 
 vi.mock("@solana-program/zk-elgamal-proof", () => ({
-  h.zkProofProgram,
+  ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS: h.zkProofProgram,
   closeContextStateProof: vi.fn(() => ({
     programAddress: h.zkProofProgram,
     accounts: [],
@@ -584,6 +584,23 @@ describe("settleContributorPayrollAllocation integration", () => {
 
     expect(result).toMatchObject({ status: "claimed", warning: "proof_context_cleanup_pending" });
     expect(h.ledgerCalls).toBe(1);
+    expect(h.clearContextsCalls).toBe(0);
+  });
+
+  it("keeps a newly submitted settlement pending until its own signature finalizes", async () => {
+    h.pendingSignatures.add("settlement-signature-3");
+    h.nextSteps = ["configure", "proof_setup", "transfer"];
+
+    const result = await settleContributorPayrollAllocation({} as any, input);
+
+    expect(result).toMatchObject({
+      status: "pending",
+      signature: "settlement-signature-3",
+      warning: "proof_context_cleanup_pending"
+    });
+    expect(h.executionOrder).toEqual(["configure", "proof_setup", "transfer"]);
+    expect(h.attachCalls).toBe(1);
+    expect(h.ledgerCalls).toBe(0);
     expect(h.clearContextsCalls).toBe(0);
   });
 
