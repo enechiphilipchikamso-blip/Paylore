@@ -187,6 +187,20 @@ describe("subscription payment attempt reconciliation route", () => {
     expect(mocks.updateSubscriptionPaymentAttemptStatus).not.toHaveBeenCalled();
   });
 
+  it("returns active when a concurrent verifier already confirmed the payment", async () => {
+    mocks.verifySubscriptionPayment.mockRejectedValueOnce(new PaymentVerificationError("wrong_payment"));
+    mocks.getSubscriptionPaymentAttempt
+      .mockResolvedValueOnce({ ...mocks.attempt })
+      .mockResolvedValueOnce({ ...mocks.attempt, status: "confirmed" });
+    mocks.updateSubscriptionPaymentAttemptStatus.mockResolvedValueOnce(null);
+
+    const response = await POST(request({ attemptId: ATTEMPT_ID, signature: SIGNATURE }), context);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "active" });
+    expect(mocks.applyVerifiedSubscriptionPayment).not.toHaveBeenCalled();
+  });
+
   it("keeps missing finalized transaction evidence in reconciliation rather than activating", async () => {
     mocks.verifySubscriptionPayment.mockRejectedValueOnce(new PaymentVerificationError("not_found"));
     const response = await POST(request({ attemptId: ATTEMPT_ID, signature: SIGNATURE }), context);
