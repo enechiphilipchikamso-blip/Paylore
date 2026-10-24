@@ -64,6 +64,9 @@ export function bindAmountCommitmentProof(
       }
 
       const ciphertext = ElGamalCiphertext.fromBytes(context.slice(32, 96));
+      if (!ciphertext) {
+        throw new PayrollAmountProofBindingError("confidential_amount_proof_ciphertext_invalid");
+      }
       const opening = PedersenOpening.fromBytes(material.opening);
       const commitment = PedersenCommitment.fromBytes(commitmentBytes);
       const proof = new CiphertextCommitmentEqualityProofData(
