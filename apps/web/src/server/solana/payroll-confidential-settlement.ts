@@ -728,6 +728,7 @@ export async function settleContributorPayrollAllocation(
         });
         const destinationToken = (await fetchToken(rpc, address(destination))).data;
         assertConfidentialAccount(destinationToken, input.contributorAddress, mint, "contributor_confidential_account_not_ready");
+        assertConfidentialStepAllowed(sequence, "reserve_configure");
         const configured = await executePlan(rpc, signer, singleInstructionPlan(configureReserveInstruction({
           programId, authority: evidence.authorityAddress, workspace, reserveState,
           reserveAuthority: signer.address, reserveToken, mint
@@ -739,6 +740,7 @@ export async function settleContributorPayrollAllocation(
 
         let balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         if (balance.confidential.pendingBalance > 0n) {
+          assertConfidentialStepAllowed(sequence, "pending_apply_before_deposit");
           const apply = await executePlan(rpc, signer, singleInstructionPlan(getApplyConfidentialPendingBalanceInstructionFromToken({
             token: address(reserveToken), tokenAccount: balance.token, authority: signer, elgamalSecretKey: secret, aesKey
           })));
@@ -755,6 +757,7 @@ export async function settleContributorPayrollAllocation(
           if (balance.token.amount < shortfall) {
             throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
           }
+          assertConfidentialStepAllowed(sequence, "deposit");
           const deposit = await executePlan(rpc, signer, singleInstructionPlan(getConfidentialDepositInstruction({
             token: address(reserveToken), mint: mintAddress, authority: signer, amount: shortfall, decimals: mintAccount.decimals
           })));
@@ -765,6 +768,7 @@ export async function settleContributorPayrollAllocation(
           sequence = advanceConfidentialSequence(sequence, "deposit", "finalized");
           balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           if (balance.confidential.pendingBalance > 0n) {
+            assertConfidentialStepAllowed(sequence, "pending_apply_after_deposit");
             const applied = await executePlan(rpc, signer, singleInstructionPlan(getApplyConfidentialPendingBalanceInstructionFromToken({
               token: address(reserveToken), tokenAccount: balance.token, authority: signer, elgamalSecretKey: secret, aesKey
             })));
@@ -811,6 +815,7 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("confidential_transfer_instruction_invalid", 503);
         }
 
+        assertConfidentialStepAllowed(sequence, "proof_setup");
         const setup = await executePlan(rpc, signer, transferPlan.plans[0]!, async (sig) => {
           const persisted = await appendPayrollSettlementContextSignature(db, {
             workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, signature: sig
@@ -829,7 +834,6 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("confidential_transfer_proof_setup_failed", 503);
         }
 
-        assertConfidentialStepAllowed(sequence, "proof_setup");
         sequence = advanceConfidentialSequence(sequence, "proof_setup", "finalized");
 
         const boundPlan = bindSettlementPendingStateToConfidentialTransfer(
