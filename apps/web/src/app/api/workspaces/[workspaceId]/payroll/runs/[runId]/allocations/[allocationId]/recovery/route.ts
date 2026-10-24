@@ -1,15 +1,13 @@
-import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  getWorkspaceForUser,
-  getWorkspacePayrollRun,
-  recordPayrollRecovery
-} from "@paylore/database";
+import { getWorkspaceForUser } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
-import { verifyPayrollRecoveryTransaction } from "../../../../../../../../../../server/solana/payroll-program-verification";
+import {
+  PayrollConfidentialRecoveryError,
+  recoverPayrollAllocation
+} from "../../../../../../../../../../server/solana/payroll-confidential-recovery";
 
 type RouteContext = {
   params: Promise<{
@@ -20,7 +18,8 @@ type RouteContext = {
 };
 
 const recoverySchema = z.object({
-  signature: z.string().min(32).max(128),
+  signature: z.string().min(32).max(128).nullable().optional(),
+  phase: z.enum(["proof_setup", "reserve_balance_apply", "recovery"]).nullable().optional(),
   reason: z.enum([
     "incorrect_allocation",
     "contributor_left_before_claim",
@@ -29,12 +28,6 @@ const recoverySchema = z.object({
   ]),
   note: z.string().trim().max(500).nullable().optional()
 }).strict();
-
-function reasonCommitment(reason: string, note: string | null): string {
-  return createHash("sha256")
-    .update(`paylore:recovery:v1:${JSON.stringify({ reason, note })}`)
-    .digest("hex");
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,58 +58,54 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (!parsed.success || (parsed.data.reason === "other" && !parsed.data.note?.trim())) {
       return NextResponse.json({ error: "invalid_recovery_request" }, { status: 400 });
     }
-    if (!session.session.walletAddress) {
-      return NextResponse.json({ error: "authenticated_wallet_required" }, { status: 403 });
-    }
 
-    const run = await getWorkspacePayrollRun(db, workspaceId, runId);
-    const allocation = run?.allocations.find((item) => item.id === allocationId);
-    if (!allocation || !allocation.claimAddress) {
-      return NextResponse.json({ error: "payroll_allocation_not_found" }, { status: 404 });
-    }
-    if (allocation.status !== "unclaimed") {
-      return NextResponse.json({ error: "payroll_allocation_not_recoverable" }, { status: 409 });
-    }
-
-    const note = parsed.data.reason === "other" ? parsed.data.note!.trim() : null;
-    const commitment = reasonCommitment(parsed.data.reason, note);
-    await verifyPayrollRecoveryTransaction({
-      signature: parsed.data.signature,
-      authorityAddress: session.session.walletAddress,
-      workspaceId,
-      contributorAddress: allocation.contributorWalletAddress,
-      claimId: allocation.claimId,
-      claimAddress: allocation.claimAddress,
-      allocationCommitment: run.run.allocationCommitment ?? "",
-      recoveryReasonCommitment: commitment
-    });
-
-    const result = await recordPayrollRecovery(db, {
+    const result = await recoverPayrollAllocation(db, {
       workspaceId,
       runId,
       allocationId,
       actorUserId: session.session.userId,
       reason: parsed.data.reason,
-      reasonNote: note,
-      signature: parsed.data.signature,
-      claimAddress: allocation.claimAddress
+      note: parsed.data.reason === "other" ? parsed.data.note!.trim() : null,
+      signature: parsed.data.signature ?? null,
+      phase: parsed.data.phase ?? null
     });
-    if (result.status === "not_found") {
-      return NextResponse.json({ error: "payroll_allocation_not_found" }, { status: 404 });
-    }
-    if (result.status === "conflict") {
-      return NextResponse.json({ error: "payroll_allocation_changed" }, { status: 409 });
-    }
-    return NextResponse.json({
-      status: result.status === "duplicate" ? "already_reconciled" : "recovered",
-      signature: parsed.data.signature,
-      valueTransferred: false
-    }, { headers: { "Cache-Control": "no-store" } });
+
+    const bodyForResult = {
+      status: result.status,
+      signature: result.signature ?? null,
+      phase: result.phase ?? null,
+      valueTransferred: result.status === "recovered" || result.status === "already_reconciled",
+      ...(result.status === "pending" ? {
+        message: "Recovery is being reconciled. Do not submit a second recovery."
+      } : {}),
+      ...(result.status === "retry_ready" ? {
+        message: "No recovery transfer was finalized. Review the status before retrying."
+      } : {}),
+      ...(result.warning ? { warning: result.warning } : {})
+    };
+    const statusCode = result.status === "pending" ? 202 :
+      result.status === "workspace_busy" ? 409 : 200;
+    return NextResponse.json(bodyForResult, {
+      status: statusCode,
+      headers: { "Cache-Control": "no-store" }
+    });
   } catch (error) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
+    if (error instanceof PayrollConfidentialRecoveryError) {
+      return NextResponse.json({
+        error: error.code,
+        retryable: error.statusCode === 503
+      }, {
+        status: error.statusCode,
+        headers: { "Cache-Control": "no-store" }
+      });
+    }
     console.error(JSON.stringify({ event: "payroll_recovery_submission_failed" }));
-    return NextResponse.json({ error: "payroll_recovery_submission_failed" }, { status: 503 });
+    return NextResponse.json(
+      { error: "payroll_recovery_submission_failed" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
   }
 }
