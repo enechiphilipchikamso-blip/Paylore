@@ -35,6 +35,7 @@ export type ExpectedPayrollClaim = {
   claimId: string;
   claimAddress: string;
   contributorAddress: string;
+  amountCommitment: string;
 };
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -231,7 +232,7 @@ export async function verifyPayrollClaimTransaction(input: {
       data.length >= 8 &&
       sameBytes(data.subarray(0, 8), createClaimDiscriminator)
     ) {
-      if (data.length !== 72 || instruction.accounts.length !== 5) {
+      if (data.length !== 104 || instruction.accounts.length !== 5) {
         throw new Error("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
@@ -243,7 +244,8 @@ export async function verifyPayrollClaimTransaction(input: {
         accounts[1] !== expected.contributorAddress ||
         accounts[2] !== workspace ||
         accounts[3] !== expected.derivedClaim ||
-        !sameBytes(data.subarray(40, 72), commitment)
+        !sameBytes(data.subarray(40, 72), commitment) ||
+        !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment))
       ) {
         throw new Error("The on-chain claim instruction does not match the approved payroll.");
       }
@@ -281,14 +283,15 @@ export async function verifyPayrollClaimTransaction(input: {
       account.owner !== programId ||
       account.executable ||
       !data ||
-      data.length !== 138 ||
+      data.length !== 170 ||
       !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
       !sameBytes(data.subarray(8, 40), workspaceBytes) ||
       !sameBytes(data.subarray(40, 72), contributorBytes) ||
       !sameBytes(data.subarray(72, 104), expected.claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
-      data[136] !== 0 ||
-      data[137] !== expected.claimBump
+      !sameBytes(data.subarray(136, 168), decodeHex32(expected.amountCommitment)) ||
+      data[168] !== 0 ||
+      data[169] !== expected.claimBump
     ) {
       throw new Error(
         "The finalized Claim PDA account does not match the expected workspace, contributor, allocation, commitment, and unclaimed state."
