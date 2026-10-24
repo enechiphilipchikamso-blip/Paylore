@@ -849,6 +849,7 @@ export async function settleContributorPayrollAllocation(
         }
         const atomic = boundPlan.plans[1];
         let attached = false;
+        assertConfidentialStepAllowed(sequence, "confidential_transfer");
         const result = await executePlan(rpc, signer, atomic, async (sig) => {
           submittedSignature = sig;
           try {
