@@ -112,6 +112,26 @@ describe("contributor import preview", () => {
     ).rejects.toThrow("invalid quoted field");
   });
 
+  it("blocks malformed Solana public keys and a payout wallet that differs from identity", async () => {
+    const malformed = await previewContributorFile(
+      "contributors.csv",
+      csv(["Ada,not-a-solana-public-key,not-a-solana-public-key"]),
+      new Set()
+    );
+    expect(malformed.validCount).toBe(0);
+    expect(malformed.rows[0]?.errors).toContain("Invalid Solana public key.");
+
+    const mismatch = await previewContributorFile(
+      "contributors.csv",
+      csv([`Grace,${identityWallet},TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`]),
+      new Set()
+    );
+    expect(mismatch.validCount).toBe(0);
+    expect(mismatch.rows[0]?.errors).toContain(
+      "The effective payout address must match the identity wallet."
+    );
+  });
+
   it("enforces the import row limit", async () => {
     const rows = Array.from(
       { length: 501 },
