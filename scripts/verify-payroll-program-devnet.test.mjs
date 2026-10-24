@@ -7,9 +7,10 @@ import {
 import {
   parseProgramAccount,
   parseProgramData,
-  verifyDeployedProgramBytecodeOnDevnet
+  PAYLORE_DEVNET_GENESIS_HASH,
+  verifyDeployedProgramBytecodeOnDevnet,
+  verifyPayrollProgramDevnet
 } from "./verify-payroll-program-devnet.mjs";
-import { PAYLORE_DEVNET_GENESIS_HASH } from "./verify-payroll-program-devnet.mjs";
 
 function encodeBase58(bytes) {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -249,5 +250,26 @@ test("refuses to inspect or compare program bytes when RPC genesis hash is not D
     /does not identify the approved Solana Devnet cluster/
   );
   assert.deepEqual(requests.map((request) => request.method), ["getGenesisHash"]);
+});
+
+test("rejects stale source/IDL parity before making any network request", async () => {
+  let requests = 0;
+  const fetchImpl = async () => {
+    requests++;
+    throw new Error("A mismatched local ABI must be rejected before network access.");
+  };
+
+  await assert.rejects(
+    verifyPayrollProgramDevnet({
+      rpcUrl: "https://rpc.devnet.example",
+      fetchImpl,
+      idl: { address: EXPECTED_PAYLORE_PROGRAM_ID, instructions: [] },
+      source: "",
+      anchorConfig: "",
+      artifactBytes: artifact
+    }),
+    /Payroll Program source declare_id/
+  );
+  assert.equal(requests, 0);
 });
 
