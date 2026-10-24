@@ -8,6 +8,7 @@ import {
   getConfidentialWithdrawInstructionPlan
 } from "@solana-program/token-2022/confidential";
 import { getConfidentialAccountClosureBlocker } from "./confidential-account-closure-policy";
+import { assertExactConfidentialWithdrawal } from "./confidential-operation-sequence";
 import { buildWrappedUsdcUnwrapPlan } from "./token-wrap-transaction";
 import {
   assertDevnetTokenWrapIdentity,
@@ -494,7 +495,17 @@ export async function withdrawConfidentialBalance(
   const elgamalKeypair = ElgamalKeypair.fromSecretKey(secretKey);
   const aeKey = AeKey.fromBytes(keys.aeKey);
   try {
+    if (amountBaseUnits <= 0n) {
+      throw new Error("Enter a positive amount to withdraw.");
+    }
     const { data: tokenAccount } = await fetchToken(rpc, token);
+    const confidentialBefore = await fetchConfidentialTransferBalance({
+      token, rpc, elgamalSecretKey: secretKey, aesKey: aeKey
+    });
+    if (confidentialBefore.availableBalance < amountBaseUnits) {
+      throw new Error("The available confidential balance is lower than the requested withdrawal. Apply pending funds first if needed.");
+    }
+    const publicBefore = await readFinalizedTokenAccountBalance(rpc, token);
     const plan = await getConfidentialWithdrawInstructionPlan({
       token,
       mint,
@@ -507,7 +518,31 @@ export async function withdrawConfidentialBalance(
       payer: createNoopSigner(owner),
       rpc
     });
-    return await executePlan(wallet, plan);
+    const signatures = await executePlan(wallet, plan);
+    const transactionSignature = signatures.at(-1);
+    if (!transactionSignature) {
+      throw new Error("The confidential withdrawal did not return a transaction signature.");
+    }
+    try {
+      const confidentialAfter = await fetchConfidentialTransferBalance({
+        token, rpc, elgamalSecretKey: secretKey, aesKey: aeKey
+      });
+      const publicAfter = await readFinalizedTokenAccountBalance(rpc, token);
+      assertExactConfidentialWithdrawal({
+        amountBaseUnits,
+        availableBefore: confidentialBefore.availableBalance,
+        availableAfter: confidentialAfter.availableBalance,
+        publicBefore,
+        publicAfter,
+        transactionSignature
+      });
+    } catch (error) {
+      throw new Error(
+        `The withdrawal transaction finalized, but the exact confidential debit and public-token credit could not be reconciled. Do not submit a duplicate withdrawal. Transaction: ${transactionSignature}`,
+        { cause: error }
+      );
+    }
+    return signatures;
   } finally {
     secretKey.free();
     elgamalKeypair.free();
