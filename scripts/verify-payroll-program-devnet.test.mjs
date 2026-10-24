@@ -6,8 +6,10 @@ import {
 } from "./audit-payroll-program-idl.mjs";
 import {
   parseProgramAccount,
-  parseProgramData
+  parseProgramData,
+  verifyDeployedProgramBytecodeOnDevnet
 } from "./verify-payroll-program-devnet.mjs";
+import { PAYLORE_DEVNET_GENESIS_HASH } from "./verify-payroll-program-devnet.mjs";
 
 function encodeBase58(bytes) {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -170,3 +172,82 @@ test("rejects a malformed upgrade-authority tag", () => {
     /upgrade-authority flag is malformed/
   );
 });
+
+test("verifies finalized Devnet program bytes through read-only RPC calls only", async () => {
+  const programAccount = account(
+    BPF_UPGRADEABLE_LOADER_ID,
+    true,
+    programAccountData(programDataAddress)
+  );
+  const programDataAccount = account(
+    BPF_UPGRADEABLE_LOADER_ID,
+    false,
+    programDataAccountData(artifact, authorityBytes)
+  );
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    const request = JSON.parse(init.body);
+    requests.push({ url, init, request });
+    let result;
+    if (request.method === "getGenesisHash") result = PAYLORE_DEVNET_GENESIS_HASH;
+    else if (request.method === "getAccountInfo" && request.params[0] === EXPECTED_PAYLORE_PROGRAM_ID) {
+      result = { context: { slot: 100 }, value: programAccount };
+    } else if (request.method === "getAccountInfo" && request.params[0] === programDataAddress) {
+      result = { context: { slot: 100 }, value: programDataAccount };
+    } else {
+      throw new Error("Unexpected non-read-only or unknown RPC method: " + request.method);
+    }
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  const result = await verifyDeployedProgramBytecodeOnDevnet({
+    rpcUrl: "https://rpc.devnet.example",
+    rpcHeaders: { "x-api-key": "test-public-provider-key" },
+    fetchImpl,
+    artifactBytes: artifact,
+    expectedUpgradeAuthority: upgradeAuthority
+  });
+
+  assert.equal(result.status, "devnet_program_bytecode_verified");
+  assert.equal(result.cluster, "devnet");
+  assert.equal(result.programId, EXPECTED_PAYLORE_PROGRAM_ID);
+  assert.equal(result.programDataAddress, programDataAddress);
+  assert.equal(result.deployedSlot, 123);
+  assert.deepEqual(requests.map((item) => item.request.method), [
+    "getGenesisHash", "getAccountInfo", "getAccountInfo"
+  ]);
+  assert.equal(requests[1].request.params[1].commitment, "finalized");
+  assert.equal(requests[2].request.params[1].commitment, "finalized");
+  assert.equal(requests[0].init.method, "POST");
+  assert.equal(requests[0].init.headers["x-api-key"], "test-public-provider-key");
+});
+
+test("refuses to inspect or compare program bytes when RPC genesis hash is not Devnet", async () => {
+  const requests = [];
+  const fetchImpl = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    requests.push(request);
+    return new Response(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  await assert.rejects(
+    verifyDeployedProgramBytecodeOnDevnet({
+      rpcUrl: "https://rpc.mainnet.example",
+      fetchImpl,
+      artifactBytes: artifact
+    }),
+    /does not identify the approved Solana Devnet cluster/
+  );
+  assert.deepEqual(requests.map((request) => request.method), ["getGenesisHash"]);
+});
+
