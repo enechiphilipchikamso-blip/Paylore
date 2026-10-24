@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspacePayrollRun: vi.fn(),
   getWorkspacePageContext: vi.fn(),
   loadPayloreConfig: vi.fn(),
+  getFinalizedPayrollClaimState: vi.fn(),
   recoveryProps: null as Record<string, unknown> | null
 }));
 
@@ -17,6 +18,9 @@ vi.mock("../../../../../../server/workspace-page-context", () => ({
 }));
 vi.mock("../../../../../../server/config", () => ({
   loadPayloreConfig: mocks.loadPayloreConfig
+}));
+vi.mock("../../../../../../server/solana/payroll-program-verification", () => ({
+  getFinalizedPayrollClaimState: mocks.getFinalizedPayrollClaimState
 }));
 vi.mock("../../../../../../components/workspace/PayrollRecoveryAction", () => ({
   PayrollRecoveryAction: (props: Record<string, unknown>) => {
@@ -45,6 +49,7 @@ const allocation = {
   contributorWalletAddress: "wallet-a",
   amountBaseUnits: "1250000",
   claimId: "01".repeat(32),
+  amountCommitment: "33".repeat(32),
   claimAddress: "claim-pda-a",
   status: "unclaimed",
   transactionSignature: "claim-creation-signature-a",
@@ -76,6 +81,7 @@ beforeEach(() => {
   mocks.loadPayloreConfig.mockReturnValue({
     PAYLORE_PAYROLL_PROGRAM_ID: "paylore-program"
   });
+  mocks.getFinalizedPayrollClaimState.mockResolvedValue("unclaimed");
 });
 
 describe("workspace payroll recovery detail", () => {
@@ -90,6 +96,16 @@ describe("workspace payroll recovery detail", () => {
     expect(html).toContain("1.25 wrapped USDC");
     expect(html).toContain("claim-pda-a");
     expect(html).toContain("claim-creation-signature-a");
+    expect(html).toContain("Finalized Claim PDA state");
+    expect(mocks.getFinalizedPayrollClaimState).toHaveBeenCalledWith({
+      authorityAddress: "admin-wallet",
+      workspaceId: "workspace-a",
+      contributorAddress: "wallet-a",
+      claimId: allocation.claimId,
+      claimAddress: "claim-pda-a",
+      allocationCommitment: payroll.run.allocationCommitment,
+      amountCommitment: allocation.amountCommitment
+    });
     expect(html).toContain("Financial recovery is unavailable");
     expect(html).toContain('href="/workspace/workspace-a/recovery"');
     expect(mocks.recoveryProps).toMatchObject({
@@ -106,6 +122,7 @@ describe("workspace payroll recovery detail", () => {
   });
 
   it("denies recovery action on a claimed entitlement", async () => {
+    mocks.getFinalizedPayrollClaimState.mockResolvedValue("claimed");
     mocks.getWorkspacePayrollRun.mockResolvedValue({
       ...payroll,
       allocations: [{ ...allocation, status: "claimed", settlementSignature: "settlement-a" }]
