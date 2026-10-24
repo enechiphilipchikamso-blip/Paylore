@@ -529,7 +529,8 @@ async function reconcileSettlement(
     rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
     reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
     contributor: input.contributor, destination: input.destination, mint: input.mint,
-    claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+    claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
+    amountCommitment: input.amountCommitment
   });
   if (!matchesExactConfidentialDebit({
     amountBaseUnits: input.amount,
@@ -694,7 +695,8 @@ export async function settleContributorPayrollAllocation(
         try {
           claimState = await readFinalizedClaimState({
             rpc, programId, workspace, contributor: input.contributorAddress, claim: allocation.claimAddress,
-            claimId: allocation.claimId, allocationCommitment: evidence.allocationCommitment
+            claimId: allocation.claimId, allocationCommitment: evidence.allocationCommitment,
+            amountCommitment: allocation.amountCommitment!
           });
         } catch {
           return { status: "pending" };
