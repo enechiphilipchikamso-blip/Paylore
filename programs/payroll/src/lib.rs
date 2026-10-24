@@ -633,6 +633,17 @@ mod tests {
         assert!(transition_claim_to_recovered(&mut claim).is_err());
         assert!(transition_claim_to_claimed(&mut claim).is_err());
 
+        let mut untouched = ClaimState {
+            workspace: Pubkey::new_unique(),
+            contributor: Pubkey::new_unique(),
+            claim_id: [5; 32],
+            allocation_commitment: [6; 32],
+            status: ClaimStatus::Unclaimed,
+            bump: 0,
+        };
+        assert!(transition_claim_to_claimed(&mut untouched).is_err());
+        assert_eq!(untouched.status, ClaimStatus::Unclaimed);
+
         let mut recoverable = ClaimState {
             workspace: Pubkey::new_unique(),
             contributor: Pubkey::new_unique(),
