@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
-import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
+
 import {
   applyConfidentialPendingBalance,
   closeConfidentialAccount,
@@ -37,6 +37,7 @@ type PayrollAllocation = {
   transactionSignature: string | null;
   claimedAt: string | null;
   recoveredAt: string | null;
+  settlementSignature: string | null;
 };
 
 function formatUsdc(baseUnits: bigint): string {
@@ -201,21 +202,55 @@ export function ContributorCompensation({
 
   async function runClaimAndCashOut() {
     if (busy) return;
-    const outcome = await ensureClaimAndCashOutAccount({
-      accountReady: currentAccount?.status === "ready",
-      setupAccount: runSetup
-    });
-    if (outcome === "account_setup_completed") {
-      setMessage({
-        state: "partial",
-        text: "Confidential account ready. Claim settlement is not available yet, so this action has not transferred USDC."
-      });
-    } else if (outcome === "settlement_unavailable") {
-      setMessage({
-        state: "partial",
-        text: "Claim settlement and cash-out are not available yet. No funds were transferred."
-      });
+    if (!currentAccount || currentAccount.status !== "ready") {
+      const ready = await runSetup();
+      if (!ready) return;
+      const accountResponse = await fetch(
+        `/api/workspaces/${workspaceId}/contributors/me/confidential-account`,
+        { credentials: "same-origin", cache: "no-store" }
+      );
+      const accountResult = await accountResponse.json();
+      if (!accountResponse.ok || !accountResult.account || accountResult.account.status !== "ready") {
+        setMessage({ state: "error", text: "The confidential account is not verified as ready. No payroll transfer was attempted." });
+        return;
+      }
+      setCurrentAccount(accountResult.account as NonNullable<AccountState>);
     }
+    const eligible = allocations.filter((allocation) => allocation.status === "unclaimed" || allocation.status === "settlement_pending");
+    if (eligible.length === 0) {
+      setMessage({ state: "partial", text: "There are no unsettled payroll allocations available for this wallet." });
+      return;
+    }
+    setBusy(true);
+    setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
+    let settled = 0;
+    let pending = 0;
+    let failed = 0;
+    let cleanupPending = 0;
+    try {
+      for (const allocation of eligible) {
+        if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
+        try {
+          const response = await fetch(
+            `/api/workspaces/${workspaceId}/payroll/runs/${allocation.runId}/allocations/${allocation.id}/claim`,
+            { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" } }
+          );
+          const result = await response.json();
+          if (!response.ok) { failed++; continue; }
+          if (result.status === "claimed" || result.status === "already_settled") {
+            settled++;
+            if (result.warning === "proof_context_cleanup_pending") cleanupPending++;
+          } else if (result.status === "workspace_busy") { pending++; break; }
+          else if (result.status === "pending" || result.status === "retry_ready") pending++;
+          else failed++;
+        } catch { pending++; }
+      }
+      router.refresh();
+      try { await refreshConfidentialBalance(); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
+      if (failed) setMessage({ state: settled ? "partial" : "error", text: `${settled} allocation(s) settled; ${failed} need attention. Unverified transfers are not shown as complete.` });
+      else if (pending || cleanupPending) setMessage({ state: "partial", text: `${settled} allocation(s) settled; ${pending} await finality or retry, and ${cleanupPending} need proof-context cleanup.` });
+      else setMessage({ state: "success", text: `${settled} confidential payroll allocation(s) transferred and reconciled. Apply pending credits before withdrawing; public cash-out is a separate action.` });
+    } finally { setBusy(false); }
   }
 
   async function runBalanceAction(
@@ -278,12 +313,13 @@ export function ContributorCompensation({
           setMessage(null);
           return;
         }
+        await verifyWrappedUsdcUnwrapCompatibility(wallet, mint, circleMint, tokenWrapProgramId, amount);
+        if (!window.confirm(`Read-only simulation succeeded for the exact unwrap transaction. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle Devnet USDC? The amount and transaction are public on Solana.`)) {
+          setMessage(null);
+          return;
+        }
         const result = await unwrapWrappedUsdcToCircleUsdc(
-          wallet,
-          mint,
-          circleMint,
-          tokenWrapProgramId,
-          amount
+          wallet, mint, circleMint, tokenWrapProgramId, amount
         );
         await refreshConfidentialBalance();
         setMessage({
@@ -440,10 +476,10 @@ export function ContributorCompensation({
               onClick={() => void runClaimAndCashOut()}
               type="button"
             >
-              {busy ? "Preparing confidential account…" : "Claim & Cash Out"}
+              {busy ? "Settling confidential payroll…" : "Claim & Cash Out"}
             </button>
             <p className="notice">
-              When no confidential account is ready, this action starts company-sponsored setup with your wallet as owner. Claim settlement is not available yet; this button will not transfer USDC.
+              This action starts company-sponsored setup if needed, then settles eligible payroll allocations. Completion is shown only after finalized transfer and reserve reconciliation.
             </p>
           </div>
         ) : null}
@@ -452,10 +488,7 @@ export function ContributorCompensation({
         ) : (
           <>
             <p className="notice">
-              A recorded Claim PDA is an entitlement record, not a USDC
-              transfer. The Claim & Cash Out entry point can prepare your
-              contributor-owned confidential account; settlement is a separate
-              operation and no payment is recorded here.
+              An unclaimed Claim PDA is an entitlement, not a payment. A claim is complete only after atomic confidential transfer, finalized Claim-PDA state, and reserve-balance reconciliation.
             </p>
             <div className="table-scroll">
               <table>
@@ -478,10 +511,12 @@ export function ContributorCompensation({
                       <td>{formatUsdc(BigInt(allocation.amountBaseUnits))} wrapped USDC</td>
                       <td>
                         {allocation.status === "claimed"
-                          ? `Claim PDA marked claimed — token transfer not verified${allocation.claimedAt ? ` on ${new Date(allocation.claimedAt).toLocaleString()}` : ""}`
+                          ? `Settled${allocation.claimedAt ? ` on ${new Date(allocation.claimedAt).toLocaleString()}` : ""}${allocation.settlementSignature ? ` — ${allocation.settlementSignature}` : ""}`
                           : allocation.status === "recovered"
-                            ? `Claim PDA marked recovered — reserve restoration not verified${allocation.recoveredAt ? ` on ${new Date(allocation.recoveredAt).toLocaleString()}` : ""}`
-                            : "Unclaimed — no transfer recorded"}
+                            ? `Recovered${allocation.recoveredAt ? ` on ${new Date(allocation.recoveredAt).toLocaleString()}` : ""}`
+                            : allocation.status === "settlement_pending"
+                              ? `Settlement pending${allocation.settlementSignature ? ` — ${allocation.settlementSignature}` : ""}`
+                              : "Unclaimed — no transfer recorded"}
                       </td>
                       <td>
                         {allocation.claimAddress ? (

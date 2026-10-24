@@ -101,7 +101,8 @@ async function deriveWalletKeys(wallet: Wallet) {
 async function executePlan(
   wallet: Wallet,
   plan: InstructionPlan,
-  sponsorship?: { feePayerAddress: string; relayUrl: string }
+  sponsorship?: { feePayerAddress: string; relayUrl: string },
+  simulation?: { only: boolean }
 ): Promise<string[]> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const owner = address(wallet.account.address);
@@ -149,6 +150,13 @@ async function executePlan(
       const transaction = Uint8Array.from(atob(encoded), (character) =>
         character.charCodeAt(0)
       );
+      if (simulation) {
+        const result = await rpc.simulateTransaction(encoded, {
+          encoding: "base64", commitment: "confirmed", sigVerify: false, replaceRecentBlockhash: true
+        }).send();
+        if (result.value.err !== null) throw new Error("The configured Token Wrap program failed read-only simulation. No transaction was submitted.");
+        if (simulation.only) return { signature: signature(new Uint8Array(64)) };
+      }
       if (sponsorship) {
         if (!wallet.signTransaction) {
           throw new Error(
@@ -502,6 +510,20 @@ export async function withdrawConfidentialBalance(
   }
 }
 
+export async function verifyWrappedUsdcUnwrapCompatibility(
+  wallet: Wallet, wrappedMintAddress: string, unwrappedMintAddress: string,
+  tokenWrapProgramAddress: string, amountBaseUnits: bigint
+): Promise<void> {
+  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const program = await fetchEncodedAccount(rpc, address(tokenWrapProgramAddress));
+  if (!program.exists || program.executable !== true) throw new Error("The configured Token Wrap program is not executable on Devnet.");
+  const owner = address(wallet.account.address);
+  const built = await buildWrappedUsdcUnwrapPlan({ ownerAddress: owner, wrappedMintAddress, unwrappedMintAddress, tokenWrapProgramAddress, amount: amountBaseUnits });
+  const source = (await fetchToken(rpc, address(built.sourceTokenAccount))).data;
+  if (source.owner !== owner || source.mint !== address(wrappedMintAddress) || source.amount < amountBaseUnits) throw new Error("The public wrapped-USDC source account or balance is invalid.");
+  await executePlan(wallet, built.plan, undefined, { only: true });
+}
+
 export async function unwrapWrappedUsdcToCircleUsdc(
   wallet: Wallet,
   wrappedMintAddress: string,
@@ -544,7 +566,7 @@ export async function unwrapWrappedUsdcToCircleUsdc(
         .amount
     : 0n;
 
-  const signatures = await executePlan(wallet, built.plan);
+  const signatures = await executePlan(wallet, built.plan, undefined, { only: false });
   const signature = signatures.at(-1);
   if (!signature) {
     throw new Error("The Token Wrap transaction did not return a signature.");
