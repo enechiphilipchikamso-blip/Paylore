@@ -94,11 +94,33 @@ pub mod paylore_payroll {
         Ok(())
     }
 
-    pub fn mark_claimed(_ctx: Context<MarkClaimed>) -> Result<()> {
-        // A transfer's ciphertext proof does not yet bind its hidden amount to
-        // this allocation's stored commitment. Failing closed prevents a tiny
-        // unrelated transfer from consuming a larger payroll entitlement.
-        err!(PayrollError::SettlementAmountBindingUnavailable)
+    pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
+            &ctx.accounts.destination_token_account.to_account_info(),
+            ctx.accounts.contributor.key(),
+            ctx.accounts.mint.key(),
+        )?;
+
+        // Token-2022 encrypts the transfer amount. The reserve signer is the
+        // trusted amount authority: the server must derive the exact amount
+        // from the locked allocation row before building the proof plan. This
+        // same-transaction check prevents an unrelated transfer from consuming
+        // the entitlement and makes transfer plus state change atomic.
+        require!(
+            has_matching_confidential_transfer(
+                &ctx.accounts.instructions_sysvar.to_account_info(),
+                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.mint.key(),
+                ctx.accounts.destination_token_account.key(),
+            )?,
+            PayrollError::SettlementTransferMissing
+        );
+        transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
 
     pub fn recover_claim(
@@ -133,6 +155,41 @@ fn transition_claim_to_recovered(claim: &mut ClaimState) -> Result<()> {
     );
     claim.status = ClaimStatus::Recovered;
     Ok(())
+}
+
+fn has_matching_confidential_transfer(
+    instructions_sysvar: &AccountInfo,
+    source: Pubkey,
+    mint: Pubkey,
+    destination: Pubkey,
+) -> Result<bool> {
+    let current_index = load_current_index_checked(instructions_sysvar)?;
+    for index in 0..current_index {
+        let instruction = load_instruction_at_checked(index as usize, instructions_sysvar)?;
+        if is_matching_confidential_transfer_instruction(
+            &instruction,
+            source,
+            mint,
+            destination,
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_matching_confidential_transfer_instruction(
+    instruction: &Instruction,
+    source: Pubkey,
+    mint: Pubkey,
+    destination: Pubkey,
+) -> bool {
+    instruction.program_id == TOKEN_2022_PROGRAM_ID
+        && instruction.data.get(0..2) == Some(&[27u8, 7u8][..])
+        && instruction.accounts.len() >= 3
+        && instruction.accounts[0].pubkey == source
+        && instruction.accounts[1].pubkey == mint
+        && instruction.accounts[2].pubkey == destination
 }
 
 fn validate_token_account_identity(
@@ -259,8 +316,8 @@ pub struct CreateClaim<'info> {
 
 #[derive(Accounts)]
 pub struct ConfigureWorkspaceReserve<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
+    /// CHECK: The stored workspace authority binds the PDA; reserve custody authorizes configuration.
+    pub authority: UncheckedAccount<'info>,
     #[account(
         has_one = authority,
         seeds = [
@@ -273,15 +330,15 @@ pub struct ConfigureWorkspaceReserve<'info> {
     pub workspace: Account<'info, WorkspaceState>,
     #[account(
         init_if_needed,
-        payer = authority,
+        payer = reserve_authority,
         space = WorkspaceReserveState::SPACE,
         seeds = [b"reserve", workspace.key().as_ref()],
         bump
     )]
     pub reserve_state: Account<'info, WorkspaceReserveState>,
-    /// CHECK: The reserve key is persisted in this state; the key must own the
-    /// registered Token-2022 account and sign every settlement transfer.
-    pub reserve_authority: UncheckedAccount<'info>,
+    /// The reserve signer authorizes custody and funds the reserve-state PDA.
+    #[account(mut)]
+    pub reserve_authority: Signer<'info>,
     /// CHECK: The identity and token-account header are checked before storing.
     pub reserve_token_account: UncheckedAccount<'info>,
     /// CHECK: The mint is validated against the Token-2022 program owner.
@@ -431,6 +488,8 @@ pub enum PayrollError {
     ReserveConfigurationConflict,
     #[msg("Confidential settlement cannot yet prove the transferred amount matches this allocation.")]
     SettlementAmountBindingUnavailable,
+    #[msg("A matching confidential transfer must precede the claim transition in this transaction.")]
+    SettlementTransferMissing,
 }
 
 #[cfg(test)]
@@ -457,6 +516,49 @@ mod tests {
 
         assert_eq!(first, same);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn confidential_settlement_requires_the_exact_token_2022_transfer_accounts() {
+        let source = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+
+        let transfer = Instruction {
+            program_id: TOKEN_2022_PROGRAM_ID,
+            accounts: vec![
+                anchor_lang::solana_program::instruction::AccountMeta::new(source, false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(mint, false),
+                anchor_lang::solana_program::instruction::AccountMeta::new(destination, false),
+            ],
+            data: vec![27, 7],
+        };
+        assert!(is_matching_confidential_transfer_instruction(
+            &transfer, source, mint, destination
+        ));
+        assert!(!is_matching_confidential_transfer_instruction(
+            &transfer, source, mint, other
+        ));
+        assert!(!is_matching_confidential_transfer_instruction(
+            &transfer, source, other, destination
+        ));
+
+        let unrelated_instruction = Instruction {
+            data: vec![27, 6],
+            ..transfer.clone()
+        };
+        assert!(!is_matching_confidential_transfer_instruction(
+            &unrelated_instruction, source, mint, destination
+        ));
+
+        let unrelated_program = Instruction {
+            program_id: Pubkey::new_unique(),
+            ..transfer
+        };
+        assert!(!is_matching_confidential_transfer_instruction(
+            &unrelated_program, source, mint, destination
+        ));
     }
 
     #[test]
