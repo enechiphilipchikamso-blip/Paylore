@@ -119,7 +119,7 @@ export function assertSponsoredClaimIntent(input: {
     hex32(claim.claimId);
     hex32(claim.amountCommitment);
     encodeU32(claim.amountCommitmentLeafIndex);
-    if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 32) {
+    if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 16) {
       throw new GasTankSponsorshipPolicyError("allocation_proof_depth_invalid");
     }
     claim.amountCommitmentProof.forEach((sibling) => hex32(sibling));
