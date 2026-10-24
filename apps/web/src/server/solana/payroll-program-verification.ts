@@ -36,6 +36,8 @@ export type ExpectedPayrollClaim = {
   claimAddress: string;
   contributorAddress: string;
   amountCommitment: string;
+  amountCommitmentProof: string[];
+  amountCommitmentLeafIndex: number;
 };
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -232,7 +234,7 @@ export async function verifyPayrollClaimTransaction(input: {
       data.length >= 8 &&
       sameBytes(data.subarray(0, 8), createClaimDiscriminator)
     ) {
-      if (data.length !== 104 || instruction.accounts.length !== 5) {
+      if (data.length < 112 || instruction.accounts.length !== 5) {
         throw new Error("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
@@ -245,7 +247,16 @@ export async function verifyPayrollClaimTransaction(input: {
         accounts[2] !== workspace ||
         accounts[3] !== expected.derivedClaim ||
         !sameBytes(data.subarray(40, 72), commitment) ||
-        !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment))
+        !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment)) ||
+        !Number.isSafeInteger(expected.amountCommitmentLeafIndex) ||
+        expected.amountCommitmentLeafIndex < 0 ||
+        expected.amountCommitmentProof.length > 32 ||
+        new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(104, true) !== expected.amountCommitmentLeafIndex ||
+        new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(108, true) !== expected.amountCommitmentProof.length ||
+        data.length !== 112 + expected.amountCommitmentProof.length * 32 ||
+        expected.amountCommitmentProof.some((sibling, index) =>
+          !sameBytes(data.subarray(112 + index * 32, 144 + index * 32), decodeHex32(sibling))
+        )
       ) {
         throw new Error("The on-chain claim instruction does not match the approved payroll.");
       }
