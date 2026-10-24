@@ -171,6 +171,19 @@ describe("subscription payment attempt reconciliation route", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({ error: "payment_could_not_be_verified" });
     expect(mocks.applyVerifiedSubscriptionPayment).not.toHaveBeenCalled();
+    expect(mocks.updateSubscriptionPaymentAttemptStatus).toHaveBeenCalledWith(mocks.db, {
+      attemptId: ATTEMPT_ID,
+      status: "failed",
+      signature: SIGNATURE
+    });
+  });
+
+  it("leaves a payment attempt reconcilable when verification configuration is unavailable", async () => {
+    mocks.verifySubscriptionPayment.mockRejectedValueOnce(new PaymentVerificationError("configuration"));
+    const response = await POST(request({ attemptId: ATTEMPT_ID, signature: SIGNATURE }), context);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "payment_configuration_incomplete" });
+    expect(mocks.applyVerifiedSubscriptionPayment).not.toHaveBeenCalled();
     expect(mocks.updateSubscriptionPaymentAttemptStatus).not.toHaveBeenCalled();
   });
 
