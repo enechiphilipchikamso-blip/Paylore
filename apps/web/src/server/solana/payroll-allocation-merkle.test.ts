@@ -22,6 +22,10 @@ describe("payroll allocation Merkle commitment", () => {
   it.each([1, 2, 3, 4, 5, 9])("proves every claim belongs to the root for %i allocations", (count) => {
     const rows = inputs(count);
     const tree = buildPayrollAllocationMerkleTree(rows);
+    if (count === 2) {
+      expect(tree.allocationCommitment)
+        .toBe("f8b952171655ee41066162805526421433697d65ecf3782ed054e9da367136ac");
+    }
     expect(tree.proofs).toHaveLength(count);
     for (const proof of tree.proofs) {
       const row = rows.find((item) => item.claimId === proof.claimId)!;
