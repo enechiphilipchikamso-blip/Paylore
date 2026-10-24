@@ -929,6 +929,8 @@ export const payrollAllocations =
       claimAddress: text("claim_address"),
       status: text("status").notNull().default("unclaimed"),
       transactionSignature: text("transaction_signature"),
+      settlementSignature: text("settlement_signature"),
+      settlementSourceAvailableBefore: text("settlement_source_available_before"),
       claimedAt: timestamp("claimed_at", { withTimezone: true }),
       recoveredAt: timestamp("recovered_at", { withTimezone: true }),
       createdAt: timestamp("created_at", { withTimezone: true })

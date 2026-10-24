@@ -3605,6 +3605,8 @@ export async function getWorkspacePayrollRun(
       claimAddress: payrollAllocations.claimAddress,
       status: payrollAllocations.status,
       transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
+      settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore,
       claimedAt: payrollAllocations.claimedAt,
       recoveredAt: payrollAllocations.recoveredAt,
       createdAt: payrollAllocations.createdAt,
@@ -3643,6 +3645,7 @@ export async function listContributorPayrollAllocations(
       status: payrollAllocations.status,
       claimAddress: payrollAllocations.claimAddress,
       transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
       claimedAt: payrollAllocations.claimedAt,
       recoveredAt: payrollAllocations.recoveredAt
     })
@@ -4008,6 +4011,296 @@ export async function recordPayrollClaimSubmission(
       status: complete ? ("committed" as const) : ("submitting" as const),
       submittedCount: rows.length,
       totalCount: allAllocations.length
+    };
+  });
+}
+
+
+export async function beginPayrollSettlementAttempt(
+  db: Database,
+  input: {
+    workspaceId: string; runId: string; allocationId: string; claimAddress: string;
+    claimCreationSignature: string; sourceAvailableBefore: string; now?: Date;
+  }
+) {
+  if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore)) {
+    throw new Error("The reserve's available confidential balance is invalid.");
+  }
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      id: payrollAllocations.id, claimAddress: payrollAllocations.claimAddress,
+      status: payrollAllocations.status, transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
+      settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId)
+    )).for("update").limit(1);
+    const allocation = rows[0];
+    if (!allocation) return { status: "not_found" as const };
+    if (
+      allocation.status === "settlement_pending" &&
+      allocation.claimAddress === input.claimAddress &&
+      allocation.transactionSignature === input.claimCreationSignature &&
+      allocation.settlementSourceAvailableBefore === input.sourceAvailableBefore
+    ) return { status: "pending" as const, signature: allocation.settlementSignature };
+    if (
+      allocation.status !== "unclaimed" || allocation.claimAddress !== input.claimAddress ||
+      allocation.transactionSignature !== input.claimCreationSignature ||
+      allocation.settlementSignature !== null
+    ) return { status: "conflict" as const };
+    const updated = await tx.update(payrollAllocations).set({
+      status: "settlement_pending", settlementSignature: null,
+      settlementSourceAvailableBefore: input.sourceAvailableBefore, updatedAt: now
+    }).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.status, "unclaimed"),
+      eq(payrollAllocations.claimAddress, input.claimAddress),
+      eq(payrollAllocations.transactionSignature, input.claimCreationSignature)
+    )).returning({ id: payrollAllocations.id });
+    return updated[0] ? { status: "started" as const } : { status: "conflict" as const };
+  });
+}
+
+export async function attachPayrollSettlementSignature(
+  db: Database,
+  input: {
+    workspaceId: string; runId: string; allocationId: string; claimAddress: string;
+    claimCreationSignature: string; settlementSignature: string; sourceAvailableBefore: string;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      id: payrollAllocations.id, status: payrollAllocations.status,
+      claimAddress: payrollAllocations.claimAddress,
+      transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
+      settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      eq(payrollAllocations.id, input.allocationId)
+    )).for("update").limit(1);
+    const allocation = rows[0];
+    if (!allocation) return { status: "not_found" as const };
+    if (
+      allocation.status === "settlement_pending" &&
+      allocation.claimAddress === input.claimAddress &&
+      allocation.transactionSignature === input.claimCreationSignature &&
+      allocation.settlementSourceAvailableBefore === input.sourceAvailableBefore &&
+      allocation.settlementSignature === input.settlementSignature
+    ) return { status: "duplicate" as const };
+    if (
+      allocation.status !== "settlement_pending" ||
+      allocation.claimAddress !== input.claimAddress ||
+      allocation.transactionSignature !== input.claimCreationSignature ||
+      allocation.settlementSourceAvailableBefore !== input.sourceAvailableBefore ||
+      allocation.settlementSignature !== null
+    ) return { status: "conflict" as const };
+    const updated = await tx.update(payrollAllocations).set({
+      settlementSignature: input.settlementSignature, updatedAt: now
+    }).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.status, "settlement_pending"),
+      isNull(payrollAllocations.settlementSignature)
+    )).returning({ id: payrollAllocations.id });
+    return updated[0] ? { status: "attached" as const } : { status: "conflict" as const };
+  });
+}
+
+export async function releaseUnsubmittedPayrollSettlementAttempt(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; now?: Date }
+) {
+  const rows = await db.update(payrollAllocations).set({
+    status: "unclaimed", settlementSignature: null,
+    settlementSourceAvailableBefore: null, updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.runId),
+    eq(payrollAllocations.status, "settlement_pending"),
+    isNull(payrollAllocations.settlementSignature)
+  )).returning({ id: payrollAllocations.id });
+  return Boolean(rows[0]);
+}
+
+export async function getPayrollClaimCreationEvidence(
+  db: Database,
+  input: { workspaceId: string; runId: string; claimId: string; claimAddress: string }
+) {
+  const rows = await db.select({
+    transactionSignature: workspaceLedgerEntries.transactionSignature,
+    metadata: workspaceLedgerEntries.metadata,
+    createdAt: workspaceLedgerEntries.createdAt
+  }).from(workspaceLedgerEntries).where(and(
+    eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+    eq(workspaceLedgerEntries.entryType, "claim_commitment"),
+    eq(workspaceLedgerEntries.referenceType, "payroll_run"),
+    eq(workspaceLedgerEntries.referenceId, input.runId),
+    eq(workspaceLedgerEntries.status, "finalized")
+  )).orderBy(desc(workspaceLedgerEntries.createdAt)).limit(100);
+  for (const row of rows) {
+    const metadata = row.metadata !== null && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? row.metadata as Record<string, unknown> : null;
+    if (!metadata || typeof row.transactionSignature !== "string") continue;
+    const claims = Array.isArray(metadata.claims) ? metadata.claims : [];
+    const match = claims.some((claim) => claim !== null && typeof claim === "object" &&
+      !Array.isArray(claim) &&
+      (claim as Record<string, unknown>).claimId === input.claimId &&
+      (claim as Record<string, unknown>).claimAddress === input.claimAddress);
+    if (!match) continue;
+    if (
+      typeof metadata.programId !== "string" ||
+      typeof metadata.authorityAddress !== "string" ||
+      typeof metadata.allocationCommitment !== "string"
+    ) throw new Error("The payroll Claim PDA creation evidence is incomplete.");
+    return {
+      transactionSignature: row.transactionSignature,
+      programId: metadata.programId,
+      authorityAddress: metadata.authorityAddress,
+      allocationCommitment: metadata.allocationCommitment
+    };
+  }
+  return null;
+}
+
+/** Records settlement only after a finalized transfer and the reserve's decrypted balance delta agree. */
+export async function recordVerifiedPayrollClaimSettlement(
+  db: Database,
+  input: {
+    workspaceId: string; runId: string; allocationId: string; contributorUserId: string;
+    claimAddress: string; claimCreationSignature: string; settlementSignature: string;
+    sourceTokenAccount: string; destinationTokenAccount: string; mint: string;
+    programId: string; authorityAddress: string; sourceAvailableBefore: string;
+    sourceAvailableAfter: string; now?: Date;
+  }
+) {
+  if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore) ||
+      !/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableAfter)) {
+    throw new Error("The verified reserve balance evidence is invalid.");
+  }
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      id: payrollAllocations.id, amountBaseUnits: payrollAllocations.amountBaseUnits,
+      claimId: payrollAllocations.claimId, claimAddress: payrollAllocations.claimAddress,
+      status: payrollAllocations.status, transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
+      settlementSourceAvailableBefore: payrollAllocations.settlementSourceAvailableBefore
+    }).from(payrollAllocations).innerJoin(
+      contributors, and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    ).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId)
+    )).for("update").limit(1);
+    const allocation = rows[0];
+    if (!allocation) return { status: "not_found" as const };
+    if (allocation.status === "claimed" && allocation.settlementSignature === input.settlementSignature) {
+      return { status: "duplicate" as const };
+    }
+    if (
+      (allocation.status !== "settlement_pending" && allocation.status !== "unclaimed") ||
+      allocation.claimAddress !== input.claimAddress ||
+      allocation.transactionSignature !== input.claimCreationSignature ||
+      (allocation.settlementSignature !== null && allocation.settlementSignature !== input.settlementSignature) ||
+      (allocation.settlementSourceAvailableBefore !== null &&
+        allocation.settlementSourceAvailableBefore !== input.sourceAvailableBefore)
+    ) return { status: "conflict" as const };
+    const amount = BigInt(allocation.amountBaseUnits);
+    const before = BigInt(input.sourceAvailableBefore);
+    const after = BigInt(input.sourceAvailableAfter);
+    if (before < after || before - after !== amount) return { status: "balance_mismatch" as const };
+
+    const updated = await tx.update(payrollAllocations).set({
+      status: "claimed", settlementSignature: input.settlementSignature,
+      settlementSourceAvailableBefore: input.sourceAvailableBefore,
+      claimedAt: now, updatedAt: now
+    }).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId),
+      inArray(payrollAllocations.status, ["unclaimed", "settlement_pending"]),
+      eq(payrollAllocations.claimAddress, input.claimAddress),
+      eq(payrollAllocations.transactionSignature, input.claimCreationSignature)
+    )).returning({ id: payrollAllocations.id });
+    if (!updated[0]) return { status: "conflict" as const };
+
+    const ledgerKey = `payroll-settlement:${input.allocationId}`;
+    const ledger = await tx.insert(workspaceLedgerEntries).values({
+      workspaceId: input.workspaceId, idempotencyKey: ledgerKey,
+      category: "payroll", entryType: "confidential_claim_settlement", status: "finalized",
+      amountBaseUnits: allocation.amountBaseUnits, mint: input.mint,
+      referenceType: "payroll_allocation", referenceId: input.allocationId,
+      transactionSignature: input.settlementSignature,
+      metadata: {
+        runId: input.runId, claimId: allocation.claimId, claimAddress: input.claimAddress,
+        claimCreationSignature: input.claimCreationSignature, programId: input.programId,
+        authorityAddress: input.authorityAddress, sourceTokenAccount: input.sourceTokenAccount,
+        destinationTokenAccount: input.destinationTokenAccount, balanceDeltaVerified: true,
+        valueTransferred: true, sourceOfTruth: "finalized_solana_rpc_and_owner_decrypted_balance"
+      }, createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    }).returning({ id: workspaceLedgerEntries.id });
+    if (!ledger[0]) {
+      const prior = await tx.select({ transactionSignature: workspaceLedgerEntries.transactionSignature })
+        .from(workspaceLedgerEntries).where(and(
+          eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+          eq(workspaceLedgerEntries.idempotencyKey, ledgerKey)
+        )).limit(1);
+      if (prior[0]?.transactionSignature !== input.settlementSignature) {
+        throw new Error("The payroll settlement ledger entry conflicts with finalized evidence.");
+      }
+    }
+    await tx.insert(workspaceNotifications).values([{
+      workspaceId: input.workspaceId, recipientKey: input.contributorUserId,
+      eventKey: ledgerKey, category: "Payroll & Claims",
+      title: "Confidential payroll claim settled",
+      body: `Your confidential payroll allocation was transferred to your confidential account. Finalized transaction: ${input.settlementSignature}`,
+      destination: `/workspace/${input.workspaceId}/compensation`, createdAt: now
+    }]).onConflictDoNothing({
+      target: [workspaceNotifications.workspaceId, workspaceNotifications.eventKey, workspaceNotifications.recipientKey]
+    });
+    const financeMembers = await tx.select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships).where(and(
+        eq(workspaceMemberships.workspaceId, input.workspaceId),
+        or(eq(workspaceMemberships.role, "organization_admin"), eq(workspaceMemberships.role, "finance_auditor"))
+      ));
+    if (financeMembers.length > 0) {
+      await tx.insert(workspaceNotifications).values(financeMembers.map((member) => ({
+        workspaceId: input.workspaceId, recipientKey: member.userId, eventKey: ledgerKey,
+        category: "Payroll & Claims", title: "Confidential payroll settlement finalized",
+        body: "A confidential payroll transfer and Claim PDA transition were verified at finality and reconciled to the reserve balance.",
+        destination: `/workspace/${input.workspaceId}/ledger`, createdAt: now
+      }))).onConflictDoNothing({
+        target: [workspaceNotifications.workspaceId, workspaceNotifications.eventKey, workspaceNotifications.recipientKey]
+      });
+    }
+    const outstanding = await tx.select({ id: payrollAllocations.id }).from(payrollAllocations)
+      .where(and(
+        eq(payrollAllocations.workspaceId, input.workspaceId),
+        eq(payrollAllocations.payrollRunId, input.runId),
+        notInArray(payrollAllocations.status, ["claimed", "recovered", "cancelled"])
+      )).limit(1);
+    if (!outstanding[0]) {
+      await tx.update(payrollRuns).set({ status: "complete", finalizedAt: now, updatedAt: now })
+        .where(and(eq(payrollRuns.workspaceId, input.workspaceId), eq(payrollRuns.id, input.runId)));
+    }
+    return {
+      status: "claimed" as const, allocationId: input.allocationId,
+      amountBaseUnits: allocation.amountBaseUnits, settlementSignature: input.settlementSignature
     };
   });
 }
