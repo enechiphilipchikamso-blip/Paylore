@@ -227,6 +227,7 @@ export function ContributorCompensation({
     let pending = 0;
     let failed = 0;
     let cleanupPending = 0;
+    let stateConflict = false;
     try {
       for (const allocation of eligible) {
         if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
@@ -241,13 +242,15 @@ export function ContributorCompensation({
             settled++;
             if (result.warning === "proof_context_cleanup_pending") cleanupPending++;
           } else if (result.status === "workspace_busy") { pending++; break; }
+          else if (result.status === "state_conflict") { stateConflict = true; break; }
           else if (result.status === "pending" || result.status === "retry_ready") pending++;
           else failed++;
         } catch { pending++; }
       }
       router.refresh();
       try { await refreshConfidentialBalance(); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
-      if (failed) setMessage({ state: settled ? "partial" : "error", text: `${settled} allocation(s) settled; ${failed} need attention. Unverified transfers are not shown as complete.` });
+      if (stateConflict) setMessage({ state: settled ? "partial" : "error", text: "The finalized Claim PDA is no longer UNCLAIMED. No second transfer was attempted; this allocation needs administrator reconciliation before retry." });
+      else if (failed) setMessage({ state: settled ? "partial" : "error", text: `${settled} allocation(s) settled; ${failed} need attention. Unverified transfers are not shown as complete.` });
       else if (pending || cleanupPending) setMessage({ state: "partial", text: `${settled} allocation(s) settled; ${pending} await finality or retry, and ${cleanupPending} need proof-context cleanup.` });
       else setMessage({ state: "success", text: `${settled} confidential payroll allocation(s) transferred and reconciled. Apply pending credits before withdrawing; public cash-out is a separate action.` });
     } finally { setBusy(false); }
