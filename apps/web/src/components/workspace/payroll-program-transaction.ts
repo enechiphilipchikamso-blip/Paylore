@@ -21,6 +21,7 @@ const encoder = new TextEncoder();
 export type PayrollClaimInput = {
   claimId: string;
   contributorAddress: string;
+  amountCommitment: string;
 };
 
 export type PayrollClaimTransaction = {
@@ -172,6 +173,7 @@ export async function buildPayrollClaimTransactions(input: {
   const claimInstructions = await Promise.all(
     input.claims.map(async (claim) => {
       const claimId = decodeHex32(claim.claimId, "Claim identifier");
+      const amountCommitment = decodeHex32(claim.amountCommitment, "Amount commitment");
       const contributor = address(claim.contributorAddress);
       const claimAddress = await deriveClaimAddress(
         workspace,
@@ -194,7 +196,8 @@ export async function buildPayrollClaimTransactions(input: {
           data: concatenate(
             createClaimDiscriminator,
             claimId,
-            allocationCommitment
+            allocationCommitment,
+            amountCommitment
           )
         } as const
       };
