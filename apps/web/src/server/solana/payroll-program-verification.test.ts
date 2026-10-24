@@ -26,6 +26,11 @@ const workspaceId = "5f7bbaf7-21ab-4e62-95be-84f5d6bf6bb3";
 const claimId = "01".repeat(32);
 const commitment = "ab".repeat(32);
 const amountCommitment = "ef".repeat(32);
+const escrowTokenAccount = "So11111111111111111111111111111111111111112";
+const reserveTokenAccount = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const reserveAuthorityAddress = "Stake11111111111111111111111111111111111111";
+const mintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const amountCommitmentContext = "SysvarC1ock11111111111111111111111111111111";
 const amountCommitmentProof = ["cd".repeat(32)];
 const amountCommitmentLeafIndex = 0;
 const recoveryReasonCommitment = "cd".repeat(32);
@@ -78,7 +83,8 @@ async function claimInstruction() {
     Buffer.from(amountCommitment, "hex"),
     Buffer.from([0, 0, 0, 0]),
     Buffer.from([1, 0, 0, 0]),
-    Buffer.from(amountCommitmentProof[0]!, "hex")
+    Buffer.from(amountCommitmentProof[0]!, "hex"),
+    Buffer.from(getAddressEncoder().encode(address(escrowTokenAccount)))
   ]);
   return {
     programId,
@@ -103,6 +109,7 @@ function claimStateAccount(
     owner?: string;
     allocationCommitment?: string;
     amountCommitment?: string;
+    escrowFunded?: boolean;
   } = {}
 ) {
   const discriminator = createHash("sha256")
@@ -116,7 +123,8 @@ function claimStateAccount(
     Buffer.from(claimId, "hex"),
     Buffer.from(options.allocationCommitment ?? commitment, "hex"),
     Buffer.from(options.amountCommitment ?? amountCommitment, "hex"),
-    Buffer.from([options.status ?? 0, instruction.claimBump])
+    Buffer.from(getAddressEncoder().encode(address(escrowTokenAccount))),
+    Buffer.from([options.escrowFunded === false ? 0 : 1, options.status ?? 0, instruction.claimBump])
   ]);
   return {
     value: {
@@ -129,25 +137,48 @@ function claimStateAccount(
 
 async function recoveryInstruction() {
   const claim = await claimInstruction();
+  const [reserveState] = await getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: [new TextEncoder().encode("reserve"), getAddressEncoder().encode(address(claim.workspaceAddress))]
+  });
   const discriminator = createHash("sha256")
     .update("global:recover_claim")
     .digest()
     .subarray(0, 8);
-  return {
-    programId,
-    accounts: [
-      authorityAddress,
-      contributorAddress,
-      claim.accounts[2],
-      claim.claimAddress
-    ],
-    data: encodeBase58(
-      Buffer.concat([
+  const instructions = [
+    {
+      programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      accounts: [
+        escrowTokenAccount,
+        mintAddress,
+        reserveTokenAccount,
+        reserveAuthorityAddress,
+        amountCommitmentContext
+      ],
+      data: encodeBase58(new Uint8Array([27, 7]))
+    },
+    {
+      programId,
+      accounts: [
+        authorityAddress,
+        contributorAddress,
+        claim.workspaceAddress,
+        reserveState,
+        reserveAuthorityAddress,
+        reserveTokenAccount,
+        mintAddress,
+        claim.claimAddress,
+        escrowTokenAccount,
+        "Sysvar1nstructions1111111111111111111111111",
+        amountCommitmentContext
+      ],
+      data: encodeBase58(Buffer.concat([
         discriminator,
         Buffer.from(recoveryReasonCommitment, "hex")
-      ])
-    )
-  };
+      ]))
+    }
+  ];
+  return { instructions, claimAddress: claim.claimAddress, workspaceAddress: claim.workspaceAddress };
 }
 
 afterEach(() => {
@@ -163,8 +194,11 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
-            instructions: [instruction]
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: reserveAuthorityAddress, signer: true }
+            ],
+            instructions: instruction.instructions
           }
         },
         meta: { err: null }
@@ -183,7 +217,8 @@ describe("payroll program transaction verification", () => {
           contributorAddress,
           amountCommitment,
           amountCommitmentProof,
-          amountCommitmentLeafIndex
+          amountCommitmentLeafIndex,
+          escrowTokenAccount
         }]
       })
     ).resolves.toBeUndefined();
@@ -364,8 +399,11 @@ describe("payroll program transaction verification", () => {
       transaction: {
         signatures: [transactionSignature],
         message: {
-          accountKeys: [{ pubkey: authorityAddress, signer: true }],
-          instructions: [instruction]
+          accountKeys: [
+            { pubkey: authorityAddress, signer: true },
+            { pubkey: reserveAuthorityAddress, signer: true }
+          ],
+          instructions: instruction.instructions
         }
       },
       meta: { err: null }
@@ -404,7 +442,7 @@ describe("payroll program transaction verification", () => {
         },
         meta: { err: null }
       })
-      .mockResolvedValueOnce(claimStateAccount(claim, { status: 2 }));
+      .mockResolvedValueOnce(claimStateAccount(await claimInstruction(), { status: 2 }));
 
     await expect(
       verifyPayrollRecoveryTransaction({
@@ -435,7 +473,7 @@ describe("payroll program transaction verification", () => {
         },
         meta: { err: null }
       })
-      .mockResolvedValueOnce(claimStateAccount(claim, { status: 0 }));
+      .mockResolvedValueOnce(claimStateAccount(await claimInstruction(), { status: 0 }));
 
     await expect(
       verifyPayrollRecoveryTransaction({
@@ -469,7 +507,8 @@ describe("payroll program transaction verification", () => {
       claimId,
       claimAddress: instruction.claimAddress,
       allocationCommitment: commitment,
-      amountCommitment
+      amountCommitment,
+      escrowTokenAccount
     })).resolves.toBe(expected);
     expect(readSolanaRpc).toHaveBeenCalledWith("getAccountInfo", [
       instruction.claimAddress,
@@ -490,7 +529,8 @@ describe("payroll program transaction verification", () => {
       claimId,
       claimAddress: instruction.claimAddress,
       allocationCommitment: commitment,
-      amountCommitment
+      amountCommitment,
+      escrowTokenAccount
     })).rejects.toThrow("The finalized Claim PDA does not match the expected allocation.");
   });
 
