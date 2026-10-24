@@ -78,13 +78,11 @@ test.describe("confidential claim rendered outcomes", () => {
     const { context, page } = await openAuthorizedCompensationPage(browser);
     try {
       await requireSafeActionPreconditions(page);
-      let intercepted = 0;
       await page.route(claimRoute, async (route) => {
         if (route.request().method() !== "POST") {
           await route.continue();
           return;
         }
-        intercepted++;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -92,8 +90,7 @@ test.describe("confidential claim rendered outcomes", () => {
         });
       });
 
-      await page.getByRole("button", { name: "Claim & Cash Out" }).click();
-      if (intercepted === 0) test.skip(true, "The test workspace has no allocation with a committed Claim PDA and creation signature.");
+      await clickAndWaitForClaimResponse(page);
       await expect(page.getByRole("status").filter({ hasText: /await finality or retry/ })).toBeVisible();
       await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
     } finally {
@@ -107,13 +104,11 @@ test.describe("confidential claim rendered outcomes", () => {
     const { context, page } = await openAuthorizedCompensationPage(browser);
     try {
       await requireSafeActionPreconditions(page);
-      let intercepted = 0;
       await page.route(claimRoute, async (route) => {
         if (route.request().method() !== "POST") {
           await route.continue();
           return;
         }
-        intercepted++;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -121,8 +116,7 @@ test.describe("confidential claim rendered outcomes", () => {
         });
       });
 
-      await page.getByRole("button", { name: "Claim & Cash Out" }).click();
-      if (intercepted === 0) test.skip(true, "The test workspace has no allocation with a committed Claim PDA and creation signature.");
+      await clickAndWaitForClaimResponse(page);
       await expect(page.getByRole("alert").filter({ hasText: /No second transfer was attempted/ })).toBeVisible();
       await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
     } finally {
