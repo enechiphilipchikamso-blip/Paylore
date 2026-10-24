@@ -87,3 +87,19 @@ export function getAutomaticContributorCleanupDisposition(): ContributorDepartur
     notificationBody: "Workspace access has been removed after the retention period. Your confidential account has not been closed by Paylore."
   };
 }
+
+
+export const SUBSCRIPTION_RENEWAL_REMINDER_DAYS = [7, 1] as const;
+
+/** Reminder milestones are retried throughout their due window; durable event keys provide idempotency. */
+export function getDueSubscriptionRenewalReminderDays(
+  periodEnd: Date,
+  now: Date
+): Array<(typeof SUBSCRIPTION_RENEWAL_REMINDER_DAYS)[number]> {
+  const remainingMs = periodEnd.getTime() - now.getTime();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (remainingMs <= dayMs) return [1];
+  if (remainingMs <= 7 * dayMs) return [7];
+  return [];
+}
