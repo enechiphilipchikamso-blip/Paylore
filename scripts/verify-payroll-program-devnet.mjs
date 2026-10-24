@@ -71,7 +71,7 @@ function accountBytes(account, label) {
   return new Uint8Array(bytes);
 }
 
-function parseProgramAccount(programAccount, programId) {
+export function parseProgramAccount(programAccount, programId) {
   if (programAccount?.owner !== BPF_UPGRADEABLE_LOADER_ID || programAccount.executable !== true) {
     fail("The configured Paylore Program account is absent, not executable, or owned by another loader.");
   }
@@ -83,7 +83,7 @@ function parseProgramAccount(programAccount, programId) {
   return encodeBase58(data.subarray(4, 36));
 }
 
-function parseProgramData(programDataAccount, artifactBytes, expectedUpgradeAuthority) {
+export function parseProgramData(programDataAccount, artifactBytes, expectedUpgradeAuthority) {
   if (programDataAccount?.owner !== BPF_UPGRADEABLE_LOADER_ID || programDataAccount.executable === true) {
     fail("The Paylore ProgramData account is absent or owned by another loader.");
   }
@@ -242,7 +242,8 @@ async function main() {
   const rpc = rpcOptions(process.env);
   const expectedUpgradeAuthority = process.env.PAYLORE_EXPECTED_PROGRAM_UPGRADE_AUTHORITY || undefined;
   const result = await verifyPayrollProgramDevnet({
-    ...rpc,
+    rpcUrl: rpc.url,
+    rpcHeaders: rpc.headers,
     ...local,
     expectedUpgradeAuthority
   });
