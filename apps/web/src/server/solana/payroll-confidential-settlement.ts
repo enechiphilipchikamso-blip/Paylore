@@ -674,6 +674,9 @@ export async function settleContributorPayrollAllocation(
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
   if (!mint) throw new PayrollConfidentialSettlementError("confidential_mint_unavailable", 503);
   if (!programId) throw new PayrollConfidentialSettlementError("payroll_program_not_configured", 503);
+  if (!config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET) {
+    throw new PayrollConfidentialSettlementError("payroll_amount_commitment_not_configured", 503);
+  }
   const contributorAccount = await getContributorConfidentialAccount(db, input.workspaceId, input.contributorId);
   if (!contributorAccount || contributorAccount.status !== "ready" ||
       contributorAccount.ownerWalletAddress !== input.contributorAddress) {
@@ -821,6 +824,15 @@ export async function settleContributorPayrollAllocation(
           balance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         }
         const amount = BigInt(allocation.amountBaseUnits);
+        const amountCommitmentMaterial = derivePayrollAmountCommitmentMaterial({
+          amountBaseUnits: allocation.amountBaseUnits,
+          claimId: allocation.claimId,
+          allocationCommitment: evidence.allocationCommitment,
+          secretHex: config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET!
+        });
+        if (allocation.amountCommitment !== amountCommitmentMaterial.amountCommitment) {
+          throw new PayrollConfidentialSettlementError("payroll_amount_commitment_mismatch", 409);
+        }
         if (balance.confidential.availableBalance < amount) {
           const shortfall = amount - balance.confidential.availableBalance;
           if (balance.token.amount < shortfall) {
@@ -861,11 +873,17 @@ export async function settleContributorPayrollAllocation(
           fetchToken(rpc, address(reserveToken)), fetchToken(rpc, address(destination))
         ]);
         const proofStarted = performance.now();
-        const transferPlan = await getConfidentialTransferInstructionPlan({
+        const unboundTransferPlan = await getConfidentialTransferInstructionPlan({
           sourceToken: address(reserveToken), mint: mintAddress, mintAccount, destinationToken: address(destination),
           sourceTokenAccount: source.data, destinationTokenAccount: target.data, authority: signer,
           amount, sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
         });
+        const transferPlan = {
+          ...unboundTransferPlan,
+          plans: unboundTransferPlan.plans.map((plan, index) =>
+            index === 0 ? bindAmountCommitmentProof(plan, elgamal, amountCommitmentMaterial) : plan
+          )
+        } as typeof unboundTransferPlan;
         proofDurationMs = Math.max(0, performance.now() - proofStarted);
         if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 || transferPlan.plans[1]?.kind !== "single") {
           throw new PayrollConfidentialSettlementError("confidential_transfer_plan_invalid", 503);
@@ -878,7 +896,9 @@ export async function settleContributorPayrollAllocation(
 
         const transferIx = transferPlan.plans[1].instruction;
         const accounts = transferIx.accounts ?? [];
-        if (transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS || transferIx.data[0] !== 27 ||
+        const amountCommitmentContext = accounts[4]?.address;
+        if (typeof amountCommitmentContext !== "string" ||
+            transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS || transferIx.data[0] !== 27 ||
             transferIx.data[1] !== 7 || accounts[0]?.address !== reserveToken ||
             accounts[1]?.address !== mint || accounts[2]?.address !== destination) {
           throw new PayrollConfidentialSettlementError("confidential_transfer_instruction_invalid", 503);
@@ -909,7 +929,8 @@ export async function settleContributorPayrollAllocation(
           transferPlan,
           markSettlementPendingInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
-            reserveAuthority: signer.address, reserveToken, mint, destination, claim: allocation.claimAddress
+            reserveAuthority: signer.address, reserveToken, mint, destination, claim: allocation.claimAddress,
+            amountCommitmentContext
           }),
           { source: reserveToken, mint, destination }
         );
