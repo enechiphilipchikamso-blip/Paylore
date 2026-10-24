@@ -48,7 +48,7 @@ export function SubscriptionPaymentAction({
   onSuccess?: () => void;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(prepareOnLoad && configured);
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState<string | null>(null);
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
