@@ -415,8 +415,8 @@ export async function verifyPayrollRecoveryTransaction(input: {
     !sameBytes(data.subarray(40, 72), contributorBytes) ||
     !sameBytes(data.subarray(72, 104), claimId) ||
     !sameBytes(data.subarray(104, 136), allocationCommitment) ||
-    data[136] !== 2 ||
-    data[137] !== claim.bump
+    data[168] !== 2 ||
+    data[169] !== claim.bump
   ) {
     throw new Error(
       "The finalized Claim PDA is not in the expected RECOVERED state for this allocation."
