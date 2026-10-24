@@ -213,6 +213,37 @@ describe("payroll program transaction verification", () => {
     ).rejects.toThrow("does not match the expected workspace");
   });
 
+  it("rejects a Claim PDA whose amount commitment differs from the allocation", async () => {
+    const instruction = await claimInstruction();
+    vi.mocked(readSolanaRpc)
+      .mockResolvedValueOnce({
+        slot: 42,
+        transaction: {
+          signatures: [transactionSignature],
+          message: {
+            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            instructions: [instruction]
+          }
+        },
+        meta: { err: null }
+      })
+      .mockResolvedValueOnce(claimStateAccount(instruction, {
+        amountCommitment: "cd".repeat(32)
+      }));
+    await expect(verifyPayrollClaimTransaction({
+      signature: transactionSignature,
+      authorityAddress,
+      workspaceId,
+      allocationCommitment: commitment,
+      claims: [{
+        claimId,
+        claimAddress: instruction.claimAddress,
+        contributorAddress,
+        amountCommitment
+      }]
+    })).rejects.toThrow("does not match the expected workspace");
+  });
+
   it("rejects a Claim PDA whose account data has a different allocation commitment", async () => {
     const instruction = await claimInstruction();
     vi.mocked(readSolanaRpc)
