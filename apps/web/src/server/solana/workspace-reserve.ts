@@ -21,7 +21,7 @@ import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler"
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
   getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
-  type Database, type WorkspaceReserveSetupPhase
+  type Database
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
