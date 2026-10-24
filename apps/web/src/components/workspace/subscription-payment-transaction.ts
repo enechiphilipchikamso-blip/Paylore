@@ -58,7 +58,6 @@ export async function createSubscriptionPaymentTransaction({
   recipient: recipientText,
   mint: mintText,
   tokenProgram: tokenProgramText,
-  workspaceId,
   blockhash: blockhashText,
   lastValidBlockHeight,
   memo
