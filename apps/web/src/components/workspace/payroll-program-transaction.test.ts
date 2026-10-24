@@ -76,14 +76,14 @@ describe("payroll program transactions", () => {
       includeWorkspaceInitialization: true
     });
 
-    expect(transactions).toHaveLength(2);
-    expect(transactions[0]?.claimIds).toHaveLength(4);
-    expect(transactions[1]?.claimIds).toHaveLength(1);
-    expect(transactions[0]?.transaction.length).toBeGreaterThan(100);
-    expect(transactions[1]?.transaction.length).toBeGreaterThan(100);
+    expect(transactions).toHaveLength(3);
+    expect(transactions[0]?.claimIds).toHaveLength(2);
+    expect(transactions[1]?.claimIds).toHaveLength(2);
+    expect(transactions[2]?.claimIds).toHaveLength(1);
+    expect(transactions.every((transaction) => transaction.transaction.length > 100)).toBe(true);
     expect(transactions.every((transaction) => transaction.transaction.length <= 1232)).toBe(true);
     expect(transactions.flatMap((transaction) => transaction.claimIds)).toHaveLength(5);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("rejects duplicate claim identifiers", async () => {
