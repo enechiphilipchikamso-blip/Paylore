@@ -234,12 +234,17 @@ export async function POST(request: Request, { params }: RouteContext) {
     const selected = claimIds.map((claimId) =>
       run.allocations.find((allocation) => allocation.claimId?.toLowerCase() === claimId)
     );
-    if (selected.some((allocation) => !allocation || !allocation.contributorWalletAddress)) {
+    if (selected.some((allocation) =>
+      !allocation ||
+      !allocation.contributorWalletAddress ||
+      !/^[0-9a-f]{64}$/i.test(allocation.amountCommitment ?? "")
+    )) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
     const claims = selected.map((allocation) => ({
       claimId: allocation!.claimId!,
       contributorAddress: allocation!.contributorWalletAddress!,
+      amountCommitment: allocation!.amountCommitment!
     }));
     assertSponsoredClaimIntent({
       operation: "payroll_claim_commitment",
@@ -563,8 +568,8 @@ export async function POST(request: Request, { params }: RouteContext) {
           gasTankPrivateKey: privateKey,
           balanceLamports: tank.balanceLamports,
           allocationCommitment: run.run.allocationCommitment!,
-          claims: claims.map(({ claimId, contributorAddress }) => ({
-            claimId, contributorAddress
+          claims: claims.map(({ claimId, contributorAddress, amountCommitment }) => ({
+            claimId, contributorAddress, amountCommitment
           })),
           dailyBookedFeesLamports: usage.feeLamports,
           dailyOperationCount: usage.operationCount
