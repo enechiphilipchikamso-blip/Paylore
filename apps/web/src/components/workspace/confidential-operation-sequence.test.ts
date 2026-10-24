@@ -22,7 +22,7 @@ describe("confidential operation sequencing", () => {
     expect(progress.completed).toEqual(["reserve_configure", "proof_setup", "confidential_transfer"]);
   });
 
-  it("requires pending balances to be applied before proof generation when present", () => {
+  it("applies an existing pending balance before proof generation and optional deposit", () => {
     let progress = advanceConfidentialSequence(
       createConfidentialSequenceProgress(), "reserve_configure", "finalized"
     );
