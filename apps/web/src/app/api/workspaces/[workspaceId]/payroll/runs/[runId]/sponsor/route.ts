@@ -96,7 +96,10 @@ type PreparedSponsorshipData = {
   authorityAddress: string;
   programId: string;
   allocationCommitment: string;
-  claims: Array<{ claimId: string; claimAddress: string; amountCommitment: string }>;
+  claims: Array<{
+    claimId: string; claimAddress: string; amountCommitment: string;
+    amountCommitmentProof: string[]; amountCommitmentLeafIndex: number
+  }>;
   blockhash: string;
   transactionBase64: string;
 };
@@ -118,7 +121,14 @@ function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData |
       return typeof record.claimId === "string" &&
         typeof record.claimAddress === "string" &&
         typeof record.amountCommitment === "string" &&
-        /^[0-9a-f]{64}$/i.test(record.amountCommitment);
+        /^[0-9a-f]{64}$/i.test(record.amountCommitment) &&
+        Number.isSafeInteger(record.amountCommitmentLeafIndex) &&
+        Number(record.amountCommitmentLeafIndex) >= 0 &&
+        Array.isArray(record.amountCommitmentProof) &&
+        record.amountCommitmentProof.length <= 32 &&
+        record.amountCommitmentProof.every((sibling) =>
+          typeof sibling === "string" && /^[0-9a-f]{64}$/i.test(sibling)
+        );
     }) ||
     typeof data.blockhash !== "string" ||
     typeof data.transactionBase64 !== "string"
@@ -240,14 +250,21 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (selected.some((allocation) =>
       !allocation ||
       !allocation.contributorWalletAddress ||
-      !/^[0-9a-f]{64}$/i.test(allocation.amountCommitment ?? "")
+      !/^[0-9a-f]{64}$/i.test(allocation.amountCommitment ?? "") ||
+      !Number.isSafeInteger(allocation.amountCommitmentLeafIndex) ||
+      (allocation.amountCommitmentLeafIndex ?? -1) < 0 ||
+      !Array.isArray(allocation.amountCommitmentProof) ||
+      allocation.amountCommitmentProof.length > 32 ||
+      !allocation.amountCommitmentProof.every((sibling) => /^[0-9a-f]{64}$/i.test(sibling))
     )) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
     const claims = selected.map((allocation) => ({
       claimId: allocation!.claimId!,
       contributorAddress: allocation!.contributorWalletAddress!,
-      amountCommitment: allocation!.amountCommitment!
+      amountCommitment: allocation!.amountCommitment!,
+      amountCommitmentProof: allocation!.amountCommitmentProof,
+      amountCommitmentLeafIndex: allocation!.amountCommitmentLeafIndex
     }));
     assertSponsoredClaimIntent({
       operation: "payroll_claim_commitment",
@@ -293,7 +310,9 @@ export async function POST(request: Request, { params }: RouteContext) {
         data.claims.length !== claimIds.length ||
         data.claims.some((claim, index) =>
           claim.claimId.toLowerCase() !== claimIds[index] ||
-          claim.amountCommitment.toLowerCase() !== claims[index]?.amountCommitment.toLowerCase()
+          claim.amountCommitment.toLowerCase() !== claims[index]?.amountCommitment.toLowerCase() ||
+          claim.amountCommitmentLeafIndex !== claims[index]?.amountCommitmentLeafIndex ||
+          JSON.stringify(claim.amountCommitmentProof) !== JSON.stringify(claims[index]?.amountCommitmentProof)
         )
       ) {
         return null;
