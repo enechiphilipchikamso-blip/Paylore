@@ -11,11 +11,13 @@ function query(result: unknown) {
   return builder;
 }
 
-function fakeDatabase(selectResults: unknown[][]) {
+function fakeDatabase(selectResults: unknown[][], existingNotifications: Array<Record<string, unknown>> = []) {
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
-  const notificationRows: Array<Record<string, unknown>> = [];
+  const notificationRows: Array<Record<string, unknown>> = [...existingNotifications];
   const ledgerRows: Array<Record<string, unknown>> = [];
-  const notificationKeys = new Set<string>();
+  const notificationKeys = new Set<string>(existingNotifications.map((row) =>
+    String(row.workspaceId) + ":" + String(row.eventKey) + ":" + String(row.recipientKey)
+  ));
   const ledgerKeys = new Set<string>();
   let selectIndex = 0;
   const tx = {
@@ -98,6 +100,38 @@ describe("subscription renewal reminder persistence", () => {
     expect(repeated).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 0, ledgerEntriesCreated: 0 });
     expect(db.notificationRows).toHaveLength(2);
     expect(db.ledgerRows).toHaveLength(1);
+  });
+
+  it("backfills an idempotent reminder ledger row when the notification already exists", async () => {
+    const now = new Date("2026-10-24T08:00:00.000Z");
+    const periodEnd = new Date(now.getTime() + 20 * 60 * 60 * 1000);
+    const eventKey = "subscription-renewal-reminder:" + periodEnd.getTime() + ":1";
+    const priorNotification = {
+      workspaceId: "workspace-a",
+      recipientKey: "member-a",
+      eventKey,
+      category: "Workspace & Billing",
+      title: "Subscription expires soon",
+      body: "Existing reminder",
+      destination: "/workspace/workspace-a/billing",
+      createdAt: now
+    };
+    const db = fakeDatabase([
+      [{ workspaceId: "workspace-a", periodEnd, status: "active" }],
+      [{ userId: "member-a" }]
+    ], [priorNotification]);
+
+    const result = await createDueSubscriptionRenewalReminders(db.db, now);
+
+    expect(result).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 0, ledgerEntriesCreated: 1 });
+    expect(db.notificationRows).toEqual([priorNotification]);
+    expect(db.ledgerRows).toHaveLength(1);
+    expect(db.ledgerRows[0]).toMatchObject({
+      workspaceId: "workspace-a",
+      idempotencyKey: eventKey,
+      entryType: "subscription_renewal_reminder",
+      metadata: { financial: false, reminderDays: 1 }
+    });
   });
 
   it("does not insert reminders when the paid period is more than seven days away", async () => {
