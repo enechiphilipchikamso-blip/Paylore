@@ -368,13 +368,16 @@ async function readFinalizedClaimState(input: {
   claim: string;
   claimId: string;
   allocationCommitment: string;
+  amountCommitment: string;
 }): Promise<FinalizedClaimState> {
   if (!/^[0-9a-f]{64}$/i.test(input.claimId) ||
-      !/^[0-9a-f]{64}$/i.test(input.allocationCommitment)) {
+      !/^[0-9a-f]{64}$/i.test(input.allocationCommitment) ||
+      !/^[0-9a-f]{64}$/i.test(input.amountCommitment)) {
     throw new PayrollConfidentialSettlementError("settlement_claim_commitment_invalid", 409);
   }
   const claimId = Uint8Array.from(input.claimId.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const commitment = Uint8Array.from(input.allocationCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
+  const amountCommitment = Uint8Array.from(input.amountCommitment.match(/.{2}/g)!, (hex) => Number.parseInt(hex, 16));
   const [derivedClaim, bump] = await getProgramDerivedAddress({
     programAddress: address(input.programId),
     seeds: [encoder.encode("claim"), getAddressEncoder().encode(address(input.workspace)),
@@ -386,15 +389,17 @@ async function readFinalizedClaimState(input: {
   const account = object(response.value);
   const data = decodeAccountData(account?.data);
   if (derivedClaim !== input.claim || !account || account.owner !== input.programId ||
-      account.executable === true || !data || data.length !== 138 ||
+      account.executable === true || !data || data.length !== 170 ||
       !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
-      !sameBytes(data.subarray(104, 136), commitment) || data[137] !== bump || data[136] > 3) {
+      !sameBytes(data.subarray(104, 136), commitment) ||
+      !sameBytes(data.subarray(136, 168), amountCommitment) ||
+      data[169] !== bump || data[168] > 3) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
-  return data[136] === 0 ? "unclaimed" : data[136] === 1 ? "claimed" : data[136] === 2 ? "recovered" : "settlement_pending";
+  return data[168] === 0 ? "unclaimed" : data[168] === 1 ? "claimed" : data[168] === 2 ? "recovered" : "settlement_pending";
 }
 
 async function verifyFinalizedSettlement(input: {
@@ -456,12 +461,14 @@ async function verifyFinalizedSettlement(input: {
   const account = object(response.value);
   const data = decodeAccountData(account?.data);
   if (derivedClaim !== input.claim || !account || account.owner !== input.programId ||
-      account.executable === true || !data || data.length !== 138 ||
+      account.executable === true || !data || data.length !== 170 ||
       !sameBytes(data.subarray(0, 8), discriminator("account:ClaimState")) ||
       !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(input.workspace))) ||
       !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributor))) ||
       !sameBytes(data.subarray(72, 104), claimId) ||
-      !sameBytes(data.subarray(104, 136), commitment) || (data[136] !== 1 && data[136] !== 3) || data[137] !== bump) {
+      !sameBytes(data.subarray(104, 136), commitment) ||
+      !sameBytes(data.subarray(136, 168), amountCommitment) ||
+      (data[168] !== 1 && data[168] !== 3) || data[169] !== bump) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
 }
