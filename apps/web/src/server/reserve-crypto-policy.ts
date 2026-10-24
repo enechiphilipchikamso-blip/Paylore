@@ -179,42 +179,44 @@ export function sealReserveKey(
 
   const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
   const dataKey = randomBytes(32);
-  const secretAad = `${workspaceId}:private-key`;
-  const wrappedKeyAad = `${workspaceId}:data-key`;
-  const backupAad = `${workspaceId}:backup`;
-  const sealedSecret = encrypt(privateKey, dataKey, secretAad);
-  const sealedDataKey = encrypt(
-    dataKey,
-    deriveKey(envelopeKey, workspaceId, "data-key"),
-    wrappedKeyAad
-  );
-  const backupPayload = Buffer.from(
-    JSON.stringify({
+  let wrappedKey: Buffer | undefined;
+  let backupKey: Buffer | undefined;
+  let backupPayload: Buffer | undefined;
+  let backupPrivateKey: Buffer | undefined;
+  try {
+    const sealedSecret = encrypt(privateKey, dataKey, `${workspaceId}:private-key`);
+    wrappedKey = deriveKey(envelopeKey, workspaceId, "data-key");
+    const sealedDataKey = encrypt(dataKey, wrappedKey, `${workspaceId}:data-key`);
+    backupPrivateKey = Buffer.from(privateKey);
+    backupPayload = Buffer.from(JSON.stringify({
       workspaceId,
       address,
-      privateKey: Buffer.from(privateKey).toString("base64"),
+      privateKey: backupPrivateKey.toString("base64"),
       dataKey: dataKey.toString("base64")
-    }),
-    "utf8"
-  );
-  const sealedBackup = encrypt(
-    backupPayload,
-    deriveKey(envelopeKey, workspaceId, "backup"),
-    backupAad
-  );
+    }), "utf8");
+    backupKey = deriveKey(envelopeKey, workspaceId, "backup");
+    const sealedBackup = encrypt(backupPayload, backupKey, `${workspaceId}:backup`);
 
-  return {
-    address,
-    encryptedPrivateKey: sealedSecret.ciphertext,
-    privateKeyNonce: sealedSecret.nonce,
-    privateKeyAuthTag: sealedSecret.authTag,
-    encryptedDataKey: sealedDataKey.ciphertext,
-    dataKeyNonce: sealedDataKey.nonce,
-    dataKeyAuthTag: sealedDataKey.authTag,
-    encryptedBackup: sealedBackup.ciphertext,
-    backupNonce: sealedBackup.nonce,
-    backupAuthTag: sealedBackup.authTag
-  };
+    return {
+      address,
+      encryptedPrivateKey: sealedSecret.ciphertext,
+      privateKeyNonce: sealedSecret.nonce,
+      privateKeyAuthTag: sealedSecret.authTag,
+      encryptedDataKey: sealedDataKey.ciphertext,
+      dataKeyNonce: sealedDataKey.nonce,
+      dataKeyAuthTag: sealedDataKey.authTag,
+      encryptedBackup: sealedBackup.ciphertext,
+      backupNonce: sealedBackup.nonce,
+      backupAuthTag: sealedBackup.authTag
+    };
+  } finally {
+    envelopeKey.fill(0);
+    dataKey.fill(0);
+    wrappedKey?.fill(0);
+    backupKey?.fill(0);
+    backupPayload?.fill(0);
+    backupPrivateKey?.fill(0);
+  }
 }
 
 type EncryptedReserve = SealedReserve;
@@ -474,33 +476,36 @@ export function openReserveKey(
   encodedEnvelopeKey: string
 ): Buffer {
   const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
-  const dataKey = decrypt(
-    {
+  let wrappedKey: Buffer | undefined;
+  let dataKey: Buffer | undefined;
+  let privateKey: Buffer | undefined;
+  try {
+    wrappedKey = deriveKey(envelopeKey, workspaceId, "data-key");
+    dataKey = decrypt({
       ciphertext: sealed.encryptedDataKey,
       nonce: sealed.dataKeyNonce,
       authTag: sealed.dataKeyAuthTag
-    },
-    deriveKey(envelopeKey, workspaceId, "data-key"),
-    `${workspaceId}:data-key`
-  );
-  if (dataKey.length !== 32) {
-    throw new Error("The reserve data key is invalid.");
-  }
+    }, wrappedKey, `${workspaceId}:data-key`);
+    if (dataKey.length !== 32) throw new Error("The reserve data key is invalid.");
 
-  const privateKey = decrypt(
-    {
+    privateKey = decrypt({
       ciphertext: sealed.encryptedPrivateKey,
       nonce: sealed.privateKeyNonce,
       authTag: sealed.privateKeyAuthTag
-    },
-    dataKey,
-    `${workspaceId}:private-key`
-  );
-  if (deriveAddress(privateKey) !== sealed.address) {
-    privateKey.fill(0);
-    throw new Error("The reserve key failed integrity verification.");
+    }, dataKey, `${workspaceId}:private-key`);
+    if (deriveAddress(privateKey) !== sealed.address) {
+      throw new Error("The reserve key failed integrity verification.");
+    }
+
+    const recoveredKey = privateKey;
+    privateKey = undefined;
+    return recoveredKey;
+  } finally {
+    envelopeKey.fill(0);
+    wrappedKey?.fill(0);
+    dataKey?.fill(0);
+    privateKey?.fill(0);
   }
-  return privateKey;
 }
 
 export function restoreReserveFromBackup(
@@ -509,55 +514,52 @@ export function restoreReserveFromBackup(
   encodedEnvelopeKey: string
 ): SealedReserve {
   const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
-  const backup = decrypt(
-    {
+  let backupKey: Buffer | undefined;
+  let backup: Buffer | undefined;
+  let privateKey: Buffer | undefined;
+  let backedUpDataKey: Buffer | undefined;
+  try {
+    backupKey = deriveKey(envelopeKey, workspaceId, "backup");
+    backup = decrypt({
       ciphertext: sealed.encryptedBackup,
       nonce: sealed.backupNonce,
       authTag: sealed.backupAuthTag
-    },
-    deriveKey(envelopeKey, workspaceId, "backup"),
-    `${workspaceId}:backup`
-  );
+    }, backupKey, `${workspaceId}:backup`);
 
-  let payload: {
-    workspaceId?: unknown;
-    address?: unknown;
-    privateKey?: unknown;
-    dataKey?: unknown;
-  };
-  try {
-    payload = JSON.parse(backup.toString("utf8")) as typeof payload;
-  } catch {
-    throw new Error("The reserve recovery backup is invalid.");
-  }
+    let payload: { workspaceId?: unknown; address?: unknown; privateKey?: unknown; dataKey?: unknown };
+    try {
+      payload = JSON.parse(backup.toString("utf8")) as typeof payload;
+    } catch {
+      throw new Error("The reserve recovery backup is invalid.");
+    }
+    if (
+      payload.workspaceId !== workspaceId ||
+      payload.address !== sealed.address ||
+      typeof payload.privateKey !== "string" ||
+      typeof payload.dataKey !== "string"
+    ) {
+      throw new Error("The reserve recovery backup does not match this workspace.");
+    }
 
-  if (
-    payload.workspaceId !== workspaceId ||
-    payload.address !== sealed.address ||
-    typeof payload.privateKey !== "string"
-  ) {
-    throw new Error(
-      "The reserve recovery backup does not match this workspace."
-    );
-  }
+    privateKey = Buffer.from(payload.privateKey, "base64");
+    backedUpDataKey = Buffer.from(payload.dataKey, "base64");
+    if (
+      privateKey.length !== 64 ||
+      privateKey.toString("base64") !== payload.privateKey ||
+      backedUpDataKey.length !== 32 ||
+      backedUpDataKey.toString("base64") !== payload.dataKey ||
+      deriveAddress(privateKey) !== sealed.address
+    ) {
+      throw new Error("The reserve recovery backup failed validation.");
+    }
 
-  const privateKey = Buffer.from(payload.privateKey, "base64");
-  if (deriveAddress(privateKey) !== sealed.address) {
-    privateKey.fill(0);
-    throw new Error("The reserve recovery backup failed validation.");
-  }
-
-  try {
-    return sealReserveKey(
-      workspaceId,
-      sealed.address,
-      privateKey,
-      encodedEnvelopeKey
-    );
+    return sealReserveKey(workspaceId, sealed.address, privateKey, encodedEnvelopeKey);
   } finally {
-    privateKey.fill(0);
-    backup.fill(0);
     envelopeKey.fill(0);
+    backupKey?.fill(0);
+    backup?.fill(0);
+    privateKey?.fill(0);
+    backedUpDataKey?.fill(0);
   }
 }
 
