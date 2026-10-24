@@ -58,7 +58,7 @@ function prepare(overrides: Partial<Parameters<typeof prepareSponsoredPayrollCla
     gasTankPrivateKey: privateKey(),
     balanceLamports: "100000",
     allocationCommitment,
-    claims: [{ claimId, contributorAddress: "contributor-wallet" }],
+    claims: [{ claimId, contributorAddress: "contributor-wallet", amountCommitment: "ab".repeat(32) }],
     dailyBookedFeesLamports: 0n,
     dailyOperationCount: 0,
     ...overrides
