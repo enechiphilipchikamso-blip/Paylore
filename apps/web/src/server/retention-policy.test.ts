@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAutomaticContributorCleanupDisposition,
   getContributorDepartureDisposition,
+  getDueSubscriptionRenewalReminderDays,
   hasReachedInactivityThreshold,
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   isContributorAssociationCleanupEligible,
@@ -10,6 +11,26 @@ import {
   scheduleWorkspaceDeletion,
   WORKSPACE_RETENTION_NOTICE_DAYS
 } from "@paylore/database";
+
+describe("manual subscription renewal reminders", () => {
+  const now = new Date("2026-10-24T08:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+
+  it("surfaces the seven-day reminder throughout its due window", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 7 * day), now)).toEqual([7]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 3 * day), now)).toEqual([7]);
+  });
+
+  it("uses the one-day reminder in the final 24 hours", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + day), now)).toEqual([1]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + day + 1), now)).toEqual([7]);
+  });
+
+  it("does not remind after expiry or outside the seven-day window", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() - 1), now)).toEqual([]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 8 * day), now)).toEqual([]);
+  });
+});
 
 describe("workspace retention policy", () => {
   it("schedules manual deletion no sooner than 72 hours", () => {
