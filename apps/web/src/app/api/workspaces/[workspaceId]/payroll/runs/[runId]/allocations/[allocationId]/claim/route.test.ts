@@ -60,6 +60,16 @@ describe("confidential payroll claim route", () => {
     expect(response.status).toBe(403);
     expect(mocks.settleContributorPayrollAllocation).not.toHaveBeenCalled();
   });
+  it("returns a non-success Claim PDA conflict without describing payment as complete", async () => {
+    mocks.settleContributorPayrollAllocation.mockResolvedValue({
+      status: "state_conflict", signature: "settlement-signature"
+    });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      status: "state_conflict", signature: "settlement-signature"
+    });
+  });
   it("handles anonymous sessions and missing wallet identity", async () => {
     mocks.getSessionState.mockResolvedValue({ status: "anonymous" });
     expect((await POST(request(), context)).status).toBe(401);
