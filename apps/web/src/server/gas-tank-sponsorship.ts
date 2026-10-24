@@ -253,7 +253,12 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
             { address: claimAddress, role: AccountRole.WRITABLE },
             { address: address(SYSTEM_PROGRAM_ADDRESS), role: AccountRole.READONLY }
           ],
-          data: concat(createClaimDiscriminator, claimIdBytes, allocationCommitment)
+          data: concat(
+            createClaimDiscriminator,
+            claimIdBytes,
+            allocationCommitment,
+            decodeHex32(claim.amountCommitment)
+          )
         } as const
       };
     }));
