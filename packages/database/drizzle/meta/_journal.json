@@ -71,6 +71,13 @@
       "when": 1792840980003,
       "tag": "0009_payroll_amount_commitment",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792840980004,
+      "tag": "0010_payroll_claim_escrows",
+      "breakpoints": true
     }
   ]
 }
