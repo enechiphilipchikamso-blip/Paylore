@@ -110,7 +110,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       return {
         claimId: allocation.claimId,
         claimAddress: submitted.claimAddress,
-        contributorAddress: allocation.contributorWalletAddress
+        contributorAddress: allocation.contributorWalletAddress,
+        amountCommitment: allocation.amountCommitment ?? ""
       };
     });
     if (!payrollRun.run.allocationCommitment) {
