@@ -19,8 +19,9 @@ import {
 } from "@solana-program/token-2022/confidential";
 import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
+  attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
   getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
-  type Database
+  type Database, type WorkspaceReserveSetupPhase
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
@@ -90,6 +91,9 @@ function extensions(value: Token | Mint): readonly { __kind: string; [key: strin
 function rpcEndpoint(): string {
   const config = loadPayloreConfig();
   const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  if (url.protocol !== "https:") {
+    throw new WorkspaceReserveInitializationError("reserve_devnet_rpc_required", 503);
+  }
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }
@@ -118,7 +122,8 @@ async function waitForFinality(
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
-  plan: InstructionPlan
+  plan: InstructionPlan,
+  submitted?: (signature: string) => Promise<void>
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
@@ -141,7 +146,15 @@ async function executePlan(
       const signature = await rpc.sendTransaction(wire, {
         encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3
       }).send();
-      signatures.push(String(signature));
+      const signatureText = String(signature);
+      signatures.push(signatureText);
+      if (submitted) {
+        try {
+          await submitted(signatureText);
+        } catch {
+          trackingFailed = true;
+        }
+      }
       const finality = await waitForFinality(rpc, signature);
       if (finality === "pending") throw new FinalityPendingError(String(signature));
       if (finality === "failed") throw new FinalityFailedError(String(signature));
@@ -321,6 +334,10 @@ async function withReserveContext<T>(
     workspaceBump: number;
     reserveState: string;
     reserveBump: number;
+    setupSignatures: {
+      accountSetupSignature: string | null;
+      programConfigureSignature: string | null;
+    };
     elgamal: ElGamalKeypair;
     secret: ElGamalSecretKey;
     aesKey: AeKey;
@@ -366,8 +383,12 @@ async function withReserveContext<T>(
       return await run({
         signer, rpc, reserveAddress: reserve.address, mintAddress, mintAccount, reserveTokenAddress,
         workspaceAuthority, workspace: derivedWorkspace.workspace, workspaceSeed: derivedWorkspace.seed,
-        workspaceBump: derivedWorkspace.bump, reserveState, reserveBump, elgamal, secret, aesKey,
-        derived, programId
+        workspaceBump: derivedWorkspace.bump, reserveState, reserveBump,
+        setupSignatures: {
+          accountSetupSignature: reserve.confidentialAccountSetupSignature,
+          programConfigureSignature: reserve.programReserveSetupSignature
+        },
+        elgamal, secret, aesKey, derived, programId
       });
     } finally {
       secret.free(); elgamal.free(); aesKey.free();
@@ -460,14 +481,37 @@ export async function initializeWorkspaceConfidentialReserveAccount(
   continuation: { signature?: string | null; phase?: WorkspaceReservePhase | null } = {}
 ): Promise<WorkspaceConfidentialReserveResult> {
   const result = await withReserveContext(db, workspaceId, fallbackAuthorityAddress, async (input) => {
-    if (continuation.signature && continuation.phase) {
-      const previous = await waitForFinality(input.rpc, continuation.signature as Signature);
+    const pendingAttempt = continuation.signature && continuation.phase
+      ? { signature: continuation.signature, phase: continuation.phase }
+      : input.setupSignatures.programConfigureSignature
+        ? { signature: input.setupSignatures.programConfigureSignature, phase: "program_configure" as const }
+        : input.setupSignatures.accountSetupSignature
+          ? { signature: input.setupSignatures.accountSetupSignature, phase: "account_setup" as const }
+          : null;
+    if (pendingAttempt) {
+      const previous = await waitForFinality(input.rpc, pendingAttempt.signature as Signature);
       if (previous === "pending") {
-        return { status: "pending", reserveAddress: input.reserveAddress, signature: continuation.signature, phase: continuation.phase };
+        return {
+          status: "pending",
+          reserveAddress: input.reserveAddress,
+          signature: pendingAttempt.signature,
+          phase: pendingAttempt.phase
+        };
       }
       if (previous === "failed") {
-        return { status: "retry_ready", reserveAddress: input.reserveAddress, signature: continuation.signature, phase: continuation.phase };
+        await clearWorkspaceReserveSetupSignature(db, {
+          workspaceId, phase: pendingAttempt.phase, signature: pendingAttempt.signature
+        });
+        return {
+          status: "retry_ready",
+          reserveAddress: input.reserveAddress,
+          signature: pendingAttempt.signature,
+          phase: pendingAttempt.phase
+        };
       }
+      await clearWorkspaceReserveSetupSignature(db, {
+        workspaceId, phase: pendingAttempt.phase, signature: pendingAttempt.signature
+      });
     }
 
     const encoded = await fetchEncodedAccount(input.rpc, address(input.reserveTokenAddress));
@@ -503,13 +547,28 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         aesKey: input.aesKey,
         includeConfidentialTransferFeeAmount: extensions(input.mintAccount).some((item) => item.__kind === "TransferFeeConfig")
       });
-      const submitted = await executePlan(input.rpc, input.signer, setup);
+      const submitted = await executePlan(input.rpc, input.signer, setup, async (signature) => {
+        const tracked = await attachWorkspaceReserveSetupSignature(db, {
+          workspaceId, phase: "account_setup", signature
+        });
+        if (tracked !== "attached" && tracked !== "duplicate") {
+          throw new Error("Reserve account setup signature tracking conflicted.");
+        }
+      });
       const signature = submitted.signatures.at(-1);
-      if (submitted.pending) {
+      if (submitted.pending || submitted.trackingFailed) {
         return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: input.reserveTokenAddress, signature, phase: "account_setup" };
       }
-      if (!submitted.successful || submitted.trackingFailed || !signature) {
+      if (!submitted.successful || !signature) {
+        if (signature) await clearWorkspaceReserveSetupSignature(db, {
+          workspaceId, phase: "account_setup", signature
+        });
         return { status: "retry_ready", reserveAddress: input.reserveAddress, tokenAccount: input.reserveTokenAddress, signature, phase: "account_setup" };
+      }
+      if (!await clearWorkspaceReserveSetupSignature(db, {
+        workspaceId, phase: "account_setup", signature
+      })) {
+        return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: input.reserveTokenAddress, signature, phase: "account_setup" };
       }
     }
 
@@ -547,13 +606,28 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       reserveState: input.reserveState, reserveAuthority: input.reserveAddress,
       reserveToken: tokenState.tokenAccount, mint: input.mintAddress
     });
-    const configured = await executePlan(input.rpc, input.signer, singleInstructionPlan(ix));
+    const configured = await executePlan(input.rpc, input.signer, singleInstructionPlan(ix), async (signature) => {
+      const tracked = await attachWorkspaceReserveSetupSignature(db, {
+        workspaceId, phase: "program_configure", signature
+      });
+      if (tracked !== "attached" && tracked !== "duplicate") {
+        throw new Error("Reserve program configuration signature tracking conflicted.");
+      }
+    });
     const signature = configured.signatures.at(-1);
-    if (configured.pending) {
+    if (configured.pending || configured.trackingFailed) {
       return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: tokenState.tokenAccount, signature, phase: "program_configure" };
     }
-    if (!configured.successful || configured.trackingFailed || !signature) {
+    if (!configured.successful || !signature) {
+      if (signature) await clearWorkspaceReserveSetupSignature(db, {
+        workspaceId, phase: "program_configure", signature
+      });
       return { status: "retry_ready", reserveAddress: input.reserveAddress, tokenAccount: tokenState.tokenAccount, signature, phase: "program_configure" };
+    }
+    if (!await clearWorkspaceReserveSetupSignature(db, {
+      workspaceId, phase: "program_configure", signature
+    })) {
+      return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: tokenState.tokenAccount, signature, phase: "program_configure" };
     }
     const verified = await inspectReserveProgramState(input.rpc, {
       workspace: input.workspace, reserveAuthority: input.reserveAddress, reserveToken: tokenState.tokenAccount,
