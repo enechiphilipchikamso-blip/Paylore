@@ -226,7 +226,7 @@ export async function buildPayrollClaimTransactions(input: {
   );
 
   const rpc = createSolanaRpc("https://api.devnet.solana.com");
-  const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 9)
+  const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 8)
     ? 1
     : PAYROLL_CLAIMS_PER_TRANSACTION;
   const batches: typeof claimInstructions[] = [];
