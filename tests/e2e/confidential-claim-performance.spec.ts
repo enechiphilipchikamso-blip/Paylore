@@ -83,6 +83,58 @@ test.describe("confidential claim performance evidence", () => {
     expect(measurements.resourceCount).toBeGreaterThan(0);
   });
 
+  test("records actual confidential proof duration, interaction latency and heap deltas for an explicitly authorized Devnet settlement", async ({ browser }, testInfo) => {
+    test.skip(
+      process.env.PAYLORE_E2E_ENABLE_FINANCIAL_TRANSACTIONS !== "true" ||
+      !process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
+      "Opt in only with an authenticated Devnet contributor, eligible finalized allocation, and explicit financial-test authorization."
+    );
+    test.setTimeout(180_000);
+    const context = await browser.newContext({ storageState: process.env.PAYLORE_E2E_STORAGE_STATE });
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      (window as Window & { __payloreLongTasks?: number[] }).__payloreLongTasks = [];
+      if (typeof PerformanceObserver === "undefined" || !PerformanceObserver.supportedEntryTypes.includes("longtask")) return;
+      new PerformanceObserver((list) => {
+        const tasks = (window as Window & { __payloreLongTasks?: number[] }).__payloreLongTasks;
+        for (const entry of list.getEntries()) tasks?.push(entry.duration);
+      }).observe({ type: "longtask", buffered: true });
+    });
+    try {
+      await page.goto(process.env.PAYLORE_E2E_SETTLEMENT_URL!);
+      const button = page.getByRole("button", { name: "Claim & Cash Out" });
+      await expect(button).toBeVisible();
+      const before = await page.evaluate(() => ({ time: performance.now(), heap: performance.memory?.usedJSHeapSize ?? null }));
+      const responses: Array<{ status: number; timing: string | null; elapsedMs: number; body: unknown }> = [];
+      page.on("response", async (response) => {
+        if (!/\/allocations\/[^/]+\/claim$/.test(new URL(response.url()).pathname)) return;
+        let body: unknown = null;
+        try { body = await response.json(); } catch { /* Keep a redacted response record when JSON parsing fails. */ }
+        const timing = response.request().timing();
+        responses.push({ status: response.status(), timing: response.headers()["server-timing"] ?? null,
+          elapsedMs: timing.responseEnd - timing.startTime, body });
+      });
+      await button.click();
+      await expect.poll(() => responses.length, { timeout: 150_000 }).toBeGreaterThan(0);
+      const after = await page.evaluate(() => ({ time: performance.now(), heap: performance.memory?.usedJSHeapSize ?? null,
+        longTasks: (window as Window & { __payloreLongTasks?: number[] }).__payloreLongTasks ?? [] }));
+      const proofDurationMs = responses.flatMap((response) => {
+        const match = response.timing?.match(/confidential-proof;dur=([0-9.]+)/);
+        return match ? [Number(match[1])] : [];
+      });
+      await testInfo.attach("confidential-settlement-performance.json", { body: Buffer.from(JSON.stringify({
+        schemaVersion: 1, capturedAt: new Date().toISOString(), url: process.env.PAYLORE_E2E_SETTLEMENT_URL,
+        browserProject: testInfo.project.name, interactionDurationMs: after.time - before.time,
+        heapBeforeBytes: before.heap, heapAfterBytes: after.heap,
+        heapDeltaBytes: before.heap === null || after.heap === null ? null : after.heap - before.heap,
+        proofDurationMs, longTasksMs: after.longTasks,
+        longestLongTaskMs: Math.max(0, ...after.longTasks), responses
+      }, null, 2)), contentType: "application/json" });
+      expect(responses.some((response) => response.status === 200)).toBe(true);
+      expect(proofDurationMs.length).toBeGreaterThan(0);
+    } finally { await context.close(); }
+  });
+
   test("records claim proof UI duration when the flow is present without clicking submit", async ({ page }, testInfo) => {
     const startedAt = Date.now();
     await page.goto("/");

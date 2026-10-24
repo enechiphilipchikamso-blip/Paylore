@@ -4035,6 +4035,10 @@ export async function beginPayrollSettlementAttempt(
   }
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
+    const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
+      .from(workspaceReserves).where(eq(workspaceReserves.workspaceId, input.workspaceId)).for("update").limit(1);
+    if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+
     const rows = await tx.select({
       id: payrollAllocations.id,
       claimAddress: payrollAllocations.claimAddress,
@@ -4245,6 +4249,43 @@ export async function clearPayrollSettlementProofContexts(
   return Boolean(rows[0]);
 }
 
+export async function updatePendingPayrollSettlementBalanceSnapshot(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; sourceAvailableBefore: string; now?: Date }
+) {
+  if (!/^(0|[1-9][0-9]*)$/.test(input.sourceAvailableBefore)) {
+    throw new Error("The reserve's available confidential balance is invalid.");
+  }
+  const rows = await db.update(payrollAllocations).set({
+    settlementSourceAvailableBefore: input.sourceAvailableBefore,
+    updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.runId),
+    eq(payrollAllocations.status, "settlement_pending"),
+    isNull(payrollAllocations.settlementSignature)
+  )).returning({ id: payrollAllocations.id });
+  return Boolean(rows[0]);
+}
+
+export async function releaseFailedPayrollSettlementAttempt(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string; settlementSignature: string; now?: Date }
+) {
+  const rows = await db.update(payrollAllocations).set({
+    status: "unclaimed", settlementSignature: null, settlementSourceAvailableBefore: null,
+    settlementProofContextAddresses: [], settlementContextSignatures: [], updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollAllocations.id, input.allocationId),
+    eq(payrollAllocations.workspaceId, input.workspaceId),
+    eq(payrollAllocations.payrollRunId, input.runId),
+    eq(payrollAllocations.status, "settlement_pending"),
+    eq(payrollAllocations.settlementSignature, input.settlementSignature)
+  )).returning({ id: payrollAllocations.id });
+  return Boolean(rows[0]);
+}
+
 export async function getPayrollClaimCreationEvidence(
   db: Database,
   input: { workspaceId: string; runId: string; claimId: string; claimAddress: string }
@@ -4324,10 +4365,10 @@ export async function recordVerifiedPayrollClaimSettlement(
       return { status: "duplicate" as const };
     }
     if (
-      (allocation.status !== "settlement_pending" && allocation.status !== "unclaimed") ||
+      allocation.status !== "settlement_pending" ||
       allocation.claimAddress !== input.claimAddress ||
       allocation.transactionSignature !== input.claimCreationSignature ||
-      (allocation.settlementSignature !== null && allocation.settlementSignature !== input.settlementSignature) ||
+      allocation.settlementSignature !== input.settlementSignature ||
       (allocation.settlementSourceAvailableBefore !== null &&
         allocation.settlementSourceAvailableBefore !== input.sourceAvailableBefore)
     ) return { status: "conflict" as const };
@@ -4344,7 +4385,8 @@ export async function recordVerifiedPayrollClaimSettlement(
       eq(payrollAllocations.id, input.allocationId),
       eq(payrollAllocations.workspaceId, input.workspaceId),
       eq(payrollAllocations.payrollRunId, input.runId),
-      inArray(payrollAllocations.status, ["unclaimed", "settlement_pending"]),
+      eq(payrollAllocations.status, "settlement_pending"),
+      eq(payrollAllocations.settlementSignature, input.settlementSignature),
       eq(payrollAllocations.claimAddress, input.claimAddress),
       eq(payrollAllocations.transactionSignature, input.claimCreationSignature)
     )).returning({ id: payrollAllocations.id });
