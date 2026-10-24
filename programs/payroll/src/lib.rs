@@ -278,7 +278,7 @@ fn verify_allocation_merkle_proof(
     leaf_index: u32,
     siblings: &[[u8; 32]],
 ) -> bool {
-    if siblings.len() > 32 {
+    if siblings.len() > 16 {
         return false;
     }
     let mut current = hashv(&[
@@ -811,7 +811,7 @@ mod tests {
             root, claim_id, contributor, amount_commitment, 0, &[]
         ));
         assert!(!verify_allocation_merkle_proof(
-            root, claim_id, contributor, amount_commitment, 0, &[[9u8; 32]; 33]
+            root, claim_id, contributor, amount_commitment, 0, &[[9u8; 32]; 17]
         ));
     }
 
