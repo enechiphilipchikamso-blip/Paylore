@@ -2,6 +2,9 @@
 anchor_version = "1.2.0"
 package_manager = "pnpm"
 
+[programs.devnet]
+paylore_payroll = "4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93"
+
 [provider]
 cluster = "Devnet"
 wallet = "~/.config/solana/id.json"
