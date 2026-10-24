@@ -1021,6 +1021,20 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "amount_commitment_proof": {
+          "name": "amount_commitment_proof",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "amount_commitment_leaf_index": {
+          "name": "amount_commitment_leaf_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {
@@ -1151,6 +1165,10 @@
         "payroll_allocations_amount_commitment_format": {
           "name": "payroll_allocations_amount_commitment_format",
           "value": "amount_commitment IS NULL OR amount_commitment ~ '^[0-9a-f]{64}$'"
+        },
+        "payroll_allocations_amount_commitment_proof_format": {
+          "name": "payroll_allocations_amount_commitment_proof_format",
+          "value": "jsonb_typeof(amount_commitment_proof) = 'array' AND amount_commitment_leaf_index >= 0"
         }
       },
       "isRLSEnabled": false
