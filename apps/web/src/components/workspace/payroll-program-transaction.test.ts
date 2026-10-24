@@ -86,6 +86,47 @@ describe("payroll program transactions", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("uses single-claim transactions when Merkle proofs approach the size limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            context: { slot: 42 },
+            value: {
+              blockhash: "11111111111111111111111111111111",
+              lastValidBlockHeight: 100
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const transactions = await buildPayrollClaimTransactions({
+      authorityAddress,
+      workspaceId,
+      allocationCommitment: "ab".repeat(32),
+      claims: Array.from({ length: 3 }, (_, index) => ({
+        claimId: (index + 10).toString(16).padStart(2, "0").repeat(32),
+        contributorAddress: [
+          "11111111111111111111111111111111",
+          "Vote111111111111111111111111111111111111111",
+          "SysvarRent111111111111111111111111111111111"
+        ][index]!,
+        amountCommitment: "cd".repeat(32),
+        amountCommitmentProof: Array.from({ length: 10 }, () => "aa".repeat(32)),
+        amountCommitmentLeafIndex: index
+      })),
+      programId,
+      includeWorkspaceInitialization: false
+    });
+    expect(transactions).toHaveLength(3);
+    expect(transactions.every((transaction) => transaction.claimIds.length === 1)).toBe(true);
+    expect(transactions.every((transaction) => transaction.transaction.length <= 1232)).toBe(true);
+  });
+
   it("rejects duplicate claim identifiers", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
