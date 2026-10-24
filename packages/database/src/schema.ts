@@ -965,7 +965,13 @@ export const payrollAllocations =
       ),
       check(
         "payroll_allocations_amount_commitment_format",
-        sql`${table.amountCommitment} IS NULL OR ${table.amountCommitment} ~ '^[0-9a-f]{64}
+        sql.raw("amount_commitment IS NULL OR amount_commitment ~ '^[0-9a-f]{64}$'")
+      ),
+      check(
+        "payroll_allocations_amount_commitment_proof_format",
+        sql.raw("jsonb_typeof(amount_commitment_proof) = 'array' AND amount_commitment_leaf_index >= 0")
+      )
+    ]
   );
 
 export const contributorConfidentialAccounts =
