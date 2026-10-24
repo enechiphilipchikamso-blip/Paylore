@@ -313,6 +313,20 @@ export async function recoverPayrollAllocation(
     if (!escrow || escrow.payrollRunId !== input.runId || escrow.claimId !== allocation.claimId) {
       throw new PayrollConfidentialRecoveryError("payroll_claim_escrow_not_found", 409);
     }
+    const savedReason = escrow.recoveryReason;
+    const validReason = savedReason === "incorrect_allocation" ||
+      savedReason === "contributor_left_before_claim" ||
+      savedReason === "payroll_correction" || savedReason === "other";
+    const effectiveInput = escrow.status === "recovery_pending" && validReason
+      ? {
+          ...input,
+          reason: savedReason,
+          note: savedReason === "other" ? escrow.recoveryReasonNote : null
+        }
+      : input;
+    if (escrow.status === "recovery_pending" && !validReason) {
+      throw new PayrollConfidentialRecoveryError("payroll_recovery_reason_unavailable", 409);
+    }
     const rpc = createSolanaRpc(rpcEndpoint());
     const mintAddress = address(mint);
     const mintAccount = (await fetchMint(rpc, mintAddress)).data;
@@ -328,7 +342,7 @@ export async function recoverPayrollAllocation(
     });
 
     if (escrow.recoverySignature) {
-      return reconcileSubmittedRecovery(db, rpc, signer, input, {
+      return reconcileSubmittedRecovery(db, rpc, signer, effectiveInput, {
         allocation, escrow, evidence, amount: BigInt(allocation.amountBaseUnits), mint,
         programId, reserveTokenAddress, workspace, reserveState, escrowTokenAddress: escrow.tokenAccountAddress
       });
@@ -366,7 +380,8 @@ export async function recoverPayrollAllocation(
 
     if (allocation.status === "unclaimed" && escrow.status === "funded") {
       const attempt = await beginPayrollRecoveryAttempt(db, {
-        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+        reason: input.reason, reasonNote: input.reason === "other" ? input.note : null
       });
       if (attempt.status === "workspace_busy") return { status: "workspace_busy" };
       if (attempt.status === "reserve_not_found") {
@@ -377,6 +392,22 @@ export async function recoverPayrollAllocation(
       }
     } else if (allocation.status !== "recovery_pending" || escrow.status !== "recovery_pending") {
       throw new PayrollConfidentialRecoveryError("payroll_recovery_state_conflict", 409);
+    }
+
+    if (!escrow.recoverySignature && (escrow.recoveryProofContextAddresses ?? []).length > 0 &&
+        !(input.signature && input.phase === "proof_setup")) {
+      const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, {
+        workspaceId: input.workspaceId,
+        allocationId: input.allocationId,
+        addresses: escrow.recoveryProofContextAddresses ?? []
+      });
+      if (!cleaned) {
+        return { status: "pending", phase: "proof_setup", warning: "proof_context_cleanup_pending" };
+      }
+      const released = await releasePayrollRecoveryAttempt(db, {
+        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+      });
+      return released ? { status: "retry_ready" } : { status: "pending", phase: "proof_setup" };
     }
 
     const material = derivePayrollAmountCommitmentMaterial({
@@ -514,7 +545,7 @@ export async function recoverPayrollAllocation(
             : { status: "pending", signature: setup.signatures.at(-1), phase: "proof_setup", warning: "proof_context_cleanup_pending" };
         }
 
-        const reasonCommitment = recoveryReasonCommitment(input.reason, input.reason === "other" ? input.note : null);
+        const reasonCommitment = recoveryReasonCommitment(effectiveInput.reason, effectiveInput.reason === "other" ? effectiveInput.note : null);
         const ix = recoveryInstruction({
           programId, contributor: allocation.contributorWalletAddress, workspace, reserveState,
           reserveAuthority: signer.address, reserveToken: reserveTokenAddress, mint,
@@ -522,7 +553,9 @@ export async function recoverPayrollAllocation(
           amountCommitmentContext, reasonCommitment
         });
         const atomic = nonDivisibleSequentialInstructionPlan([transferIx, ix]);
+        let submittedRecoverySignature: string | undefined;
         const result = await executePlan(rpc, signer, atomic, async (signature) => {
+          submittedRecoverySignature = signature;
           await attachPayrollClaimEscrowRecoverySignature(db, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, signature
           });
@@ -537,6 +570,26 @@ export async function recoverPayrollAllocation(
           evidence, amount, mint, programId, reserveTokenAddress, workspace, reserveState,
           escrowTokenAddress: escrow.tokenAccountAddress
         }, signature);
+      } catch (error) {
+        const current = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId).catch(() => null);
+        const submitted = submittedRecoverySignature ?? current?.recoverySignature ?? null;
+        if (submitted) {
+          return { status: "pending", signature: submitted, phase: "recovery" };
+        }
+        if (current?.status === "recovery_pending") {
+          const contexts = current.recoveryProofContextAddresses ?? [];
+          const cleaned = contexts.length === 0 || await cleanupRecoveryProofContexts(db, rpc, signer, {
+            workspaceId: input.workspaceId, allocationId: input.allocationId, addresses: contexts
+          });
+          if (cleaned) {
+            await releasePayrollRecoveryAttempt(db, {
+              workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+            });
+          } else {
+            return { status: "pending", phase: "proof_setup", warning: "proof_context_cleanup_pending" };
+          }
+        }
+        throw error;
       } finally {
         secret.free(); elgamal.free(); aesKey.free();
         derived.elgamalKeypair.secretKey.fill(0); derived.aeKey.fill(0);
@@ -575,7 +628,6 @@ async function reconcileSubmittedRecovery(
   if (sourceBefore === null || reserveBefore === null) {
     throw new PayrollConfidentialRecoveryError("payroll_recovery_balance_snapshot_missing", 409);
   }
-  const cfg = loadPayloreConfig();
   const derived = await deriveConfidentialKeys({ signer });
   const secret = ElGamalSecretKey.fromBytes(derived.elgamalKeypair.secretKey);
   const aesKey = AeKey.fromBytes(derived.aeKey);
@@ -624,7 +676,7 @@ async function reconcileSubmittedRecovery(
       escrowTokenAccount: context.escrowTokenAddress,
       reserveTokenAccount: context.reserveTokenAddress,
       mint: context.mint,
-      recoveryReasonCommitment: recoveryReasonCommitment(input.reason, input.reason === "other" ? input.note : null)
+      recoveryReasonCommitment: recoveryReasonCommitment(effectiveInput.reason, effectiveInput.reason === "other" ? effectiveInput.note : null)
     });
     if (!await attachPayrollClaimEscrowRecoverySignature(db, {
       workspaceId: input.workspaceId, allocationId: input.allocationId, signature
@@ -691,7 +743,7 @@ async function reconcileSubmittedRecovery(
     });
     const recorded = await recordPayrollRecovery(db, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-      actorUserId: input.actorUserId, reason: input.reason, reasonNote: input.reason === "other" ? input.note : null,
+      actorUserId: input.actorUserId, reason: effectiveInput.reason, reasonNote: effectiveInput.reason === "other" ? effectiveInput.note : null,
       signature, claimAddress: context.allocation.claimAddress!, sourceAvailableBefore: sourceBefore,
       sourceAvailableAfter: source.available.toString(), reserveAvailableBefore: reserveBefore,
       reserveAvailableAfter: destination.available.toString()
