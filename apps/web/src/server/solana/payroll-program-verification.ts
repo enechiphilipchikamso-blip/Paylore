@@ -250,7 +250,7 @@ export async function verifyPayrollClaimTransaction(input: {
         !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment)) ||
         !Number.isSafeInteger(expected.amountCommitmentLeafIndex) ||
         expected.amountCommitmentLeafIndex < 0 ||
-        expected.amountCommitmentProof.length > 32 ||
+        expected.amountCommitmentProof.length > 16 ||
         new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(104, true) !== expected.amountCommitmentLeafIndex ||
         new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(108, true) !== expected.amountCommitmentProof.length ||
         data.length !== 112 + expected.amountCommitmentProof.length * 32 ||
