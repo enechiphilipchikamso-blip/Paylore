@@ -32,6 +32,7 @@ import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../..
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
 import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
+import { preparePayrollClaimEscrowAccount } from "../../../../../../../../server/solana/payroll-claim-escrow";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -98,7 +99,7 @@ type PreparedSponsorshipData = {
   allocationCommitment: string;
   claims: Array<{
     claimId: string; claimAddress: string; amountCommitment: string;
-    amountCommitmentProof: string[]; amountCommitmentLeafIndex: number
+    amountCommitmentProof: string[]; amountCommitmentLeafIndex: number; escrowTokenAccount: string
   }>;
   blockhash: string;
   transactionBase64: string;
@@ -122,6 +123,8 @@ function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData |
         typeof record.claimAddress === "string" &&
         typeof record.amountCommitment === "string" &&
         /^[0-9a-f]{64}$/i.test(record.amountCommitment) &&
+        typeof record.escrowTokenAccount === "string" &&
+        record.escrowTokenAccount.length >= 32 && record.escrowTokenAccount.length <= 44 &&
         Number.isSafeInteger(record.amountCommitmentLeafIndex) &&
         Number(record.amountCommitmentLeafIndex) >= 0 &&
         Array.isArray(record.amountCommitmentProof) &&
@@ -236,6 +239,9 @@ export async function POST(request: Request, { params }: RouteContext) {
 
     const run = await getWorkspacePayrollRun(db, workspaceId, runId);
     if (!run) return NextResponse.json({ error: "payroll_run_not_found" }, { status: 404 });
+    if (!config.PAYLORE_WRAPPED_USDC_MINT) {
+      return NextResponse.json({ error: "payroll_mint_not_configured" }, { status: 503 });
+    }
     if (!run.run.managerConfirmedAt || !run.run.allocationCommitment ||
         !["commit_pending", "submitting", "committed"].includes(run.run.status)) {
       return NextResponse.json({ error: "payroll_run_not_confirmed" }, { status: 409 });
@@ -259,12 +265,30 @@ export async function POST(request: Request, { params }: RouteContext) {
     )) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
-    const claims = selected.map((allocation) => ({
+    const escrowPreparations = await Promise.all(selected.map(async (allocation) =>
+      preparePayrollClaimEscrowAccount(db, {
+        workspaceId,
+        runId,
+        allocationId: allocation!.id,
+        authorityAddress: session.session.walletAddress!,
+        programId,
+        mintAddress: config.PAYLORE_WRAPPED_USDC_MINT!
+      })
+    ));
+    if (escrowPreparations.some((result) => result.status !== "ready")) {
+      return NextResponse.json({
+        status: "pending",
+        error: "payroll_claim_escrow_setup_pending",
+        message: "Paylore is preparing the confidential allocation account. No Claim PDA transaction was returned; retry preparation after the account setup is finalized."
+      }, { status: 202, headers: { "Cache-Control": "no-store" } });
+    }
+    const claims = selected.map((allocation, index) => ({
       claimId: allocation!.claimId!,
       contributorAddress: allocation!.contributorWalletAddress!,
       amountCommitment: allocation!.amountCommitment!,
       amountCommitmentProof: allocation!.amountCommitmentProof,
-      amountCommitmentLeafIndex: allocation!.amountCommitmentLeafIndex
+      amountCommitmentLeafIndex: allocation!.amountCommitmentLeafIndex,
+      escrowTokenAccount: escrowPreparations[index]!.tokenAccountAddress
     }));
     assertSponsoredClaimIntent({
       operation: "payroll_claim_commitment",
@@ -312,6 +336,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           claim.claimId.toLowerCase() !== claimIds[index] ||
           claim.amountCommitment.toLowerCase() !== claims[index]?.amountCommitment.toLowerCase() ||
           claim.amountCommitmentLeafIndex !== claims[index]?.amountCommitmentLeafIndex ||
+          claim.escrowTokenAccount !== claims[index]?.escrowTokenAccount ||
           JSON.stringify(claim.amountCommitmentProof) !== JSON.stringify(claims[index]?.amountCommitmentProof)
         )
       ) {
@@ -325,7 +350,11 @@ export async function POST(request: Request, { params }: RouteContext) {
         return {
           claimId: claim.claimId,
           claimAddress: claim.claimAddress,
-          contributorAddress: allocation.contributorWalletAddress
+          contributorAddress: allocation.contributorWalletAddress,
+          amountCommitment: claim.amountCommitment,
+          amountCommitmentProof: claim.amountCommitmentProof,
+          amountCommitmentLeafIndex: claim.amountCommitmentLeafIndex,
+          escrowTokenAccount: claim.escrowTokenAccount
         };
       });
       if (expectedClaims.some((claim) => claim === null)) return null;
@@ -338,6 +367,10 @@ export async function POST(request: Request, { params }: RouteContext) {
           claimId: string;
           claimAddress: string;
           contributorAddress: string;
+          amountCommitment: string;
+          amountCommitmentProof: string[];
+          amountCommitmentLeafIndex: number;
+          escrowTokenAccount: string;
         }>
       });
       const markedFinal = operationAlreadyFinalized || await updateGasTankOperationAttempt(db, {
@@ -593,9 +626,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           gasTankPrivateKey: privateKey,
           balanceLamports: tank.balanceLamports,
           allocationCommitment: run.run.allocationCommitment!,
-          claims: claims.map(({ claimId, contributorAddress, amountCommitment }) => ({
-            claimId, contributorAddress, amountCommitment
-          })),
+          claims: claims,
           dailyBookedFeesLamports: usage.feeLamports,
           dailyOperationCount: usage.operationCount
         })
