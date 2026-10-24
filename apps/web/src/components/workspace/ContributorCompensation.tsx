@@ -10,6 +10,7 @@ import {
   getConfidentialBalances,
   setupConfidentialAccount,
   unwrapWrappedUsdcToCircleUsdc,
+  verifyWrappedUsdcUnwrapCompatibility,
   withdrawConfidentialBalance
 } from "./confidential-account-transaction";
 
@@ -294,7 +295,7 @@ export function ContributorCompensation({
       if (action === "unwrap") {
         if (!tokenWrapUnwrapEnabled) {
           throw new Error(
-            "The Token Wrap operation is disabled until the deployed program ABI has been verified."
+            "Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction was submitted."
           );
         }
         if (!circleMint) {
@@ -317,7 +318,7 @@ export function ContributorCompensation({
           return;
         }
         await verifyWrappedUsdcUnwrapCompatibility(wallet, mint, circleMint, tokenWrapProgramId, amount);
-        if (!window.confirm(`Read-only simulation succeeded for the exact unwrap transaction. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle Devnet USDC? The amount and transaction are public on Solana.`)) {
+        if (!window.confirm(`Read-only compatibility checks and simulation succeeded for the exact unwrap plan. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle Devnet USDC? The amount and transaction are public on Solana.`)) {
           setMessage(null);
           return;
         }
@@ -621,8 +622,7 @@ export function ContributorCompensation({
           </p>
           {!tokenWrapUnwrapEnabled ? (
             <p role="status">
-              This action is disabled until the deployed Devnet Token Wrap
-              program is verified to match the transaction builder.
+              Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction can be submitted.
             </p>
           ) : null}
           <label className="field">
@@ -647,7 +647,7 @@ export function ContributorCompensation({
           >
             {tokenWrapUnwrapEnabled
               ? "Unwrap to Circle Devnet USDC"
-              : "Unwrap unavailable until program verification"}
+              : "Circle USDC conversion unavailable"}
           </button>
         </div>
       ) : null}

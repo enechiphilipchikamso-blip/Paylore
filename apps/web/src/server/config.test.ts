@@ -146,9 +146,15 @@ describe("parsePayloreConfig", () => {
     expect(config.PAYLORE_HELIUS_WEBHOOK_ID).toBeUndefined();
   });
 
-  it("keeps custom Token Wrap unwrap disabled until explicitly verified", () => {
+  it("enables the Devnet unwrap path by default while preserving an explicit opt-out", () => {
     expect(
       parsePayloreConfig({ NODE_ENV: "test" }).TOKEN_WRAP_UNWRAP_ENABLED
+    ).toBe(true);
+    expect(
+      parsePayloreConfig({
+        NODE_ENV: "test",
+        PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: "false"
+      }).TOKEN_WRAP_UNWRAP_ENABLED
     ).toBe(false);
     expect(
       parsePayloreConfig({

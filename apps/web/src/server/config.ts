@@ -78,7 +78,7 @@ const payloreConfigSchema = z.object({
   PAYLORE_PAYROLL_PROGRAM_ID: optionalSolanaAddressSchema,
   PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: z
     .enum(["true", "false"])
-    .default("false"),
+    .default("true"),
   PAYLORE_RESERVE_ENVELOPE_KEY: z
     .string()
     .optional(),
@@ -168,7 +168,7 @@ export function parseConfig(
 
 export function loadConfig(): AppConfig {
   return parseConfig(process.env);
-} 
+}
 
 export function parsePayloreConfig(
   env: NodeJS.ProcessEnv

@@ -10,7 +10,14 @@ import {
 import { getConfidentialAccountClosureBlocker } from "./confidential-account-closure-policy";
 import { buildWrappedUsdcUnwrapPlan } from "./token-wrap-transaction";
 import {
+  assertDevnetTokenWrapIdentity,
+  assertDevnetTokenWrapProgramAccount,
+  assertExactFinalizedUnwrapBalances,
+  assertExpectedAssociatedTokenAccount
+} from "./token-wrap-compatibility";
+import {
   TOKEN_2022_PROGRAM_ADDRESS,
+  TOKEN_PROGRAM_ADDRESS,
   fetchMint,
   fetchToken,
   findAssociatedTokenPda,
@@ -323,7 +330,7 @@ export async function getConfidentialBalances(
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const { keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
-  const elgamalKeypair = ElGamalKeypair.fromSecretKey(secretKey);
+  const elgamalKeypair = ElgamalKeypair.fromSecretKey(secretKey);
   const aeKey = AeKey.fromBytes(keys.aeKey);
   try {
     const mint = address(mintAddress);
@@ -484,7 +491,7 @@ export async function withdrawConfidentialBalance(
   const mint = address(mintAddress);
   const { keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
-  const elgamalKeypair = ElGamalKeypair.fromSecretKey(secretKey);
+  const elgamalKeypair = ElgamalKeypair.fromSecretKey(secretKey);
   const aeKey = AeKey.fromBytes(keys.aeKey);
   try {
     const { data: tokenAccount } = await fetchToken(rpc, token);
@@ -510,18 +517,234 @@ export async function withdrawConfidentialBalance(
   }
 }
 
+async function readFinalizedTokenAccountBalance(
+  rpc: ReturnType<typeof createSolanaRpc>,
+  tokenAccountAddress: string
+): Promise<bigint> {
+  const result = await rpc
+    .getTokenAccountBalance(address(tokenAccountAddress), { commitment: "finalized" })
+    .send();
+  if (!/^\d+$/.test(result.value.amount)) {
+    throw new Error("The finalized token-account balance response was invalid.");
+  }
+  return BigInt(result.value.amount);
+}
+
+type WrappedUsdcUnwrapPreflight = {
+  plan: InstructionPlan;
+  sourceTokenAccount: string;
+  destinationTokenAccount: string;
+  unwrappedEscrow: string;
+  sourceBalanceBefore: bigint;
+  destinationBalanceBefore: bigint;
+};
+
 export async function verifyWrappedUsdcUnwrapCompatibility(
-  wallet: Wallet, wrappedMintAddress: string, unwrappedMintAddress: string,
-  tokenWrapProgramAddress: string, amountBaseUnits: bigint
+  wallet: Wallet,
+  wrappedMintAddress: string,
+  unwrappedMintAddress: string,
+  tokenWrapProgramAddress: string,
+  amountBaseUnits: bigint
 ): Promise<void> {
+  await verifyWrappedUsdcUnwrapPlan(
+    wallet,
+    wrappedMintAddress,
+    unwrappedMintAddress,
+    tokenWrapProgramAddress,
+    amountBaseUnits
+  );
+}
+
+async function verifyWrappedUsdcUnwrapPlan(
+  wallet: Wallet,
+  wrappedMintAddress: string,
+  unwrappedMintAddress: string,
+  tokenWrapProgramAddress: string,
+  amountBaseUnits: bigint
+): Promise<WrappedUsdcUnwrapPreflight> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
-  const program = await fetchEncodedAccount(rpc, address(tokenWrapProgramAddress));
-  if (!program.exists || program.executable !== true) throw new Error("The configured Token Wrap program is not executable on Devnet.");
   const owner = address(wallet.account.address);
-  const built = await buildWrappedUsdcUnwrapPlan({ ownerAddress: owner, wrappedMintAddress, unwrappedMintAddress, tokenWrapProgramAddress, amount: amountBaseUnits });
+  const programAddress = address(tokenWrapProgramAddress);
+  const wrappedMint = address(wrappedMintAddress);
+  const unwrappedMint = address(unwrappedMintAddress);
+
+  const program = await fetchEncodedAccount(rpc, programAddress);
+  assertDevnetTokenWrapProgramAccount({
+    programAddress: tokenWrapProgramAddress,
+    ownerProgramAddress: program.exists ? program.owner : "",
+    executable: program.exists && program.executable === true
+  });
+
+  const wrappedMintAccount = await fetchEncodedAccount(rpc, wrappedMint);
+  const unwrappedMintAccount = await fetchEncodedAccount(rpc, unwrappedMint);
+  if (
+    !wrappedMintAccount.exists ||
+    wrappedMintAccount.owner !== TOKEN_2022_PROGRAM_ADDRESS
+  ) {
+    throw new Error(
+      "The approved wrapped-USDC mint is missing or is not owned by Token-2022. No transaction was submitted."
+    );
+  }
+  if (
+    !unwrappedMintAccount.exists ||
+    unwrappedMintAccount.owner !== TOKEN_PROGRAM_ADDRESS
+  ) {
+    throw new Error(
+      "Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
+    );
+  }
+
+  const built = await buildWrappedUsdcUnwrapPlan({
+    ownerAddress: owner,
+    wrappedMintAddress,
+    unwrappedMintAddress,
+    tokenWrapProgramAddress,
+    amount: amountBaseUnits
+  });
+  const [wrappedSupply, unwrappedSupply] = await Promise.all([
+    rpc.getTokenSupply(wrappedMint, { commitment: "finalized" }).send(),
+    rpc.getTokenSupply(unwrappedMint, { commitment: "finalized" }).send()
+  ]);
+  const wrappedMintData = await fetchMint(rpc, wrappedMint);
+  assertDevnetTokenWrapIdentity({
+    programAddress: tokenWrapProgramAddress,
+    wrappedMintAddress,
+    unwrappedMintAddress,
+    wrappedMintProgramAddress: wrappedMintAccount.owner,
+    unwrappedMintProgramAddress: unwrappedMintAccount.owner,
+    derivedWrappedMintAddress: built.expectedWrappedMintAddress,
+    wrappedMintDecimals: wrappedSupply.value.decimals,
+    unwrappedMintDecimals: unwrappedSupply.value.decimals
+  });
+  requireConfidentialMintExtensions(
+    isSome(wrappedMintData.data.extensions)
+      ? wrappedMintData.data.extensions.value
+      : []
+  );
+
+  const [expectedSourceTokenAccount] = await findAssociatedTokenPda({
+    owner,
+    mint: wrappedMint,
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+  });
+  const [expectedDestinationTokenAccount] = await findAssociatedTokenPda({
+    owner,
+    mint: unwrappedMint,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS
+  });
+  if (built.sourceTokenAccount !== expectedSourceTokenAccount) {
+    throw new Error(
+      "The wrapped-USDC source is not the connected wallet's deterministic Token-2022 account. No transaction was submitted."
+    );
+  }
+  assertExpectedAssociatedTokenAccount({
+    tokenAccountAddress: built.destinationTokenAccount,
+    expectedTokenAccountAddress: expectedDestinationTokenAccount,
+    tokenAccountProgramAddress: TOKEN_PROGRAM_ADDRESS,
+    expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
+    tokenAccountOwnerAddress: owner,
+    expectedOwnerAddress: owner,
+    tokenAccountMintAddress: unwrappedMint,
+    expectedMintAddress: unwrappedMint
+  });
+
+  const sourceAccountInfo = await fetchEncodedAccount(
+    rpc,
+    address(built.sourceTokenAccount)
+  );
+  if (
+    !sourceAccountInfo.exists ||
+    sourceAccountInfo.owner !== TOKEN_2022_PROGRAM_ADDRESS
+  ) {
+    throw new Error(
+      "The public wrapped-USDC source account is missing or uses the wrong token program. No transaction was submitted."
+    );
+  }
   const source = (await fetchToken(rpc, address(built.sourceTokenAccount))).data;
-  if (source.owner !== owner || source.mint !== address(wrappedMintAddress) || source.amount < amountBaseUnits) throw new Error("The public wrapped-USDC source account or balance is invalid.");
+  if (source.owner !== owner || source.mint !== wrappedMint) {
+    throw new Error(
+      "The public wrapped-USDC source account does not belong to this wallet and mint. No transaction was submitted."
+    );
+  }
+  const sourceBalanceBefore = await readFinalizedTokenAccountBalance(
+    rpc,
+    built.sourceTokenAccount
+  );
+  if (sourceBalanceBefore < amountBaseUnits) {
+    throw new Error(
+      "The finalized public wrapped-USDC balance is lower than the requested unwrap amount. No transaction was submitted."
+    );
+  }
+
+  const escrowInfo = await fetchEncodedAccount(
+    rpc,
+    address(built.unwrappedEscrow)
+  );
+  if (!escrowInfo.exists || escrowInfo.owner !== TOKEN_PROGRAM_ADDRESS) {
+    throw new Error(
+      "The Token Wrap escrow account is missing or uses the wrong token program. No transaction was submitted."
+    );
+  }
+  const escrow = (await fetchToken(rpc, address(built.unwrappedEscrow))).data;
+  if (
+    escrow.owner !== address(built.wrappedMintAuthority) ||
+    escrow.mint !== unwrappedMint
+  ) {
+    throw new Error(
+      "The Token Wrap escrow does not match the wrapped-mint authority and Circle Devnet USDC mint. No transaction was submitted."
+    );
+  }
+  const escrowBalance = await readFinalizedTokenAccountBalance(
+    rpc,
+    built.unwrappedEscrow
+  );
+  if (escrowBalance < amountBaseUnits) {
+    throw new Error(
+      "The Token Wrap escrow cannot cover the requested Circle-USDC release. No transaction was submitted."
+    );
+  }
+
+  const destinationInfo = await fetchEncodedAccount(
+    rpc,
+    address(built.destinationTokenAccount)
+  );
+  let destinationBalanceBefore = 0n;
+  if (destinationInfo.exists) {
+    if (destinationInfo.owner !== TOKEN_PROGRAM_ADDRESS) {
+      throw new Error(
+        "The existing Circle-USDC destination is not owned by the classic SPL Token program. No transaction was submitted."
+      );
+    }
+    const destination = (await fetchToken(
+      rpc,
+      address(built.destinationTokenAccount)
+    )).data;
+    assertExpectedAssociatedTokenAccount({
+      tokenAccountAddress: built.destinationTokenAccount,
+      expectedTokenAccountAddress: expectedDestinationTokenAccount,
+      tokenAccountProgramAddress: destinationInfo.owner,
+      expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
+      tokenAccountOwnerAddress: destination.owner,
+      expectedOwnerAddress: owner,
+      tokenAccountMintAddress: destination.mint,
+      expectedMintAddress: unwrappedMint
+    });
+    destinationBalanceBefore = await readFinalizedTokenAccountBalance(
+      rpc,
+      built.destinationTokenAccount
+    );
+  }
+
+  // A successful simulation of this exact SDK-generated plan is the on-chain ABI gate for the deployed fork.
   await executePlan(wallet, built.plan, undefined, { only: true });
+  return {
+    plan: built.plan,
+    sourceTokenAccount: built.sourceTokenAccount,
+    destinationTokenAccount: built.destinationTokenAccount,
+    unwrappedEscrow: built.unwrappedEscrow,
+    sourceBalanceBefore,
+    destinationBalanceBefore
+  };
 }
 
 export async function unwrapWrappedUsdcToCircleUsdc(
@@ -532,74 +755,85 @@ export async function unwrapWrappedUsdcToCircleUsdc(
   amountBaseUnits: bigint
 ): Promise<{ signature: string; recipientTokenAccount: string }> {
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
-  const owner = address(wallet.account.address);
-  const built = await buildWrappedUsdcUnwrapPlan({
-    ownerAddress: owner,
+  const preflight = await verifyWrappedUsdcUnwrapPlan(
+    wallet,
     wrappedMintAddress,
     unwrappedMintAddress,
     tokenWrapProgramAddress,
-    amount: amountBaseUnits
-  });
-  const { data: source } = await fetchToken(
-    rpc,
-    address(built.sourceTokenAccount)
+    amountBaseUnits
   );
-  if (
-    source.owner !== owner ||
-    source.mint !== address(wrappedMintAddress)
-  ) {
-    throw new Error(
-      "The public wrapped-USDC token account does not belong to this wallet."
-    );
-  }
-  if (source.amount < amountBaseUnits) {
-    throw new Error(
-      "The public wrapped-USDC balance is lower than the requested unwrap amount."
-    );
-  }
-  const destinationBeforeInfo = await fetchEncodedAccount(
-    rpc,
-    address(built.destinationTokenAccount)
-  );
-  const destinationBefore = destinationBeforeInfo.exists
-    ? (await fetchToken(rpc, address(built.destinationTokenAccount))).data
-        .amount
-    : 0n;
 
-  const signatures = await executePlan(wallet, built.plan, undefined, { only: false });
-  const signature = signatures.at(-1);
-  if (!signature) {
+  const signatures = await executePlan(
+    wallet,
+    preflight.plan,
+    undefined,
+    { only: false }
+  );
+  const transactionSignature = signatures.at(-1);
+  if (!transactionSignature) {
     throw new Error("The Token Wrap transaction did not return a signature.");
   }
-  let destination = source;
-  let sourceAfter = source;
+
   try {
-    destination = (await fetchToken(
+    const sourceInfo = await fetchEncodedAccount(
       rpc,
-      address(built.destinationTokenAccount)
-    )).data;
-    sourceAfter = (await fetchToken(
+      address(preflight.sourceTokenAccount)
+    );
+    const destinationInfo = await fetchEncodedAccount(
       rpc,
-      address(built.sourceTokenAccount)
-    )).data;
+      address(preflight.destinationTokenAccount)
+    );
+    if (
+      !sourceInfo.exists ||
+      sourceInfo.owner !== TOKEN_2022_PROGRAM_ADDRESS ||
+      !destinationInfo.exists ||
+      destinationInfo.owner !== TOKEN_PROGRAM_ADDRESS
+    ) {
+      throw new Error("A finalized token account is missing or owned by the wrong token program.");
+    }
+
+    const [sourceAfter, destinationAfter] = await Promise.all([
+      fetchToken(rpc, address(preflight.sourceTokenAccount)),
+      fetchToken(rpc, address(preflight.destinationTokenAccount))
+    ]);
+    assertExpectedAssociatedTokenAccount({
+      tokenAccountAddress: preflight.destinationTokenAccount,
+      expectedTokenAccountAddress: preflight.destinationTokenAccount,
+      tokenAccountProgramAddress: destinationInfo.owner,
+      expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
+      tokenAccountOwnerAddress: destinationAfter.data.owner,
+      expectedOwnerAddress: address(wallet.account.address),
+      tokenAccountMintAddress: destinationAfter.data.mint,
+      expectedMintAddress: address(unwrappedMintAddress)
+    });
+    if (
+      sourceAfter.data.owner !== address(wallet.account.address) ||
+      sourceAfter.data.mint !== address(wrappedMintAddress)
+    ) {
+      throw new Error("The finalized wrapped-USDC source identity changed.");
+    }
+
+    const [sourceBalanceAfter, destinationBalanceAfter] = await Promise.all([
+      readFinalizedTokenAccountBalance(rpc, preflight.sourceTokenAccount),
+      readFinalizedTokenAccountBalance(rpc, preflight.destinationTokenAccount)
+    ]);
+    assertExactFinalizedUnwrapBalances({
+      amountBaseUnits,
+      sourceBalanceBefore: preflight.sourceBalanceBefore,
+      sourceBalanceAfter,
+      destinationBalanceBefore: preflight.destinationBalanceBefore,
+      destinationBalanceAfter,
+      transactionSignature
+    });
   } catch (error) {
     throw new Error(
-      `The Token Wrap transaction finalized, but post-transaction balances could not be reconciled. Do not submit a duplicate unwrap. Transaction: ${signature}`,
+      `The Token Wrap transaction finalized, but its exact wrapped-token debit and Circle-USDC credit could not be reconciled. Do not submit a duplicate unwrap. Transaction: ${transactionSignature}`,
       { cause: error }
     );
   }
-  if (
-    destination.owner !== owner ||
-    destination.mint !== address(unwrappedMintAddress) ||
-    source.amount - sourceAfter.amount !== amountBaseUnits ||
-    destination.amount - destinationBefore !== amountBaseUnits
-  ) {
-    throw new Error(
-      `The unwrap finalized, but the exact wrapped-token debit and Circle-USDC credit could not be reconciled. Do not submit a duplicate unwrap. Transaction: ${signature}`
-    );
-  }
+
   return {
-    signature,
-    recipientTokenAccount: built.destinationTokenAccount
+    signature: transactionSignature,
+    recipientTokenAccount: preflight.destinationTokenAccount
   };
 }
