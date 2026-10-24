@@ -58,7 +58,10 @@ function prepare(overrides: Partial<Parameters<typeof prepareSponsoredPayrollCla
     gasTankPrivateKey: privateKey(),
     balanceLamports: "100000",
     allocationCommitment,
-    claims: [{ claimId, contributorAddress: "contributor-wallet", amountCommitment: "ab".repeat(32) }],
+    claims: [{
+      claimId, contributorAddress: "contributor-wallet", amountCommitment: "ab".repeat(32),
+      amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+    }],
     dailyBookedFeesLamports: 0n,
     dailyOperationCount: 0,
     ...overrides
@@ -121,7 +124,10 @@ describe("server-built Gas Tank sponsored transactions", () => {
       signature: "prepared-signature",
       feeLamports: "5000",
       gasTankAddress: "gas-tank-address",
-      claims: [{ claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32) }],
+      claims: [{
+        claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
+        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+      }],
       blockhash: "11111111111111111111111111111111",
       lastValidBlockHeight: 123
     });
