@@ -928,6 +928,8 @@ export const payrollAllocations =
         .references(() => contributors.id, { onDelete: "restrict" }),
       amountBaseUnits: text("amount_base_units").notNull(),
       amountCommitment: text("amount_commitment"),
+      amountCommitmentProof: jsonb("amount_commitment_proof").$type<string[]>().notNull().default([]),
+      amountCommitmentLeafIndex: integer("amount_commitment_leaf_index").notNull().default(0),
       claimId: text("claim_id").notNull(),
       claimAddress: text("claim_address"),
       status: text("status").notNull().default("unclaimed"),
