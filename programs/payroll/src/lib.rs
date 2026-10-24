@@ -140,6 +140,35 @@ pub mod paylore_payroll {
         transition_claim_to_settlement_pending(&mut ctx.accounts.claim)
     }
 
+    pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
+        validate_token_account_identity(
+            &ctx.accounts.reserve_token_account.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        validate_token_account_identity(
+            &ctx.accounts.destination_token_account.to_account_info(),
+            ctx.accounts.contributor.key(),
+            ctx.accounts.mint.key(),
+        )?;
+        require!(
+            has_matching_confidential_transfer(
+                &ctx.accounts.instructions_sysvar.to_account_info(),
+                ctx.accounts.reserve_token_account.key(),
+                ctx.accounts.mint.key(),
+                ctx.accounts.destination_token_account.key(),
+                ctx.accounts.amount_commitment_context.key(),
+            )?,
+            PayrollError::SettlementTransferMissing
+        );
+        validate_amount_commitment_context(
+            &ctx.accounts.amount_commitment_context.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.claim.amount_commitment,
+        )?;
+        transition_claim_to_claimed_after_transfer(&mut ctx.accounts.claim)
+    }
+
     pub fn finalize_claimed(ctx: Context<FinalizeClaimed>) -> Result<()> {
         transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
@@ -166,6 +195,12 @@ fn transition_claim_to_settlement_pending(claim: &mut ClaimState) -> Result<()> 
         PayrollError::InvalidClaimTransition
     );
     claim.status = ClaimStatus::SettlementPending;
+    Ok(())
+}
+
+fn transition_claim_to_claimed_after_transfer(claim: &mut ClaimState) -> Result<()> {
+    require!(claim.status == ClaimStatus::Unclaimed, PayrollError::InvalidClaimTransition);
+    claim.status = ClaimStatus::Claimed;
     Ok(())
 }
 
@@ -488,6 +523,32 @@ pub struct MarkSettlementPending<'info> {
     pub claim: Account<'info, ClaimState>,
     /// CHECK: The program reads the current transaction's instruction list only.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
+    /// CHECK: The ZK proof program owns and validates this typed context.
+    pub amount_commitment_context: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct MarkClaimed<'info> {
+    pub contributor: UncheckedAccount<'info>,
+    #[account(
+        seeds = [b"workspace", authority.key().as_ref(), workspace_seed(&workspace.workspace_id).as_ref()],
+        bump = workspace.bump,
+        has_one = authority
+    )]
+    pub workspace: Account<'info, WorkspaceState>,
+    #[account(mut, has_one = workspace)]
+    pub reserve_state: Account<'info, ReserveState>,
+    pub authority: Signer<'info>,
+    /// CHECK: Token-2022 validates the confidential source account.
+    pub reserve_token_account: UncheckedAccount<'info>,
+    /// CHECK: Token-2022 validates the mint extension.
+    pub mint: UncheckedAccount<'info>,
+    /// CHECK: Token-2022 validates the confidential destination account.
+    pub destination_token_account: UncheckedAccount<'info>,
+    #[account(mut, seeds = [b"claim", workspace.key().as_ref(), contributor.key().as_ref(), claim_id_seed(&claim.claim_id).as_ref()], bump = claim.bump)]
+    pub claim: Account<'info, ClaimState>,
+    /// CHECK: The instructions sysvar is read to bind the preceding transfer.
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: The ZK proof program owns and validates this typed context.
     pub amount_commitment_context: UncheckedAccount<'info>,
@@ -821,6 +882,22 @@ mod tests {
         );
 
         assert_ne!(first, other_claim);
+    }
+
+    #[test]
+    fn atomic_claimed_transition_only_accepts_an_unclaimed_entitlement() {
+        let mut claim = claim_state();
+        assert!(transition_claim_to_claimed_after_transfer(&mut claim).is_ok());
+        assert_eq!(claim.status, ClaimStatus::Claimed);
+        assert!(transition_claim_to_claimed_after_transfer(&mut claim).is_err());
+
+        let mut pending = claim_state();
+        assert!(transition_claim_to_settlement_pending(&mut pending).is_ok());
+        assert!(transition_claim_to_claimed_after_transfer(&mut pending).is_err());
+
+        let mut recovered = claim_state();
+        recovered.status = ClaimStatus::Recovered;
+        assert!(transition_claim_to_claimed_after_transfer(&mut recovered).is_err());
     }
 
     #[test]
