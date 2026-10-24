@@ -530,25 +530,51 @@ pub struct MarkSettlementPending<'info> {
 
 #[derive(Accounts)]
 pub struct MarkClaimed<'info> {
+    /// CHECK: ClaimState has_one plus its PDA seeds bind this identity.
     pub contributor: UncheckedAccount<'info>,
     #[account(
-        seeds = [b"workspace", authority.key().as_ref(), workspace_seed(&workspace.workspace_id).as_ref()],
+        seeds = [
+            b"workspace",
+            workspace.authority.as_ref(),
+            workspace.workspace_seed.as_ref()
+        ],
         bump = workspace.bump,
-        has_one = authority
+        constraint = claim.workspace == workspace.key()
     )]
     pub workspace: Account<'info, WorkspaceState>,
-    #[account(mut, has_one = workspace)]
-    pub reserve_state: Account<'info, ReserveState>,
-    pub authority: Signer<'info>,
-    /// CHECK: Token-2022 validates the confidential source account.
+    #[account(
+        mut,
+        seeds = [b"reserve", workspace.key().as_ref()],
+        bump = reserve_state.bump,
+        has_one = workspace
+    )]
+    pub reserve_state: Account<'info, WorkspaceReserveState>,
+    #[account(address = reserve_state.reserve_authority)]
+    pub reserve_authority: Signer<'info>,
+    #[account(address = reserve_state.reserve_token_account)]
+    /// CHECK: Identity is confirmed against the configured reserve owner and mint.
     pub reserve_token_account: UncheckedAccount<'info>,
-    /// CHECK: Token-2022 validates the mint extension.
+    #[account(address = reserve_state.mint)]
+    /// CHECK: The mint is bound to the configured Token-2022 reserve account.
     pub mint: UncheckedAccount<'info>,
-    /// CHECK: Token-2022 validates the confidential destination account.
+    #[account(mut)]
+    /// CHECK: Identity is confirmed against this claim's contributor and mint.
     pub destination_token_account: UncheckedAccount<'info>,
-    #[account(mut, seeds = [b"claim", workspace.key().as_ref(), contributor.key().as_ref(), claim_id_seed(&claim.claim_id).as_ref()], bump = claim.bump)]
+    #[account(
+        mut,
+        seeds = [
+            b"claim",
+            claim.workspace.as_ref(),
+            contributor.key().as_ref(),
+            claim.claim_id.as_ref()
+        ],
+        bump = claim.bump,
+        has_one = contributor,
+        constraint = claim.workspace == workspace.key()
+    )]
     pub claim: Account<'info, ClaimState>,
-    /// CHECK: The instructions sysvar is read to bind the preceding transfer.
+    /// CHECK: The program reads the current transaction's instruction list only.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: The ZK proof program owns and validates this typed context.
     pub amount_commitment_context: UncheckedAccount<'info>,
