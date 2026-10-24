@@ -125,7 +125,7 @@ function parsePreparedSponsorshipData(value: unknown): PreparedSponsorshipData |
         Number.isSafeInteger(record.amountCommitmentLeafIndex) &&
         Number(record.amountCommitmentLeafIndex) >= 0 &&
         Array.isArray(record.amountCommitmentProof) &&
-        record.amountCommitmentProof.length <= 32 &&
+        record.amountCommitmentProof.length <= 16 &&
         record.amountCommitmentProof.every((sibling) =>
           typeof sibling === "string" && /^[0-9a-f]{64}$/i.test(sibling)
         );
@@ -254,7 +254,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       !Number.isSafeInteger(allocation.amountCommitmentLeafIndex) ||
       (allocation.amountCommitmentLeafIndex ?? -1) < 0 ||
       !Array.isArray(allocation.amountCommitmentProof) ||
-      allocation.amountCommitmentProof.length > 32 ||
+      allocation.amountCommitmentProof.length > 16 ||
       !allocation.amountCommitmentProof.every((sibling) => /^[0-9a-f]{64}$/i.test(sibling))
     )) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
