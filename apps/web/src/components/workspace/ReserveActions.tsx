@@ -259,24 +259,7 @@ export function ReserveActions({
           ) : onChainAccount.status === "program_configured" ? (
             <>
               <p role="status">The finalized reserve token account and Paylore Program reserve state match. The state check does not by itself mean the reserve is funded.</p>
-              <p>Reserve Token-2022 account: <code>{onChainAccount.tokenAccount ?? "Not available"}</code></p>
-              <p>To fund the reserve manually, send only the configured wrapped-USDC mint on Devnet to this token account. Plain USDC or another mint is not interchangeable. Paylore does not sweep or automatically refill the reserve.</p>
-              <button
-                className="button button--secondary"
-                disabled={!onChainAccount.tokenAccount}
-                onClick={() => {
-                  const tokenAccount = onChainAccount.tokenAccount;
-                  if (!tokenAccount) return;
-                  void navigator.clipboard.writeText(tokenAccount).then(() => {
-                    setNotice({ state: "success", text: "Reserve token-account address copied." });
-                  }).catch(() => {
-                    setNotice({ state: "error", text: "Could not copy the reserve token-account address. Select and copy the address shown above." });
-                  });
-                }}
-                type="button"
-              >
-                Copy reserve token-account address
-              </button>
+
               <dl className="billing-period">
                 <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
                 <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
@@ -293,6 +276,29 @@ export function ReserveActions({
           ) : (
             <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
           )}
+          {onChainAccount.tokenAccount && onChainAccount.confidentialTransferReady ? (
+            <section className="reserve-summary" aria-label="Manual reserve funding">
+              <h3>Manual reserve funding</h3>
+              <p>Reserve Token-2022 account: <code>{onChainAccount.tokenAccount}</code></p>
+              <p>Public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
+              <p>To fund the reserve, send only the configured wrapped-USDC mint on Devnet to this token account. Plain USDC or another mint is not interchangeable. Paylore does not sweep or automatically refill the reserve.</p>
+              <button
+                className="button button--secondary"
+                onClick={() => {
+                  const tokenAccount = onChainAccount.tokenAccount;
+                  if (!tokenAccount) return;
+                  void navigator.clipboard.writeText(tokenAccount).then(() => {
+                    setNotice({ state: "success", text: "Reserve token-account address copied." });
+                  }).catch(() => {
+                    setNotice({ state: "error", text: "Could not copy the reserve token-account address. Select and copy the address shown above." });
+                  });
+                }}
+                type="button"
+              >
+                Copy reserve token-account address
+              </button>
+            </section>
+          ) : null}
           <button className="button button--secondary" disabled={checkingOnChain} onClick={() => void refreshOnChainState()} type="button">
             Refresh on-chain check
           </button>
