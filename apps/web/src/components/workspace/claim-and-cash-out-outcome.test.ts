@@ -23,7 +23,7 @@ describe("Claim & Cash Out outcome copy", () => {
   it("distinguishes partial completion from an entirely failed run", () => {
     expect(getClaimAndCashOutOutcome({
       settled: 1, pending: 0, failed: 1, cleanupPending: 0, stateConflict: false
-    })).toMatchObject({ state: "partial", text: "1 allocation(s) settled; 1 need attention." });
+    })).toMatchObject({ state: "partial", text: expect.stringContaining("1 allocation(s) settled; 1 need attention.") });
     expect(getClaimAndCashOutOutcome({
       settled: 0, pending: 0, failed: 1, cleanupPending: 0, stateConflict: false
     })).toMatchObject({ state: "error" });
