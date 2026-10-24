@@ -5828,15 +5828,22 @@ export async function beginPayrollClaimEscrowFunding(
   }).where(and(
     eq(payrollClaimEscrows.workspaceId, input.workspaceId),
     eq(payrollClaimEscrows.allocationId, input.allocationId),
-    inArray(payrollClaimEscrows.status, ["ready", "funding"])
+    eq(payrollClaimEscrows.status, "ready")
   )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
   if (updated[0]) return { status: "started" as const, tokenAccountAddress: updated[0].tokenAccountAddress };
   const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
-  return existing ? {
-    status: existing.status === "funded" ? "funded" as const :
-      existing.status === "funding" ? "pending" as const : "conflict" as const,
-    tokenAccountAddress: existing.tokenAccountAddress
-  } : { status: "not_found" as const };
+  if (!existing) return { status: "not_found" as const };
+  if (existing.status === "funded") {
+    return { status: "funded" as const, tokenAccountAddress: existing.tokenAccountAddress };
+  }
+  if (existing.status === "funding") {
+    return {
+      status: "pending" as const,
+      tokenAccountAddress: existing.tokenAccountAddress,
+      signature: existing.fundingSignature ?? undefined
+    };
+  }
+  return { status: "conflict" as const, tokenAccountAddress: existing.tokenAccountAddress };
 }
 
 export async function attachPayrollClaimEscrowFundingSignature(
@@ -5938,6 +5945,32 @@ export async function recordVerifiedPayrollClaimEscrowFunding(
     )).returning({ allocationId: payrollClaimEscrows.allocationId });
     return updated[0] ? { status: "funded" as const } : { status: "conflict" as const };
   });
+}
+
+export async function resetFailedPayrollClaimEscrowFunding(
+  db: Database,
+  input: { workspaceId: string; allocationId: string; signature: string | null; now?: Date }
+) {
+  const signatureCondition = input.signature === null
+    ? isNull(payrollClaimEscrows.fundingSignature)
+    : eq(payrollClaimEscrows.fundingSignature, input.signature);
+  const updated = await db.update(payrollClaimEscrows).set({
+    status: "ready",
+    fundingSignature: null,
+    fundingSourceAvailableBefore: null,
+    fundingSourceAvailableAfter: null,
+    fundingDestinationAvailableBefore: null,
+    fundingDestinationAvailableAfter: null,
+    updatedAt: input.now ?? new Date()
+  }).where(and(
+    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+    eq(payrollClaimEscrows.allocationId, input.allocationId),
+    eq(payrollClaimEscrows.status, "funding"),
+    signatureCondition
+  )).returning({ allocationId: payrollClaimEscrows.allocationId });
+  if (updated[0]) return true;
+  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  return Boolean(existing && existing.status === "ready" && existing.fundingSignature === null);
 }
 
 export async function beginPayrollRecoveryAttempt(
