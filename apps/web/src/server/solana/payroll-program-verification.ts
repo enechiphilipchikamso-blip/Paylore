@@ -459,11 +459,10 @@ export async function verifyPayrollRecoveryTransaction(input: {
     typeof tx.slot !== "number" ||
     !Array.isArray(signatures) ||
     !signatures.includes(input.signature) ||
-    !signedBy(accountKeys, input.authorityAddress) ||
     !signedBy(accountKeys, input.reserveAuthorityAddress) ||
     !Array.isArray(instructions)
   ) {
-    throw new Error("The recovery transaction is not finalized successfully with both required authorities.");
+    throw new Error("The recovery transaction is not finalized successfully with the reserve authority signature.");
   }
 
   const recoverDiscriminator = await instructionDiscriminator("global:recover_claim");
@@ -504,18 +503,17 @@ export async function verifyPayrollRecoveryTransaction(input: {
       data.length === 40 &&
       sameBytes(data.subarray(0, 8), recoverDiscriminator) &&
       sameBytes(data.subarray(8), reasonCommitment) &&
-      accounts.length === 11 &&
-      accounts[0] === input.authorityAddress &&
-      accounts[1] === input.contributorAddress &&
-      accounts[2] === workspace &&
-      accounts[3] === reserveState &&
-      accounts[4] === input.reserveAuthorityAddress &&
-      accounts[5] === input.reserveTokenAccount &&
-      accounts[6] === input.mint &&
-      accounts[7] === claim.address &&
-      accounts[8] === input.escrowTokenAccount &&
-      accounts[9] === instructionsSysvar &&
-      accounts[10] === transferContext
+      accounts.length === 10 &&
+      accounts[0] === input.contributorAddress &&
+      accounts[1] === workspace &&
+      accounts[2] === reserveState &&
+      accounts[3] === input.reserveAuthorityAddress &&
+      accounts[4] === input.reserveTokenAccount &&
+      accounts[5] === input.mint &&
+      accounts[6] === claim.address &&
+      accounts[7] === input.escrowTokenAccount &&
+      accounts[8] === instructionsSysvar &&
+      accounts[9] === transferContext
     ) {
       recoveryIndex = index;
       matchedRecoveries++;
