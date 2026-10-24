@@ -1099,6 +1099,8 @@ mod tests {
             claim_id: [1; 32],
             allocation_commitment: [2; 32],
             amount_commitment: [8; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: false,
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -1116,6 +1118,8 @@ mod tests {
             claim_id: [5; 32],
             allocation_commitment: [6; 32],
             amount_commitment: [9; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: false,
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -1128,6 +1132,8 @@ mod tests {
             claim_id: [3; 32],
             allocation_commitment: [4; 32],
             amount_commitment: [10; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: false,
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -1145,6 +1151,8 @@ mod tests {
             claim_id: [0; 32],
             allocation_commitment: [0; 32],
             amount_commitment: [0; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: false,
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -1156,6 +1164,7 @@ mod tests {
                 [1; 32],
                 [2; 32],
                 [8; 32],
+                Pubkey::new_unique(),
             ),
             Ok(false)
         ));
@@ -1175,6 +1184,7 @@ mod tests {
             [1; 32],
             [2; 32],
             [8; 32],
+            Pubkey::new_unique(),
         )
         .is_err());
         let matching = ClaimState {
@@ -1183,6 +1193,8 @@ mod tests {
             claim_id: existing.claim_id,
             allocation_commitment: existing.allocation_commitment,
             amount_commitment: existing.amount_commitment,
+            escrow_token_account: existing.escrow_token_account,
+            escrow_funded: existing.escrow_funded,
             status: ClaimStatus::Unclaimed,
             bump: existing.bump,
         };
@@ -1193,7 +1205,8 @@ mod tests {
                 existing.contributor,
                 existing.claim_id,
                 existing.allocation_commitment,
-                existing.amount_commitment
+                existing.amount_commitment,
+                existing.escrow_token_account
             ),
             Ok(true)
         ));
@@ -1203,6 +1216,8 @@ mod tests {
             claim_id: matching.claim_id,
             allocation_commitment: matching.allocation_commitment,
             amount_commitment: matching.amount_commitment,
+            escrow_token_account: matching.escrow_token_account,
+            escrow_funded: matching.escrow_funded,
             status: ClaimStatus::Claimed,
             bump: matching.bump,
         };
@@ -1212,7 +1227,8 @@ mod tests {
             existing.contributor,
             existing.claim_id,
             existing.allocation_commitment,
-            existing.amount_commitment
+            existing.amount_commitment,
+            existing.escrow_token_account
         )
         .is_err());
     }
