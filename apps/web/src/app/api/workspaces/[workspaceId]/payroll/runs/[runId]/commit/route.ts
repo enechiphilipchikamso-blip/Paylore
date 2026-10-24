@@ -111,7 +111,9 @@ export async function POST(request: Request, { params }: RouteContext) {
         claimId: allocation.claimId,
         claimAddress: submitted.claimAddress,
         contributorAddress: allocation.contributorWalletAddress,
-        amountCommitment: allocation.amountCommitment ?? ""
+        amountCommitment: allocation.amountCommitment ?? "",
+        amountCommitmentProof: allocation.amountCommitmentProof ?? [],
+        amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1
       };
     });
     if (!payrollRun.run.allocationCommitment) {
