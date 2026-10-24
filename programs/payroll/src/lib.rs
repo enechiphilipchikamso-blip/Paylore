@@ -40,6 +40,7 @@ pub mod paylore_payroll {
         ctx: Context<CreateClaim>,
         claim_id: [u8; 32],
         allocation_commitment: [u8; 32],
+        amount_commitment: [u8; 32],
     ) -> Result<()> {
         let claim = &mut ctx.accounts.claim;
         if validate_claim_initialization(
@@ -48,6 +49,7 @@ pub mod paylore_payroll {
             ctx.accounts.contributor.key(),
             claim_id,
             allocation_commitment,
+            amount_commitment,
         )? {
             return Ok(());
         }
@@ -55,6 +57,7 @@ pub mod paylore_payroll {
         claim.contributor = ctx.accounts.contributor.key();
         claim.claim_id = claim_id;
         claim.allocation_commitment = allocation_commitment;
+        claim.amount_commitment = amount_commitment;
         claim.status = ClaimStatus::Unclaimed;
         claim.bump = ctx.bumps.claim;
         Ok(())
@@ -111,9 +114,15 @@ pub mod paylore_payroll {
                 ctx.accounts.reserve_token_account.key(),
                 ctx.accounts.mint.key(),
                 ctx.accounts.destination_token_account.key(),
+                ctx.accounts.amount_commitment_context.key(),
             )?,
             PayrollError::SettlementTransferMissing
         );
+        validate_amount_commitment_context(
+            &ctx.accounts.amount_commitment_context.to_account_info(),
+            ctx.accounts.reserve_authority.key(),
+            ctx.accounts.claim.amount_commitment,
+        )?;
         transition_claim_to_settlement_pending(&mut ctx.accounts.claim)
     }
 
@@ -169,6 +178,7 @@ fn has_matching_confidential_transfer(
     source: Pubkey,
     mint: Pubkey,
     destination: Pubkey,
+    amount_commitment_context: Pubkey,
 ) -> Result<bool> {
     // The exact preceding instruction is the only safe binding: an earlier
     // transfer could be unrelated to this Claim PDA transition.
@@ -178,7 +188,7 @@ fn has_matching_confidential_transfer(
     }
     let previous = load_instruction_at_checked((current_index - 1) as usize, instructions_sysvar)?;
     Ok(is_matching_confidential_transfer_instruction(
-        &previous, source, mint, destination
+        &previous, source, mint, destination, amount_commitment_context
     ))
 }
 
@@ -187,14 +197,40 @@ fn is_matching_confidential_transfer_instruction(
     source: Pubkey,
     mint: Pubkey,
     destination: Pubkey,
+    amount_commitment_context: Pubkey,
 ) -> bool {
     instruction.program_id == TOKEN_2022_PROGRAM_ID
         && instruction.data.get(0..2) == Some(&[27u8, 7u8][..])
-        && instruction.accounts.len() >= 3
+        && instruction.accounts.len() >= 5
         && instruction.accounts[0].pubkey == source
         && instruction.accounts[1].pubkey == mint
         && instruction.accounts[2].pubkey == destination
+        && instruction.accounts[4].pubkey == amount_commitment_context
 }
+
+fn validate_amount_commitment_context(
+    account: &AccountInfo,
+    expected_authority: Pubkey,
+    expected_commitment: [u8; 32],
+) -> Result<()> {
+    require_keys_eq!(
+        *account.owner,
+        ZK_ELGAMAL_PROOF_PROGRAM_ID,
+        PayrollError::SettlementAmountBindingUnavailable
+    );
+    let data = account.try_borrow_data()?;
+    require!(data.len() == 161, PayrollError::SettlementAmountBindingUnavailable);
+    require!(
+        data[0..32] == expected_authority.to_bytes()[..]
+            && data[32] == 3
+            && data[129..161] == expected_commitment[..],
+        PayrollError::SettlementAmountBindingUnavailable
+    );
+    Ok(())
+}
+
+const ZK_ELGAMAL_PROOF_PROGRAM_ID: Pubkey =
+    pubkey!("ZkE4gkN2R9D3pJ9pF8G6v7k2L3x1bV5uQ4m8wT6sA1c");
 
 fn validate_token_account_identity(
     account: &AccountInfo,
@@ -224,6 +260,7 @@ fn validate_claim_initialization(
     contributor: Pubkey,
     claim_id: [u8; 32],
     allocation_commitment: [u8; 32],
+    amount_commitment: [u8; 32],
 ) -> Result<bool> {
     if claim.workspace == Pubkey::default() {
         return Ok(false);
@@ -233,6 +270,7 @@ fn validate_claim_initialization(
             && claim.contributor == contributor
             && claim.claim_id == claim_id
             && claim.allocation_commitment == allocation_commitment
+            && claim.amount_commitment == amount_commitment
             && claim.status == ClaimStatus::Unclaimed,
         PayrollError::ClaimInitializationConflict
     );
@@ -398,6 +436,8 @@ pub struct MarkSettlementPending<'info> {
     /// CHECK: The program reads the current transaction's instruction list only.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
+    /// CHECK: The ZK proof program owns and validates this typed context.
+    pub amount_commitment_context: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -499,12 +539,13 @@ pub struct ClaimState {
     pub contributor: Pubkey,
     pub claim_id: [u8; 32],
     pub allocation_commitment: [u8; 32],
+    pub amount_commitment: [u8; 32],
     pub status: ClaimStatus,
     pub bump: u8,
 }
 
 impl ClaimState {
-    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 1 + 1;
+    pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 32 + 1 + 1;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
@@ -533,7 +574,7 @@ pub enum PayrollError {
     ReserveConfigurationConflict,
     #[msg("Confidential settlement must include a matching Token-2022 transfer in the same transaction.")]
     SettlementTransferMissing,
-    #[msg("Confidential settlement cannot yet prove the transferred amount matches this allocation.")]
+    #[msg("The verified confidential-transfer amount commitment does not match this allocation.")]
     SettlementAmountBindingUnavailable,
 }
 
@@ -622,6 +663,7 @@ mod tests {
             contributor: Pubkey::new_unique(),
             claim_id: [1; 32],
             allocation_commitment: [2; 32],
+            amount_commitment: [8; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -638,6 +680,7 @@ mod tests {
             contributor: Pubkey::new_unique(),
             claim_id: [5; 32],
             allocation_commitment: [6; 32],
+            amount_commitment: [9; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -649,6 +692,7 @@ mod tests {
             contributor: Pubkey::new_unique(),
             claim_id: [3; 32],
             allocation_commitment: [4; 32],
+            amount_commitment: [10; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -665,6 +709,7 @@ mod tests {
             contributor: Pubkey::default(),
             claim_id: [0; 32],
             allocation_commitment: [0; 32],
+            amount_commitment: [0; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
@@ -683,6 +728,7 @@ mod tests {
             contributor: Pubkey::new_unique(),
             claim_id: [1; 32],
             allocation_commitment: [2; 32],
+            amount_commitment: [8; 32],
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
