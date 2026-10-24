@@ -473,7 +473,7 @@ async function verifyFinalizedSettlement(input: {
       !sameBytes(data.subarray(72, 104), claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
       !sameBytes(data.subarray(136, 168), amountCommitment) ||
-      (data[168] !== 1 && data[168] !== 3) || data[169] !== bump) {
+      data[168] !== 1 || data[169] !== bump) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
 }
