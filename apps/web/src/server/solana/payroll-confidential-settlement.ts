@@ -20,7 +20,10 @@ import {
   getConfidentialTransferInstructionPlan, getCreateConfidentialTransferAccountInstructionPlan
 } from "@solana-program/token-2022/confidential";
 import { closeContextStateProof, ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
-import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
+import {
+  AeKey, CiphertextCommitmentEqualityProofData, ElGamalCiphertext, ElGamalKeypair,
+  ElGamalSecretKey, PedersenCommitment, PedersenOpening
+} from "@solana/zk-sdk/bundler";
 import {
   appendPayrollSettlementContextSignature, attachPayrollSettlementSignature,
   beginPayrollSettlementAttempt, clearPayrollSettlementProofContexts,
@@ -37,6 +40,7 @@ import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
+import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
 import {
   advanceConfidentialSequence,
   assertConfidentialStepAllowed,
@@ -74,6 +78,69 @@ class FinalityPendingError extends Error {
 }
 class FinalityFailedError extends Error {
   constructor(readonly signature: string) { super("The transaction failed at finality."); }
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+/** Rebuilds the Token-2022 equality proof with the precommitted amount and deterministic opening. */
+function bindAmountCommitmentProof(
+  plan: InstructionPlan,
+  elgamal: ElGamalKeypair,
+  material: ReturnType<typeof derivePayrollAmountCommitmentMaterial>
+): InstructionPlan {
+  let matched = 0;
+  const rewrite = (current: InstructionPlan): InstructionPlan => {
+    if (current.kind === "single") {
+      const instruction = current.instruction;
+      if (
+        instruction.programAddress !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS ||
+        instruction.data[0] !== 3
+      ) return current;
+      matched += 1;
+      if (matched > 1) throw new PayrollConfidentialSettlementError("confidential_amount_proof_ambiguous", 503);
+      const original = CiphertextCommitmentEqualityProofData.fromBytes(instruction.data.slice(1));
+      const context = new Uint8Array(original.context().toBytes());
+      if (context.length !== 128 ||
+          !context.subarray(0, 32).every((byte, index) => byte === elgamal.pubkey().toBytes()[index])) {
+        throw new PayrollConfidentialSettlementError("confidential_amount_proof_key_mismatch", 503);
+      }
+      const ciphertext = ElGamalCiphertext.fromBytes(context.slice(32, 96));
+      if (!ciphertext) throw new PayrollConfidentialSettlementError("confidential_amount_proof_ciphertext_invalid", 503);
+      const opening = PedersenOpening.fromBytes(material.opening);
+      const commitment = PedersenCommitment.fromBytes(
+        Uint8Array.from(material.amountCommitment.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16))
+      );
+      const proof = new CiphertextCommitmentEqualityProofData(
+        elgamal, ciphertext, commitment, opening, material.amountBaseUnits
+      );
+      proof.verify();
+      const proofContext = new Uint8Array(proof.context().toBytes());
+      if (!proofContext.subarray(96, 128).every((byte, index) =>
+        byte === Uint8Array.from(material.amountCommitment.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16))[index]
+      )) {
+        throw new PayrollConfidentialSettlementError("confidential_amount_proof_commitment_mismatch", 503);
+      }
+      return {
+        ...current,
+        instruction: {
+          ...instruction,
+          data: concatBytes(Uint8Array.of(instruction.data[0]!), new Uint8Array(proof.toBytes()))
+        }
+      };
+    }
+    return { ...current, plans: current.plans.map(rewrite) } as InstructionPlan;
+  };
+  const bound = rewrite(plan);
+  if (matched !== 1) throw new PayrollConfidentialSettlementError("confidential_amount_proof_missing", 503);
+  return bound;
 }
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -304,6 +371,7 @@ function configureReserveInstruction(input: {
 function markSettlementPendingInstruction(input: {
   programId: string; contributor: string; workspace: string; reserveState: string;
   reserveAuthority: string; reserveToken: string; mint: string; destination: string; claim: string;
+  amountCommitmentContext: string;
 }): Instruction {
   return {
     programAddress: address(input.programId),
@@ -316,7 +384,8 @@ function markSettlementPendingInstruction(input: {
       { address: address(input.mint), role: AccountRole.READONLY },
       { address: address(input.destination), role: AccountRole.WRITABLE },
       { address: address(input.claim), role: AccountRole.WRITABLE },
-      { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY }
+      { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY },
+      { address: address(input.amountCommitmentContext), role: AccountRole.READONLY }
     ],
     data: discriminator("global:mark_settlement_pending")
   };
