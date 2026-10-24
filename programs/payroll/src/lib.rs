@@ -889,6 +889,20 @@ pub enum PayrollError {
 mod tests {
     use super::*;
 
+    fn claim_state() -> ClaimState {
+        ClaimState {
+            workspace: Pubkey::new_unique(),
+            contributor: Pubkey::new_unique(),
+            claim_id: [1; 32],
+            allocation_commitment: [2; 32],
+            amount_commitment: [3; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: true,
+            status: ClaimStatus::Unclaimed,
+            bump: 0,
+        }
+    }
+
     #[test]
     fn workspace_pda_is_scoped_to_authority_and_workspace_id() {
         let authority = Pubkey::new_unique();
@@ -1174,6 +1188,8 @@ mod tests {
             claim_id: [1; 32],
             allocation_commitment: [2; 32],
             amount_commitment: [8; 32],
+            escrow_token_account: Pubkey::new_unique(),
+            escrow_funded: false,
             status: ClaimStatus::Unclaimed,
             bump: 0,
         };
