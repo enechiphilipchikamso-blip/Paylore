@@ -5,6 +5,17 @@ import { auditPayrollProgramIdl, EXPECTED_PAYLORE_PROGRAM_ID } from "./audit-pay
 const byte32 = { array: ["u8", 32] };
 const vecByte32 = { vec: byte32 };
 const definedClaimStatus = { defined: { name: "ClaimStatus" } };
+const anchorConfig = [
+  "[toolchain]",
+  'anchor_version = "1.2.0"',
+  "",
+  "[programs.devnet]",
+  'paylore_payroll = "' + EXPECTED_PAYLORE_PROGRAM_ID + '"',
+  "",
+  "[provider]",
+  'cluster = "Devnet"',
+  'wallet = "~/.config/solana/id.json"'
+].join("\n");
 const source = "declare_id!(\"4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93\");\n#[program]\npub mod paylore_payroll {\npub fn initialize_workspace(ctx: Context<InitializeWorkspace>, workspace_id: String, workspace_seed: [u8; 32]) -> Result<()> {}\npub fn create_claim(ctx: Context<CreateClaim>, claim_id: [u8; 32], allocation_commitment: [u8; 32], amount_commitment: [u8; 32], amount_commitment_leaf_index: u32, amount_commitment_proof: Vec<[u8; 32]>, escrow_token_account: Pubkey) -> Result<()> {}\npub fn configure_workspace_reserve(ctx: Context<ConfigureWorkspaceReserve>) -> Result<()> {}\npub fn mark_settlement_pending(ctx: Context<MarkSettlementPending>) -> Result<()> {}\npub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {}\npub fn mark_claim_escrow_funded(ctx: Context<MarkClaimEscrowFunded>) -> Result<()> {}\npub fn recover_claim(ctx: Context<RecoverClaim>, recovery_reason_commitment: [u8; 32]) -> Result<()> {}\npub fn finalize_claimed(ctx: Context<FinalizeClaimed>) -> Result<()> {}\n}\npub struct InitializeWorkspace {\n  pub authority: Signer<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub system_program: Program<'info, System>,\n}\npub struct CreateClaim {\n  pub authority: Signer<'info>,\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub claim: Account<'info, ClaimState>,\n  pub system_program: Program<'info, System>,\n}\npub struct ConfigureWorkspaceReserve {\n  pub authority: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub reserve_token_account: UncheckedAccount<'info>,\n  pub mint: UncheckedAccount<'info>,\n  pub system_program: Program<'info, System>,\n}\npub struct MarkSettlementPending {\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub reserve_token_account: UncheckedAccount<'info>,\n  pub mint: UncheckedAccount<'info>,\n  pub claim: Account<'info, ClaimState>,\n  pub escrow_token_account: UncheckedAccount<'info>,\n  pub destination_token_account: UncheckedAccount<'info>,\n  pub instructions_sysvar: UncheckedAccount<'info>,\n  pub amount_commitment_context: UncheckedAccount<'info>,\n}\npub struct MarkClaimed {\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub reserve_token_account: UncheckedAccount<'info>,\n  pub mint: UncheckedAccount<'info>,\n  pub claim: Account<'info, ClaimState>,\n  pub escrow_token_account: UncheckedAccount<'info>,\n  pub destination_token_account: UncheckedAccount<'info>,\n  pub instructions_sysvar: UncheckedAccount<'info>,\n  pub amount_commitment_context: UncheckedAccount<'info>,\n}\npub struct MarkClaimEscrowFunded {\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub reserve_token_account: UncheckedAccount<'info>,\n  pub mint: UncheckedAccount<'info>,\n  pub claim: Account<'info, ClaimState>,\n  pub escrow_token_account: UncheckedAccount<'info>,\n  pub instructions_sysvar: UncheckedAccount<'info>,\n  pub amount_commitment_context: UncheckedAccount<'info>,\n}\npub struct RecoverClaim {\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub reserve_token_account: UncheckedAccount<'info>,\n  pub mint: UncheckedAccount<'info>,\n  pub claim: Account<'info, ClaimState>,\n  pub escrow_token_account: UncheckedAccount<'info>,\n  pub instructions_sysvar: UncheckedAccount<'info>,\n  pub amount_commitment_context: UncheckedAccount<'info>,\n}\npub struct FinalizeClaimed {\n  pub contributor: UncheckedAccount<'info>,\n  pub workspace: Account<'info, WorkspaceState>,\n  pub reserve_state: Account<'info, WorkspaceReserveState>,\n  pub reserve_authority: Signer<'info>,\n  pub claim: Account<'info, ClaimState>,\n}\npub struct ClaimState {\n  pub workspace: Pubkey,\n  pub contributor: Pubkey,\n  pub claim_id: [u8; 32],\n  pub allocation_commitment: [u8; 32],\n  pub amount_commitment: [u8; 32],\n  pub escrow_token_account: Pubkey,\n  pub escrow_funded: bool,\n  pub status: ClaimStatus,\n  pub bump: u8,\n}\nimpl ClaimState { pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 1; }\npub enum ClaimStatus {\n  Unclaimed,\n  Claimed,\n  Recovered,\n  SettlementPending,\n}";
 
 function instruction(name, accounts, args = []) {
@@ -37,7 +48,7 @@ function validIdl() {
 }
 
 test("accepts the existing Devnet Program ID and complete source/IDL ABI", () => {
-  assert.deepEqual(auditPayrollProgramIdl({ idl: validIdl(), source }), {
+  assert.deepEqual(auditPayrollProgramIdl({ idl: validIdl(), source, anchorConfig }), {
     programId: EXPECTED_PAYLORE_PROGRAM_ID,
     verifiedInstructions: ["initialize_workspace", "create_claim", "configure_workspace_reserve", "mark_settlement_pending", "mark_claimed", "mark_claim_escrow_funded", "recover_claim", "finalize_claimed"],
     verifiedAccountLayouts: ["ClaimState", "ClaimStatus"]
@@ -85,4 +96,19 @@ test("rejects a changed state byte encoding", () => {
   const idl = validIdl();
   idl.types.find((item) => item.name === "ClaimStatus").type.variants.reverse();
   assert.throws(() => auditPayrollProgramIdl({ idl, source }), /ClaimStatus variant order/);
+});
+
+test("rejects a non-Devnet Anchor provider target", () => {
+  const config = anchorConfig.replace('cluster = "Devnet"', 'cluster = "Mainnet"');
+  assert.throws(() => auditPayrollProgramIdl({ idl: validIdl(), source, anchorConfig: config }), /must remain Devnet/);
+});
+
+test("rejects a different program address in the Devnet Anchor map", () => {
+  const config = anchorConfig.replace(EXPECTED_PAYLORE_PROGRAM_ID, "11111111111111111111111111111111");
+  assert.throws(() => auditPayrollProgramIdl({ idl: validIdl(), source, anchorConfig: config }), /must map paylore_payroll/);
+});
+
+test("rejects configuring the existing Payroll Program under Mainnet", () => {
+  const config = anchorConfig + '\n[programs.mainnet]\npaylore_payroll = "' + EXPECTED_PAYLORE_PROGRAM_ID + '"\n';
+  assert.throws(() => auditPayrollProgramIdl({ idl: validIdl(), source, anchorConfig: config }), /must not be configured for Mainnet/);
 });
