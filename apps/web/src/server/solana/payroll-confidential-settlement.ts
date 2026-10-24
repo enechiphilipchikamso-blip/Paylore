@@ -34,7 +34,7 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses, matchesExactConfidentialDebit
+  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 
