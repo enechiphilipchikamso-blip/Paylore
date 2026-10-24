@@ -406,6 +406,7 @@ async function verifyFinalizedSettlement(input: {
   rpc: ReturnType<typeof createSolanaRpc>; signature: string; programId: string; workspace: string;
   reserveState: string; reserveAuthority: string; reserveToken: string; contributor: string;
   destination: string; mint: string; claim: string; claimId: string; allocationCommitment: string;
+  amountCommitment: string;
 }): Promise<void> {
   const txResult = await input.rpc.getTransaction(input.signature as Signature, {
     encoding: "json", commitment: "finalized", maxSupportedTransactionVersion: 0
@@ -480,6 +481,7 @@ async function reconcileSettlement(
     workspaceId: string; runId: string; allocationId: string; contributorUserId: string;
     contributor: string; claim: string; claimId: string; creationSignature: string; settlementSignature: string;
     amount: string; mint: string; programId: string; authority: string; commitment: string;
+    amountCommitment: string;
     workspace: string; reserveState: string; reserveToken: string; destination: string; sourceBefore: string;
     proofContexts: string[]; proofDurationMs?: number;
   }
@@ -508,7 +510,8 @@ async function reconcileSettlement(
     try {
       claimState = await readFinalizedClaimState({
         rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
-        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+        claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
+        amountCommitment: input.amountCommitment
       });
     } catch {
       return { status: "pending", signature: input.settlementSignature };
@@ -544,12 +547,14 @@ async function reconcileSettlement(
       rpc, signature: input.settlementSignature, programId: input.programId, workspace: input.workspace,
       reserveState: input.reserveState, reserveAuthority: signer.address, reserveToken: input.reserveToken,
       contributor: input.contributor, destination: input.destination, mint: input.mint,
-      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
+      amountCommitment: input.amountCommitment
     }),
     readFinalizedSourceAvailable: async () => sourceAfter,
     readFinalizedClaimState: async () => readFinalizedClaimState({
       rpc, programId: input.programId, workspace: input.workspace, contributor: input.contributor,
-      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment
+      claim: input.claim, claimId: input.claimId, allocationCommitment: input.commitment,
+      amountCommitment: input.amountCommitment
     }),
     finalizeClaimed: async () => {
       const tx = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
@@ -914,7 +919,8 @@ export async function settleContributorPayrollAllocation(
           claim: allocation.claimAddress, claimId: allocation.claimId, creationSignature: allocation.transactionSignature,
           settlementSignature: submittedSignature, amount: allocation.amountBaseUnits, mint, programId,
           authority: evidence.authorityAddress, commitment: evidence.allocationCommitment, workspace, reserveState,
-          reserveToken, destination, sourceBefore, proofContexts, proofDurationMs
+          reserveToken, destination, sourceBefore, proofContexts, proofDurationMs,
+          amountCommitment: allocation.amountCommitment!
         });
         if (reconciled.status === "claimed") {
           assertConfidentialStepAllowed(sequence, "confidential_transfer");
