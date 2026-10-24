@@ -54,7 +54,7 @@ export default async function ContributorInvitationsPage({
       <InvitationManager
         workspaceId={workspaceId}
         contributors={contributors
-          .filter((contributor) => contributor.lifecycle !== "left")
+          .filter((contributor) => contributor.lifecycle !== "left" && contributor.role !== "organization_admin")
           .map(({ id, displayName, role }) => ({ id, displayName, role }))}
         invitations={invitations.map((invitation) => ({
           id: invitation.id,

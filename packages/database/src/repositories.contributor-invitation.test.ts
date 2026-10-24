@@ -25,12 +25,15 @@ function insertBuilder(returningResult: unknown, calls: Array<Record<string, unk
   builder.returning = vi.fn(() => Promise.resolve(returningResult));
   return builder;
 }
-function fakeDatabase(role: "contributor" | "finance_auditor" | "organization_admin") {
+function fakeDatabase(
+  role: "contributor" | "finance_auditor" | "organization_admin",
+  lifecycle: "active" | "left" = "active"
+) {
   const calls: Array<Record<string, unknown>> = [];
   const invitation = {
     id: "invitation-a", workspaceId: "workspace-a", contributorId: "contributor-a",
     acceptedAt: null, expiresAt: new Date("2026-11-01T00:00:00.000Z"),
-    identityWalletAddress: "assigned-wallet", contributorRole: role
+    identityWalletAddress: "assigned-wallet", contributorRole: role, lifecycle
   };
   let updateCount = 0;
   const tx = {
@@ -56,6 +59,17 @@ describe("contributor invitation membership role", () => {
       workspaceId: "workspace-a", userId: "assigned-user", role: "finance_auditor"
     });
   });
+  it("does not reactivate a contributor who left after the invitation was created", async () => {
+    const fixture = fakeDatabase("contributor", "left");
+    const result = await acceptContributorInvitation(fixture.db, {
+      tokenHash: "token-hash", userId: "assigned-user", walletAddress: "assigned-wallet",
+      now: new Date("2026-10-24T00:00:00.000Z")
+    });
+    expect(result).toBeNull();
+    expect(fixture.tx.update).not.toHaveBeenCalled();
+    expect(fixture.tx.insert).not.toHaveBeenCalled();
+  });
+
   it("does not let an invitation elevate a record to Organization Administrator", async () => {
     const fixture = fakeDatabase("organization_admin");
     const result = await acceptContributorInvitation(fixture.db, {

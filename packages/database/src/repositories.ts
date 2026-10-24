@@ -680,7 +680,12 @@ export async function findInvitationEntryTarget(
       .limit(1);
 
   const invitation = rows[0];
-  if (!invitation || invitation.expiresAt <= now || invitation.acceptedAt) {
+  if (
+    !invitation ||
+    invitation.expiresAt <= now ||
+    invitation.acceptedAt ||
+    invitation.contributorRole === "organization_admin"
+  ) {
     return null;
   }
 
@@ -2285,7 +2290,8 @@ export async function acceptContributorInvitation(
           expiresAt: contributorInvitations.expiresAt,
           identityWalletAddress:
             contributors.identityWalletAddress,
-          contributorRole: contributors.role
+          contributorRole: contributors.role,
+          lifecycle: contributors.lifecycle
         })
         .from(contributorInvitations)
         .innerJoin(
@@ -2308,7 +2314,8 @@ export async function acceptContributorInvitation(
     if (
       !invitation ||
       invitation.expiresAt <= now ||
-      invitation.acceptedAt
+      invitation.acceptedAt ||
+      invitation.lifecycle === "left"
     ) {
       return null;
     }
