@@ -100,8 +100,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "confirmed", signature: attempt.signature });
       return NextResponse.json({ status: "active" });
     } catch (error) {
-      if (error instanceof PaymentVerificationError && error.reason === "not_found") return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
-      if (error instanceof PaymentVerificationError) return NextResponse.json({ error: "payment_could_not_be_verified" }, { status: 422 });
+      if (error instanceof PaymentVerificationError && error.reason === "not_found") {
+        return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+      }
+      if (error instanceof PaymentVerificationError && error.reason === "configuration") {
+        return NextResponse.json({ error: "payment_configuration_incomplete" }, { status: 503 });
+      }
+      if (error instanceof PaymentVerificationError) {
+        const failed = await updateSubscriptionPaymentAttemptStatus(db, {
+          attemptId: attempt.id,
+          status: "failed",
+          signature: attempt.signature
+        });
+        if (!failed) {
+          const current = await getSubscriptionPaymentAttempt(db, attempt.id);
+          if (current?.status === "confirmed") return NextResponse.json({ status: "active" });
+          return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+        }
+        return NextResponse.json({ error: "payment_could_not_be_verified" }, { status: 422 });
+      }
       throw error;
     }
   } catch (error) {
