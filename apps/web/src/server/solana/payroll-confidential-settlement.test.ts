@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   allocation: null as any,
   payroll: null as any,
   nextSteps: [] as string[],
+  executionOrder: [] as string[],
   currentStep: "other",
   sendCount: 0,
   signatureSteps: {} as Record<string, string>,
@@ -116,6 +117,40 @@ function finalizedTransaction(signature: string) {
   };
 }
 
+function identifyTransactionStep(plan: unknown): string {
+  const instructions: Array<Record<string, unknown>> = [];
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+    const node = value as Record<string, unknown>;
+    const instruction = node.instruction;
+    if (instruction !== null && typeof instruction === "object" && !Array.isArray(instruction)) {
+      instructions.push(instruction as Record<string, unknown>);
+    } else if (typeof node.programAddress === "string" && node.data instanceof Uint8Array) {
+      instructions.push(node);
+    }
+    if (Array.isArray(node.plans)) node.plans.forEach(visit);
+  };
+  visit(plan);
+
+  const has = (program: string, first: number, second?: number) => instructions.some((instruction) => {
+    const data = instruction.data;
+    return instruction.programAddress === program && data instanceof Uint8Array &&
+      data[0] === first && (second === undefined || data[1] === second);
+  });
+
+  if (has(h.tokenProgram, 27, 7)) return "transfer";
+  if (has(h.tokenProgram, 202)) return "deposit";
+  if (has(h.tokenProgram, 201)) return "apply";
+  if (has(h.tokenProgram, 200)) return "account_setup";
+  if (has(h.zkProofProgram, 3)) return "proof_setup";
+  if (instructions.some((instruction) =>
+    instruction.programAddress === h.programId &&
+    instruction.data instanceof Uint8Array &&
+    Buffer.from(instruction.data).equals(anchorDiscriminator("global:configure_workspace_reserve"))
+  )) return "configure";
+  return "other";
+}
+
 function resetHarness(): void {
   Object.assign(h, {
     allocation: {
@@ -135,6 +170,7 @@ function resetHarness(): void {
     },
     payroll: null,
     nextSteps: ["configure", "proof_setup", "transfer"],
+    executionOrder: [],
     currentStep: "other",
     sendCount: 0,
     signatureSteps: {},
@@ -203,7 +239,13 @@ vi.mock("@solana/kit", () => ({
   })),
   createTransactionMessage: () => ({}),
   createTransactionPlanner: () => async (plan: any) => {
-    h.currentStep = h.nextSteps.shift() ?? "other";
+    const step = identifyTransactionStep(plan);
+    h.executionOrder.push(step);
+    const expected = h.nextSteps.shift();
+    if (expected !== undefined && expected !== step) {
+      throw new Error(`Unexpected settlement order: expected ${expected}, received ${step}.`);
+    }
+    h.currentStep = step;
     return plan;
   },
   createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
@@ -421,6 +463,7 @@ describe("settleContributorPayrollAllocation integration", () => {
       amountBaseUnits: h.amountBaseUnits
     });
     expect(h.settlementSubmitted).toBe(true);
+    expect(h.executionOrder).toEqual(["configure", "proof_setup", "transfer"]);
     expect(h.attachCalls).toBe(1);
     expect(h.ledgerCalls).toBe(1);
     expect(h.clearContextsCalls).toBe(1);
@@ -434,6 +477,7 @@ describe("settleContributorPayrollAllocation integration", () => {
 
     expect(result.status).toBe("claimed");
     expect(h.depositComplete).toBe(true);
+    expect(h.executionOrder).toEqual(["configure", "deposit", "proof_setup", "transfer"]);
     expect(h.ledgerCalls).toBe(1);
   });
 
@@ -445,6 +489,7 @@ describe("settleContributorPayrollAllocation integration", () => {
 
     expect(result.status).toBe("claimed");
     expect(h.applyComplete).toBe(true);
+    expect(h.executionOrder).toEqual(["configure", "apply", "proof_setup", "transfer"]);
     expect(h.ledgerCalls).toBe(1);
   });
 
