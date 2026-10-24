@@ -106,6 +106,7 @@ export function assertSponsoredClaimIntent(input: {
   }
   for (const claim of input.claims) {
     hex32(claim.claimId);
+    hex32(claim.amountCommitment);
     if (!claim.contributorAddress ||
         (claim.claimAddress !== undefined && !claim.claimAddress)) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_mapping_invalid");
