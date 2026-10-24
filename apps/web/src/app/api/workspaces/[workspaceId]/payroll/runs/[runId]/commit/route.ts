@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getWorkspaceForUser,
   getWorkspacePayrollRun,
+  getPayrollClaimEscrow,
   recordPayrollClaimSubmission,
   updateGasTankOperationAttempt
 } from "@paylore/database";
@@ -100,12 +101,16 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 404 }
       );
     }
-    const expectedClaims = submittedClaims.map((submitted) => {
+    const expectedClaims = await Promise.all(submittedClaims.map(async (submitted) => {
       const allocation = payrollRun.allocations.find(
         (candidate) => candidate.claimId === submitted.claimId
       );
       if (!allocation) {
         throw new Error("Submitted allocation does not belong to this run.");
+      }
+      const escrow = await getPayrollClaimEscrow(db, workspaceId, allocation.id);
+      if (!escrow || !["ready", "funding", "funded"].includes(escrow.status)) {
+        throw new Error("The allocation's confidential claim escrow is not ready.");
       }
       return {
         claimId: allocation.claimId,
@@ -113,9 +118,10 @@ export async function POST(request: Request, { params }: RouteContext) {
         contributorAddress: allocation.contributorWalletAddress,
         amountCommitment: allocation.amountCommitment ?? "",
         amountCommitmentProof: allocation.amountCommitmentProof ?? [],
-        amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1
+        amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1,
+        escrowTokenAccount: escrow.tokenAccountAddress
       };
-    });
+    }));
     if (!payrollRun.run.allocationCommitment) {
       return NextResponse.json(
         { error: "payroll_run_not_committed" },
@@ -175,8 +181,15 @@ export async function POST(request: Request, { params }: RouteContext) {
       signature: body.signature,
       programId,
       authorityAddress: session.session.walletAddress,
-      claims: submittedClaims
+      claims: expectedClaims.map((claim) => ({
+        claimId: claim.claimId,
+        claimAddress: claim.claimAddress,
+        escrowTokenAccount: claim.escrowTokenAccount
+      }))
     });
+    if (result.status === "escrow_not_ready" || result.status === "escrow_identity_conflict") {
+      return NextResponse.json({ error: "payroll_claim_escrow_not_ready" }, { status: 409 });
+    }
     if (result.status === "not_found") {
       return NextResponse.json(
         { error: "payroll_run_not_found" },
