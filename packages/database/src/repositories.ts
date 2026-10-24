@@ -27,6 +27,7 @@ import {
 } from "./gas-tank-operation-history";
 import {
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
+  getDueSubscriptionRenewalReminderDays,
   hasReachedInactivityThreshold,
   isContributorAssociationCleanupEligible,
   isWorkspaceRetentionEligible,
@@ -942,6 +943,45 @@ export async function updateSubscriptionPaymentAttemptStatus(
   return rows[0] ?? null;
 }
 
+async function ensureSubscriptionPaymentNotification(
+  tx: Database,
+  input: {
+    workspaceId: string;
+    signature: string;
+    periodEnd: Date | null;
+    now: Date;
+    title: string;
+  }
+) {
+  const members = await tx
+    .select({ userId: workspaceMemberships.userId })
+    .from(workspaceMemberships)
+    .where(eq(workspaceMemberships.workspaceId, input.workspaceId));
+  if (members.length === 0) return;
+  const periodEndLabel = input.periodEnd
+    ? input.periodEnd.toISOString().slice(0, 10)
+    : "not yet available";
+  await tx
+    .insert(workspaceNotifications)
+    .values(members.map((member) => ({
+      workspaceId: input.workspaceId,
+      recipientKey: member.userId,
+      eventKey: `subscription-payment-confirmed:${input.signature}`,
+      category: "Workspace & Billing",
+      title: input.title,
+      body: `Paylore verified the $49 monthly USDC subscription payment. The current paid period ends on ${periodEndLabel}. Renewal is manual; Paylore will not charge automatically.`,
+      destination: `/workspace/${input.workspaceId}/billing`,
+      createdAt: input.now
+    })))
+    .onConflictDoNothing({
+      target: [
+        workspaceNotifications.workspaceId,
+        workspaceNotifications.eventKey,
+        workspaceNotifications.recipientKey
+      ]
+    });
+}
+
 export async function applyVerifiedSubscriptionPayment(
   db: Database,
   input: {
@@ -1038,6 +1078,13 @@ export async function applyVerifiedSubscriptionPayment(
         prior?.workspaceId === input.workspaceId &&
         prior.userId === input.userId
       ) {
+        await ensureSubscriptionPaymentNotification(tx as unknown as Database, {
+          workspaceId: input.workspaceId,
+          signature: input.signature,
+          periodEnd: current.periodEnd,
+          now,
+          title: current.status === "active" ? "Workspace active" : "Subscription payment confirmed"
+        });
         return {
           duplicate: true,
           periodEnd: current.periodEnd,
@@ -1110,6 +1157,17 @@ export async function applyVerifiedSubscriptionPayment(
           workspaceLedgerEntries.idempotencyKey
         ]
       });
+
+    await ensureSubscriptionPaymentNotification(tx as unknown as Database, {
+      workspaceId: input.workspaceId,
+      signature: input.signature,
+      periodEnd: updated[0].periodEnd,
+      now,
+      title: current.periodEnd && current.periodEnd > now &&
+        (current.status === "active" || current.status === "cancel_scheduled")
+        ? "Subscription renewed"
+        : "Workspace active"
+    });
 
     return {
       duplicate: false,
@@ -3050,6 +3108,72 @@ export async function createWorkspaceRetentionNotice(
       .set({ lastNoticeDay: input.day, updatedAt: input.now })
       .where(eq(workspaceRetention.workspaceId, input.workspaceId));
     return { created: inserted.length, advanced: true };
+  });
+}
+
+export async function createDueSubscriptionRenewalReminders(
+  db: Database,
+  now: Date,
+  limit = 500
+) {
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 1, 1), 500);
+  return db.transaction(async (tx) => {
+    const subscriptions = await tx
+      .select({
+        workspaceId: workspaceSubscriptions.workspaceId,
+        periodEnd: workspaceSubscriptions.periodEnd,
+        status: workspaceSubscriptions.status
+      })
+      .from(workspaceSubscriptions)
+      .where(and(
+        inArray(workspaceSubscriptions.status, ["active", "cancel_scheduled"]),
+        gt(workspaceSubscriptions.periodEnd, now)
+      ))
+      .orderBy(asc(workspaceSubscriptions.periodEnd))
+      .limit(boundedLimit);
+
+    let subscriptionsProcessed = 0;
+    let notificationsCreated = 0;
+    for (const subscription of subscriptions) {
+      if (!subscription.periodEnd) continue;
+      const dueDays = getDueSubscriptionRenewalReminderDays(subscription.periodEnd, now);
+      if (dueDays.length === 0) continue;
+      subscriptionsProcessed += 1;
+      const members = await tx
+        .select({ userId: workspaceMemberships.userId })
+        .from(workspaceMemberships)
+        .where(eq(workspaceMemberships.workspaceId, subscription.workspaceId));
+      if (members.length === 0) continue;
+
+      const notices = dueDays.flatMap((days) => members.map((member) => {
+        const canceled = subscription.status === "cancel_scheduled";
+        return {
+          workspaceId: subscription.workspaceId,
+          recipientKey: member.userId,
+          eventKey: `subscription-renewal-reminder:${subscription.periodEnd!.getTime()}:${days}`,
+          category: "Workspace & Billing",
+          title: "Subscription expires soon",
+          body: canceled
+            ? `Your workspace subscription ends in ${days} day${days === 1 ? "" : "s"}. Cancellation is scheduled at the end of the paid period. Renew manually before then to keep normal workspace operations available.`
+            : `Your workspace subscription ends in ${days} day${days === 1 ? "" : "s"}. Renewal is manual. Review billing to renew before the paid period ends and avoid Read-Only Archive.`,
+          destination: `/workspace/${subscription.workspaceId}/billing`,
+          createdAt: now
+        };
+      }));
+      const inserted = await tx
+        .insert(workspaceNotifications)
+        .values(notices)
+        .onConflictDoNothing({
+          target: [
+            workspaceNotifications.workspaceId,
+            workspaceNotifications.eventKey,
+            workspaceNotifications.recipientKey
+          ]
+        })
+        .returning({ id: workspaceNotifications.id });
+      notificationsCreated += inserted.length;
+    }
+    return { subscriptionsProcessed, notificationsCreated };
   });
 }
 
