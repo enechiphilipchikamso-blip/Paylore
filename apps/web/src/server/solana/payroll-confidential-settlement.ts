@@ -349,7 +349,7 @@ function programOf(instruction: Record<string, unknown>, keys: string[]): string
   if (typeof instruction.programId === "string") return instruction.programId;
   return typeof instruction.programIdIndex === "number" ? keys[instruction.programIdIndex] ?? "" : "";
 }
-type FinalizedClaimState = "unclaimed" | "claimed" | "recovered";
+type FinalizedClaimState = "unclaimed" | "settlement_pending" | "claimed" | "recovered";
 
 async function readFinalizedClaimState(input: {
   rpc: ReturnType<typeof createSolanaRpc>;
