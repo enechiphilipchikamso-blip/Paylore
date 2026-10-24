@@ -13,6 +13,7 @@ import { assertSameOrigin, RequestSecurityError } from "../../../../../../server
 import { getDatabase } from "../../../../../../server/db";
 import { loadPayloreConfig } from "../../../../../../server/config";
 import { derivePayrollAmountCommitmentMaterial } from "../../../../../../server/solana/payroll-amount-commitment";
+import { buildPayrollAllocationMerkleTree } from "../../../../../../server/solana/payroll-allocation-merkle";
 import {
   previewPayrollFile,
   type PayrollContributor
@@ -195,9 +196,6 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 409 }
       );
     }
-    const allocationCommitment = createHash("sha256")
-      .update(`paylore:allocation:v1:${workspaceId}:${JSON.stringify(canonicalRows)}`)
-      .digest("hex");
     const commitmentSecret = loadPayloreConfig().PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET;
     if (!commitmentSecret) {
       return NextResponse.json(
@@ -205,21 +203,39 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 503, headers: { "Cache-Control": "no-store" } }
       );
     }
-    const allocationInputs = rows.map((row) => {
+    const committedRows = canonicalRows.map((row) => {
       const claimId = createHash("sha256")
         .update(`${workspaceId}:${idempotencyValue}:${row.contributorId}`)
         .digest("hex");
       const amountCommitment = derivePayrollAmountCommitmentMaterial({
         amountBaseUnits: row.amountBaseUnits,
         claimId,
-        allocationCommitment,
         secretHex: commitmentSecret
       }).amountCommitment;
       return {
         contributorId: row.contributorId,
+        identityWalletAddress: row.identityWalletAddress,
         amountBaseUnits: row.amountBaseUnits,
         amountCommitment,
         claimId
+      };
+    });
+    const merkleTree = buildPayrollAllocationMerkleTree(committedRows.map((row) => ({
+      claimId: row.claimId,
+      contributorAddress: row.identityWalletAddress,
+      amountCommitment: row.amountCommitment
+    })));
+    const allocationCommitment = merkleTree.allocationCommitment;
+    const allocationInputs = committedRows.map((row) => {
+      const proof = merkleTree.proofs.find((candidate) => candidate.claimId === row.claimId);
+      if (!proof) throw new Error("The allocation Merkle proof could not be derived.");
+      return {
+        contributorId: row.contributorId,
+        amountBaseUnits: row.amountBaseUnits,
+        amountCommitment: row.amountCommitment,
+        amountCommitmentProof: proof.siblings,
+        amountCommitmentLeafIndex: proof.leafIndex,
+        claimId: row.claimId
       };
     });
     const saved = await createPayrollDraft(access.db, {
