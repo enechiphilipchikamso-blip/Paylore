@@ -25,6 +25,40 @@ function canonicalType(value) {
   return JSON.stringify(value, Object.keys(value).sort());
 }
 
+
+function tomlSectionValues(document, wantedSection) {
+  const values = {};
+  let section = "";
+  for (const line of document.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (header) {
+      section = header[1];
+      continue;
+    }
+    if (section !== wantedSection) continue;
+    const assignment = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*["']([^"']*)["']\s*$/);
+    if (assignment) values[assignment[1]] = assignment[2];
+  }
+  return values;
+}
+
+function auditAnchorConfig(anchorConfig, sourceId) {
+  if (typeof anchorConfig !== "string" || anchorConfig.trim() === "") {
+    throw new Error("Anchor.toml is required to verify the deployed Payroll Program target.");
+  }
+  const provider = tomlSectionValues(anchorConfig, "provider");
+  if (provider.cluster !== "Devnet") {
+    throw new Error("Anchor.toml provider cluster must remain Devnet for this stage.");
+  }
+  const devnetPrograms = tomlSectionValues(anchorConfig, "programs.devnet");
+  if (devnetPrograms.paylore_payroll !== sourceId) {
+    throw new Error("Anchor.toml must map paylore_payroll to the existing Paylore Devnet Program ID.");
+  }
+  if (tomlSectionValues(anchorConfig, "programs.mainnet").paylore_payroll) {
+    throw new Error("The Paylore Payroll Program must not be configured for Mainnet in this stage.");
+  }
+}
+
 function rustType(value) {
   const compact = value.replace(/\s/g, "");
   if (compact === "String") return "string";
@@ -214,7 +248,7 @@ function auditClaimStateIdl(idl, source) {
 }
 
 /** Verifies ABI-critical instructions and serialized Claim PDA layout against Rust source and generated Anchor IDL. */
-export function auditPayrollProgramIdl({ idl, source }) {
+export function auditPayrollProgramIdl({ idl, source, anchorConfig }) {
   if (!idl || typeof idl !== "object" || !Array.isArray(idl.instructions)) {
     throw new Error("Generated Payroll Program IDL is malformed or has no instruction list.");
   }
@@ -224,6 +258,7 @@ export function auditPayrollProgramIdl({ idl, source }) {
   }
   const idlId = idl.address ?? idl.metadata?.address;
   if (idlId !== sourceId) throw new Error("Generated Payroll Program IDL address does not match the source Program ID.");
+  if (anchorConfig !== undefined) auditAnchorConfig(anchorConfig, sourceId);
 
   for (const expected of EXPECTED_INSTRUCTIONS) requiredInstruction(idl.instructions, expected, source);
   auditClaimStateIdl(idl, source);
@@ -237,6 +272,7 @@ export function auditPayrollProgramIdl({ idl, source }) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const idlPath = resolve(process.argv[2] ?? "target/idl/paylore_payroll.json");
   const sourcePath = resolve(process.argv[3] ?? "programs/payroll/src/lib.rs");
+  const anchorConfigPath = resolve(process.argv[4] ?? "Anchor.toml");
   let idl;
   try {
     idl = JSON.parse(readFileSync(idlPath, "utf8"));
@@ -244,6 +280,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     throw new Error("Unable to read generated IDL at " + idlPath + ". Run anchor build before this audit.", { cause: error });
   }
   const source = readFileSync(sourcePath, "utf8");
-  const result = auditPayrollProgramIdl({ idl, source });
+  const anchorConfig = readFileSync(anchorConfigPath, "utf8");
+  const result = auditPayrollProgramIdl({ idl, source, anchorConfig });
   process.stdout.write(JSON.stringify({ status: "source_idl_parity_verified", ...result }, null, 2) + "\n");
 }
