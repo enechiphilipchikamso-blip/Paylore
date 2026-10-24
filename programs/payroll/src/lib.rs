@@ -255,9 +255,9 @@ fn verify_allocation_merkle_proof(
     let mut index = leaf_index;
     for sibling in siblings {
         current = if index & 1 == 0 {
-            hashv(&[&current, sibling]).to_bytes()
+            hashv(&[b"paylore:allocation-node:v1\0", &current, sibling]).to_bytes()
         } else {
-            hashv(&[sibling, &current]).to_bytes()
+            hashv(&[b"paylore:allocation-node:v1\0", sibling, &current]).to_bytes()
         };
         index >>= 1;
     }
@@ -707,7 +707,7 @@ mod tests {
             sibling_contributor.as_ref(),
             &sibling_amount,
         ]).to_bytes();
-        let root = hashv(&[&leaf, &sibling]).to_bytes();
+        let root = hashv(&[b"paylore:allocation-node:v1\0", &leaf, &sibling]).to_bytes();
         assert!(verify_allocation_merkle_proof(
             root, claim_id, contributor, amount_commitment, 0, &[sibling]
         ));
