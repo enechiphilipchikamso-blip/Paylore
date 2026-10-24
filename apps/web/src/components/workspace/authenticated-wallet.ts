@@ -1,5 +1,6 @@
 "use client";
 
+import { getWallets } from "@wallet-standard/app";
 import {
   SolanaSignAndSendTransaction,
   SolanaSignMessage,
@@ -99,14 +100,13 @@ function matchesSupportedWallet(name: string): boolean {
   ].includes(name.toLowerCase().replace(/[^a-z0-9]/g, ""));
 }
 
-export async function findAuthenticatedWallet(walletAddress: string): Promise<{
+export function findAuthenticatedWallet(walletAddress: string): {
   account: WalletAccount;
   signAndSendTransaction: SolanaSignAndSendTransactionMethod;
   signMessage: SolanaSignMessageMethod | null;
   signTransaction: SolanaSignTransactionMethod | null;
   disconnect: (() => Promise<void>) | null;
 }> {
-  const { getWallets } = await import("@wallet-standard/app");
   const registry = getWallets() as WalletRegistry;
   const wallet = registry.get().find((registeredWallet) =>
     matchesSupportedWallet(registeredWallet.name) &&
