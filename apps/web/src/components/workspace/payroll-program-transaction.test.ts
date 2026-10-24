@@ -23,7 +23,8 @@ describe("payroll program transactions", () => {
         claims: [
           {
             claimId: "invalid",
-            contributorAddress: "11111111111111111111111111111111"
+            contributorAddress: "11111111111111111111111111111111",
+            amountCommitment: "cd".repeat(32)
           }
         ],
         programId,
@@ -58,6 +59,7 @@ describe("payroll program transactions", () => {
       allocationCommitment: "ab".repeat(32),
       claims: Array.from({ length: 5 }, (_, index) => ({
         claimId: index.toString(16).padStart(2, "0").repeat(32),
+        amountCommitment: "cd".repeat(32),
         contributorAddress: [
           "11111111111111111111111111111111",
           "Vote111111111111111111111111111111111111111",
@@ -92,6 +94,7 @@ describe("payroll program transactions", () => {
         claims: [
           {
             claimId: "01".repeat(32),
+        amountCommitment: "cd".repeat(32),
             contributorAddress: "Vote111111111111111111111111111111111111111"
           },
           {
@@ -122,6 +125,7 @@ describe("payroll program transactions", () => {
           },
           {
             claimId: "02".repeat(32),
+        amountCommitment: "cd".repeat(32),
             contributorAddress
           }
         ],
