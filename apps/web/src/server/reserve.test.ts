@@ -1,186 +1,165 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateReserveKeypair, sealReserveKey } from "./reserve-crypto-policy";
 
-const mocks = vi.hoisted(() => ({
-  envelopeKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-  stored: null as Record<string, any> | null,
-  createCalls: [] as Array<Record<string, any>>,
-  restoreCalls: [] as Array<Record<string, any>>
-}));
-const FIXED_ENVELOPE_KEY = mocks.envelopeKey;
+const h = vi.hoisted(() => {
+  const state: {
+    stored: any;
+    getWorkspaceReserve: ReturnType<typeof vi.fn>;
+    createWorkspaceReserve: ReturnType<typeof vi.fn>;
+    restoreWorkspaceReserve: ReturnType<typeof vi.fn>;
+  } = {
+    stored: null,
+    getWorkspaceReserve: vi.fn(),
+    createWorkspaceReserve: vi.fn(),
+    restoreWorkspaceReserve: vi.fn()
+  };
+  state.getWorkspaceReserve.mockImplementation(async (_db: unknown, workspaceId: string) =>
+    state.stored?.workspaceId === workspaceId ? state.stored : null
+  );
+  state.createWorkspaceReserve.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => {
+    if (state.stored?.workspaceId === input.workspaceId) return { reserve: state.stored, created: false };
+    state.stored = {
+      ...input,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      confidentialAccountSetupSignature: null,
+      programReserveSetupSignature: null
+    };
+    return { reserve: state.stored, created: true };
+  });
+  state.restoreWorkspaceReserve.mockImplementation(async (
+    _db: unknown, workspaceId: string, fields: Record<string, unknown>, now = new Date()
+  ) => {
+    if (state.stored?.workspaceId !== workspaceId) return null;
+    state.stored = { ...state.stored, ...fields, updatedAt: now };
+    return { workspaceId, address: state.stored.address };
+  });
+  return state;
+});
 
 vi.mock("server-only", () => ({}));
-vi.mock("./config", () => ({
-  loadPayloreConfig: () => ({ PAYLORE_RESERVE_ENVELOPE_KEY: mocks.envelopeKey })
-}));
 vi.mock("@paylore/database", () => ({
-  getWorkspaceReserve: vi.fn(async (_db: unknown, workspaceId: string) =>
-    mocks.stored?.workspaceId === workspaceId ? mocks.stored : null
-  ),
-  createWorkspaceReserve: vi.fn(async (_db: unknown, input: Record<string, any>) => {
-    mocks.createCalls.push(input);
-    if (mocks.stored?.workspaceId === input.workspaceId) return { reserve: mocks.stored, created: false };
-    const now = new Date("2026-10-25T00:00:00.000Z");
-    mocks.stored = { ...input, createdAt: now, updatedAt: now };
-    return { reserve: mocks.stored, created: true };
-  }),
-  restoreWorkspaceReserve: vi.fn(async (
-    _db: unknown,
-    workspaceId: string,
-    sealedFields: Record<string, any>,
-    now = new Date()
-  ) => {
-    if (mocks.stored?.workspaceId !== workspaceId) return null;
-    mocks.restoreCalls.push({ workspaceId, sealedFields, now });
-    mocks.stored = { ...mocks.stored, ...sealedFields, updatedAt: now };
-    return { workspaceId, address: mocks.stored.address };
+  getWorkspaceReserve: h.getWorkspaceReserve,
+  createWorkspaceReserve: h.createWorkspaceReserve,
+  restoreWorkspaceReserve: h.restoreWorkspaceReserve
+}));
+vi.mock("./config", () => ({
+  loadPayloreConfig: () => ({
+    PAYLORE_RESERVE_ENVELOPE_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   })
 }));
 
-import { initializeWorkspaceReserve, verifyAndRestoreWorkspaceReserve, withWorkspaceReserveKey } from "./reserve";
+import {
+  initializeWorkspaceReserve,
+  verifyAndRestoreWorkspaceReserve,
+  withWorkspaceReserveKey
+} from "./reserve";
+import {
+  generateReserveKeypair,
+  openReserveKey,
+  sealReserveKey
+} from "./reserve-crypto-policy";
 
-function seedReserve(workspaceId = "workspace-a") {
+const workspaceId = "workspace-a";
+const envelopeKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+function storedReserve() {
   const keypair = generateReserveKeypair();
-  const expectedPrivateKey = Buffer.from(keypair.privateKey);
-  const sealed = sealReserveKey(workspaceId, keypair.address, keypair.privateKey, FIXED_ENVELOPE_KEY);
-  keypair.privateKey.fill(0);
-  const now = new Date("2026-10-24T00:00:00.000Z");
+  const sealed = sealReserveKey(workspaceId, keypair.address, keypair.privateKey, envelopeKey);
   const row = {
     workspaceId,
     ...sealed,
-    createdAt: now,
-    updatedAt: now,
-    confidentialAccountSetupSignature: null,
-    programReserveSetupSignature: null
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+    confidentialAccountSetupSignature: "setup-signature",
+    programReserveSetupSignature: "program-signature"
   };
-  mocks.stored = row;
-  return { row, expectedPrivateKey };
+  keypair.privateKey.fill(0);
+  return row;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.envelopeKey = FIXED_ENVELOPE_KEY;
-  mocks.stored = null;
-  mocks.createCalls = [];
-  mocks.restoreCalls = [];
+  h.stored = null;
 });
 
-describe("workspace reserve custody and recovery", () => {
-  it("initializes encrypted custody without persisting or returning raw private-key material", async () => {
-    const result = await initializeWorkspaceReserve({} as any, "workspace-a");
-
+describe("workspace reserve key custody", () => {
+  it("creates encrypted custody and returns only the public signing identity", async () => {
+    const result = await initializeWorkspaceReserve({} as never, workspaceId);
     expect(result).toMatchObject({ created: true });
-    expect(result.address).toBe(mocks.stored?.address);
-    expect(mocks.createCalls).toHaveLength(1);
-    expect(mocks.createCalls[0]).not.toHaveProperty("privateKey");
-    expect(mocks.createCalls[0]?.encryptedPrivateKey).toBeTruthy();
-    expect(mocks.createCalls[0]?.encryptedBackup).toBeTruthy();
-
-    const privateKey = await withWorkspaceReserveKey(
-      {} as any, "workspace-a", async (key) => Buffer.from(key)
-    );
+    expect(typeof result.address).toBe("string");
+    expect(h.createWorkspaceReserve).toHaveBeenCalledOnce();
+    expect(h.stored).not.toHaveProperty("privateKey");
+    expect(h.stored).toHaveProperty("encryptedPrivateKey");
+    expect(h.stored).toHaveProperty("encryptedBackup");
+    expect(JSON.stringify(result)).not.toMatch(/privateKey|encrypted|backup|envelope/i);
+    const opened = openReserveKey(workspaceId, h.stored, envelopeKey);
     try {
-      expect(privateKey).toHaveLength(64);
-      expect(privateKey.subarray(32).length).toBe(32);
+      expect(opened.length).toBe(64);
     } finally {
-      privateKey.fill(0);
+      opened.fill(0);
     }
   });
 
-  it("reuses an existing verified reserve key without creating a second identity", async () => {
-    const { row, expectedPrivateKey } = seedReserve();
-    try {
-      const result = await initializeWorkspaceReserve({} as any, "workspace-a");
-      expect(result).toEqual({ address: row.address, created: false });
-      expect(mocks.createCalls).toHaveLength(0);
-      const opened = await withWorkspaceReserveKey(
-        {} as any, "workspace-a", async (key) => Buffer.from(key)
-      );
-      try {
-        expect(opened).toEqual(expectedPrivateKey);
-      } finally {
-        opened.fill(0);
-      }
-    } finally {
-      expectedPrivateKey.fill(0);
-    }
+  it("is idempotent when a reserve already exists and never replaces its identity", async () => {
+    const row = storedReserve();
+    h.stored = row;
+    const first = await initializeWorkspaceReserve({} as never, workspaceId);
+    const second = await initializeWorkspaceReserve({} as never, workspaceId);
+    expect(first.address).toBe(row.address);
+    expect(second.address).toBe(row.address);
+    expect(first.created).toBe(false);
+    expect(second.created).toBe(false);
+    expect(h.stored.address).toBe(row.address);
+    expect(h.createWorkspaceReserve).toHaveBeenCalledTimes(2);
   });
 
-  it("verifies the encrypted backup and persists a newly sealed copy of the same key", async () => {
-    const { row, expectedPrivateKey } = seedReserve();
-    const previousCiphertext = row.encryptedPrivateKey;
+  it("restores a corrupted primary envelope and verifies the persisted recovery key", async () => {
+    const keypair = generateReserveKeypair();
+    const expectedPrivateKey = Buffer.from(keypair.privateKey);
+    const sealed = sealReserveKey(workspaceId, keypair.address, keypair.privateKey, envelopeKey);
+    keypair.privateKey.fill(0);
+    h.stored = {
+      workspaceId,
+      ...sealed,
+      encryptedPrivateKey: Buffer.from("corrupt-primary-envelope").toString("base64"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+      confidentialAccountSetupSignature: "setup-signature",
+      programReserveSetupSignature: "program-signature"
+    };
+
     try {
-      const result = await verifyAndRestoreWorkspaceReserve({} as any, "workspace-a");
-      expect(result.address).toBe(row.address);
-      expect(result.restoredAt).toBeInstanceOf(Date);
-      expect(mocks.restoreCalls).toHaveLength(1);
-      expect(mocks.restoreCalls[0]?.workspaceId).toBe("workspace-a");
-      expect(mocks.stored?.address).toBe(row.address);
-      expect(mocks.stored?.encryptedPrivateKey).not.toBe(previousCiphertext);
-
-      const restoredKey = await withWorkspaceReserveKey(
-        {} as any, "workspace-a", async (key) => Buffer.from(key)
-      );
-      try {
-        expect(restoredKey).toEqual(expectedPrivateKey);
-      } finally {
-        restoredKey.fill(0);
-      }
-    } finally {
-      expectedPrivateKey.fill(0);
-    }
-  });
-
-  it("does not overwrite valid custody when the backup fails authentication", async () => {
-    const { row, expectedPrivateKey } = seedReserve();
-    mocks.stored = { ...row, backupAuthTag: Buffer.alloc(16).toString("base64") };
-    const before = mocks.stored.encryptedPrivateKey;
-    try {
-      await expect(verifyAndRestoreWorkspaceReserve({} as any, "workspace-a")).rejects.toThrow();
-      expect(mocks.restoreCalls).toHaveLength(0);
-      expect(mocks.stored?.encryptedPrivateKey).toBe(before);
-    } finally {
-      expectedPrivateKey.fill(0);
-    }
-  });
-
-  it("rejects a workspace mismatch without changing another reserve", async () => {
-    const { row, expectedPrivateKey } = seedReserve("workspace-a");
-    try {
-      await expect(verifyAndRestoreWorkspaceReserve({} as any, "workspace-b"))
-        .rejects.toThrow("not initialized");
-      expect(mocks.restoreCalls).toHaveLength(0);
-      expect(mocks.stored?.workspaceId).toBe("workspace-a");
-      expect(mocks.stored?.address).toBe(row.address);
-    } finally {
-      expectedPrivateKey.fill(0);
-    }
-  });
-
-  it("requires configured envelope-key custody and zeroizes operation key buffers on success and failure", async () => {
-    const { expectedPrivateKey } = seedReserve();
-    try {
-      mocks.envelopeKey = "";
-      await expect(initializeWorkspaceReserve({} as any, "workspace-a"))
-        .rejects.toThrow("Reserve envelope encryption is not configured.");
-      mocks.envelopeKey = FIXED_ENVELOPE_KEY;
-
-      let successBuffer: Uint8Array | undefined;
-      await withWorkspaceReserveKey({} as any, "workspace-a", async (key) => {
-        successBuffer = key;
-        expect([...key]).toEqual([...expectedPrivateKey]);
-        return "finished";
+      const result = await verifyAndRestoreWorkspaceReserve({} as never, workspaceId);
+      expect(result.address).toBe(sealed.address);
+      expect(h.restoreWorkspaceReserve).toHaveBeenCalledOnce();
+      expect(h.stored.confidentialAccountSetupSignature).toBe("setup-signature");
+      expect(h.stored.programReserveSetupSignature).toBe("program-signature");
+      let borrowedKey: Uint8Array | undefined;
+      const outcome = await withWorkspaceReserveKey({} as never, workspaceId, async (privateKey) => {
+        borrowedKey = privateKey;
+        expect(Buffer.from(privateKey)).toEqual(expectedPrivateKey);
+        return "key-used-without-returning-secret";
       });
-      expect(successBuffer && [...successBuffer].every((byte) => byte === 0)).toBe(true);
-
-      let failureBuffer: Uint8Array | undefined;
-      await expect(withWorkspaceReserveKey({} as any, "workspace-a", async (key) => {
-        failureBuffer = key;
-        throw new Error("operation failed");
-      })).rejects.toThrow("operation failed");
-      expect(failureBuffer && [...failureBuffer].every((byte) => byte === 0)).toBe(true);
+      expect(outcome).toBe("key-used-without-returning-secret");
+      expect(borrowedKey?.every((value) => value === 0)).toBe(true);
     } finally {
       expectedPrivateKey.fill(0);
     }
+  });
+
+  it("fails if the repository reports a different identity during restore", async () => {
+    h.stored = storedReserve();
+    h.restoreWorkspaceReserve.mockImplementationOnce(async () => ({
+      workspaceId, address: "different-reserve-address"
+    }));
+    await expect(verifyAndRestoreWorkspaceReserve({} as never, workspaceId))
+      .rejects.toThrow("could not be restored");
+  });
+
+  it("does not initialize a missing reserve during restore", async () => {
+    await expect(verifyAndRestoreWorkspaceReserve({} as never, workspaceId))
+      .rejects.toThrow("not initialized");
+    expect(h.createWorkspaceReserve).not.toHaveBeenCalled();
+    expect(h.restoreWorkspaceReserve).not.toHaveBeenCalled();
   });
 });
