@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "./client";
-import { cancelWorkspaceDeletion, requestWorkspaceDeletion } from "./repositories";
+import { archiveExpiredWorkspaceSubscriptions, cancelWorkspaceDeletion, requestWorkspaceDeletion } from "./repositories";
 
 type Write = { method: string; value?: unknown };
 function query(result: unknown) {
@@ -30,7 +30,7 @@ describe("workspace deletion operational ledger", () => {
     const now = new Date("2026-10-25T12:00:00.000Z");
     const scheduledAt = new Date(now.getTime() + 72 * 60 * 60 * 1000);
     const writes: Write[] = [];
-    const selectResults: unknown[][] = [[], []];
+    const selectResults: unknown[][] = [[], [{ userId: "admin-a" }, { userId: "contributor-a" }]];
     const insertResults: unknown[][] = [
       [{ deletionRequestedAt: now, deletionScheduledAt: scheduledAt }],
       [],
@@ -65,12 +65,20 @@ describe("workspace deletion operational ledger", () => {
         amountOmittedReason: "non_financial_outcome"
       })
     }));
+    const notices = writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.recipientKey)).toEqual(["admin-a", "contributor-a"]);
+    expect(notices.every((notice) =>
+      notice.eventKey === `workspace-deletion-pending:${scheduledAt.getTime()}`
+    )).toBe(true);
   });
 
   it("records cancellation only after the pending deletion schedule was atomically canceled", async () => {
     const now = new Date("2026-10-25T12:00:00.000Z");
     const writes: Write[] = [];
-    const selectResults: unknown[][] = [[]];
+    const selectResults: unknown[][] = [[{ userId: "admin-a" }]];
     const insertResults: unknown[][] = [[], []];
     const updated = [{ workspaceId: "workspace-a" }];
     const updateBuilder: Record<string, any> = {};
@@ -105,5 +113,60 @@ describe("workspace deletion operational ledger", () => {
         amountOmittedReason: "non_financial_outcome"
       })
     }));
+    const notices = writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notices).toContainEqual(expect.objectContaining({
+      recipientKey: "admin-a",
+      eventKey: `workspace-deletion-canceled:${now.getTime()}`,
+      title: "Workspace deletion request canceled"
+    }));
+  });
+});
+
+
+describe("workspace archive notifications", () => {
+  it("notifies workspace members once when an expired subscription is archived", async () => {
+    const now = new Date("2026-10-25T12:00:00.000Z");
+    const periodEnd = new Date("2026-10-24T12:00:00.000Z");
+    const writes: Write[] = [];
+    let pending: Array<{ workspaceId: string; periodEnd: Date }> = [
+      { workspaceId: "workspace-a", periodEnd }
+    ];
+    const members = [{ userId: "admin-a" }, { userId: "contributor-a" }];
+    const tx = {
+      update: vi.fn(() => {
+        const builder: Record<string, any> = {};
+        builder.set = vi.fn(() => builder);
+        builder.where = vi.fn(() => builder);
+        builder.returning = vi.fn(() => {
+          const returned = pending;
+          pending = [];
+          return Promise.resolve(returned);
+        });
+        return builder;
+      }),
+      insert: vi.fn(() => writeBuilder(writes, [])),
+      select: vi.fn(() => query(members))
+    };
+    const db = {
+      transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))
+    } as unknown as Database;
+
+    await expect(archiveExpiredWorkspaceSubscriptions(db, now)).resolves.toBe(1);
+    await expect(archiveExpiredWorkspaceSubscriptions(db, now)).resolves.toBe(0);
+
+    const notices = writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.recipientKey)).toEqual(["admin-a", "contributor-a"]);
+    expect(notices.every((notice) =>
+      notice.eventKey === `workspace-archived:workspace-a:${periodEnd.getTime()}`
+    )).toBe(true);
+    expect(notices[0]).toMatchObject({
+      title: "Workspace is now in Read-Only Archive",
+      destination: "/workspace/workspace-a/billing"
+    });
   });
 });

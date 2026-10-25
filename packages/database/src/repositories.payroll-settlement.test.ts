@@ -3,7 +3,7 @@ import type { Database } from "./client";
 import { beginPayrollSettlementAttempt, listFinalizedLedgerWorkspaceIdsForSignature, recordVerifiedPayrollClaimFinalizationEvent, recordVerifiedPayrollClaimSettlement } from "./repositories";
 function query(result: unknown) {
   const builder: Record<string, unknown> = {};
-  for (const name of ["from", "innerJoin", "where", "orderBy", "limit", "for"]) builder[name] = vi.fn(() => builder);
+  for (const name of ["from", "innerJoin", "leftJoin", "where", "orderBy", "limit", "for"]) builder[name] = vi.fn(() => builder);
   builder.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(result).then(resolve, reject);
   return builder;
 }
@@ -43,7 +43,7 @@ const pendingAllocation = {
 };
 describe("confidential payroll settlement repository", () => {
   it("posts a ledger entry after the reserve debit equals the allocation", async () => {
-    const db = fakeDatabase([[pendingAllocation], [], [{ userId: "finance-user" }]]);
+    const db = fakeDatabase([[pendingAllocation], [{ userId: "finance-user" }], []]);
     await expect(recordVerifiedPayrollClaimSettlement(db.db, common)).resolves.toMatchObject({
       status: "claimed", amountBaseUnits: "1000000", settlementSignature
     });
@@ -52,6 +52,19 @@ describe("confidential payroll settlement repository", () => {
       idempotencyKey: "payroll-settlement:allocation-a", entryType: "confidential_claim_settlement",
       status: "finalized", amountBaseUnits: "1000000", transactionSignature: settlementSignature,
       metadata: expect.objectContaining({ balanceDeltaVerified: true, valueTransferred: true })
+    }));
+    const notifications = inserts.flatMap((value) => Array.isArray(value) ? value : [value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: common.contributorUserId,
+      eventKey: "payroll-settlement:allocation-a",
+      title: "Confidential payroll claim settled"
+    }));
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "finance-user",
+      eventKey: "payroll-settlement:allocation-a",
+      title: "Confidential payroll settlement finalized"
     }));
   });
   it("rejects a balance delta different from the committed amount", async () => {
@@ -97,7 +110,7 @@ describe("confidential payroll settlement repository", () => {
 describe("finalized Claim PDA event reconciliation", () => {
   const claimedAllocation = {
     id: common.allocationId, workspaceId: common.workspaceId, payrollRunId: common.runId,
-    status: "claimed", claimAddress: common.claimAddress,
+    status: "claimed", claimAddress: common.claimAddress, contributorUserId: "contributor-user",
     transactionSignature: common.claimCreationSignature, settlementSignature: common.settlementSignature
   };
   const finalizationInput = {
@@ -110,23 +123,39 @@ describe("finalized Claim PDA event reconciliation", () => {
   it("records a zero-amount state-transition entry only after the settlement ledger is finalized", async () => {
     const db = fakeDatabase([
       [claimedAllocation],
-      [{ status: "finalized", transactionSignature: common.settlementSignature }]
+      [{ status: "finalized", transactionSignature: common.settlementSignature }],
+      [{ userId: "finance-user" }]
     ]);
     await expect(recordVerifiedPayrollClaimFinalizationEvent(db.db, finalizationInput))
       .resolves.toEqual({ status: "finalized" });
-    expect(db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value))
-      .toContainEqual(expect.objectContaining({
-        workspaceId: common.workspaceId,
-        idempotencyKey: "payroll-claim-finalization:allocation-a",
-        entryType: "claim_finalized",
-        status: "finalized",
-        amountBaseUnits: null,
-        transactionSignature: "7".repeat(64),
-        metadata: expect.objectContaining({
-          settlementSignature: common.settlementSignature,
-          valueTransferred: false
-        })
-      }));
+    const writes = db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value);
+    expect(writes).toContainEqual(expect.objectContaining({
+      workspaceId: common.workspaceId,
+      idempotencyKey: "payroll-claim-finalization:allocation-a",
+      entryType: "claim_finalized",
+      status: "finalized",
+      amountBaseUnits: null,
+      transactionSignature: "7".repeat(64),
+      metadata: expect.objectContaining({
+        settlementSignature: common.settlementSignature,
+        valueTransferred: false
+      })
+    }));
+    const notifications = writes.flatMap((value) => Array.isArray(value) ? value : [value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      eventKey: "payroll-claim-finalization:allocation-a",
+      title: "Payroll claim finalized",
+      destination: "/workspace/workspace-a/compensation"
+    }));
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "finance-user",
+      eventKey: "payroll-claim-finalization:allocation-a",
+      title: "Payroll claim finalization verified",
+      destination: "/workspace/workspace-a/ledger"
+    }));
   });
 
   it("does not record claim finalization before the exact settlement ledger exists", async () => {
@@ -141,10 +170,23 @@ describe("finalized Claim PDA event reconciliation", () => {
     const db = fakeDatabase([
       [claimedAllocation],
       [{ status: "finalized", transactionSignature: common.settlementSignature }],
-      [{ status: "finalized", transactionSignature: finalizationInput.signature }]
+      [{ status: "finalized", transactionSignature: finalizationInput.signature }],
+      [{ userId: "finance-user" }]
     ], [[]]);
     await expect(recordVerifiedPayrollClaimFinalizationEvent(db.db, finalizationInput))
       .resolves.toEqual({ status: "duplicate" });
+    const notifications = db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value)
+      .flatMap((value) => Array.isArray(value) ? value : [value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      eventKey: "payroll-claim-finalization:allocation-a"
+    }));
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "finance-user",
+      eventKey: "payroll-claim-finalization:allocation-a"
+    }));
   });
 
   it("lists finalized ledger workspaces for a transaction signature", async () => {

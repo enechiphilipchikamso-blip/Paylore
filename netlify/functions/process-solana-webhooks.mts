@@ -9,6 +9,7 @@ import {
   listFinalizedLedgerWorkspaceIdsForSignature,
   recordVerifiedPayrollClaimFinalizationEvent,
   createWorkspaceNotificationForFinanceMembers,
+  notifySubscriptionPaymentFailure,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
   getWorkspaceGasTankByAddress,
@@ -180,6 +181,13 @@ async function reconcileEvent(
         status: "failed",
         now
       });
+      await notifySubscriptionPaymentFailure(db, {
+        workspaceId: failedAttempt.workspaceId,
+        userId: failedAttempt.userId,
+        signature: event.transactionSignature,
+        reason: "transaction_failed",
+        now
+      });
     }
     await updateSolanaWebhookEventState(db, {
       id: event.id,
@@ -209,6 +217,13 @@ async function reconcileEvent(
         status: "failed",
         now
       });
+      await notifySubscriptionPaymentFailure(db, {
+        workspaceId: paymentAttempt.workspaceId,
+        userId: paymentAttempt.userId,
+        signature: event.transactionSignature,
+        reason: "intent_mismatch",
+        now
+      });
       await updateSolanaWebhookEventState(db, {
         id: event.id,
         status: "failed",
@@ -219,7 +234,7 @@ async function reconcileEvent(
       return "failed";
     }
 
-    const verified = await applyVerifiedSubscriptionPayment(db, {
+    await applyVerifiedSubscriptionPayment(db, {
       workspaceId: paymentAttempt.workspaceId,
       userId: paymentAttempt.userId,
       signature: event.transactionSignature,
@@ -234,14 +249,6 @@ async function reconcileEvent(
       status: "confirmed",
       now
     });
-    await createWorkspaceNotificationForFinanceMembers(db, {
-      workspaceId: paymentAttempt.workspaceId,
-      eventKey: "subscription-payment:" + event.transactionSignature,
-      category: "Workspace & Billing",
-      title: "Subscription payment confirmed",
-      body: "A finalized USDC payment activated or renewed this workspace subscription.",
-      destination: "/workspace/" + paymentAttempt.workspaceId + "/billing"
-    });
     await updateSolanaWebhookEventState(db, {
       id: event.id,
       status: "finalized",
@@ -249,7 +256,7 @@ async function reconcileEvent(
       processedAt: now,
       now
     });
-    return verified.duplicate ? "finalized" : "finalized";
+    return "finalized";
   }
 
   const existingLedgerWorkspaces = await listFinalizedLedgerWorkspaceIdsForSignature(
@@ -326,6 +333,16 @@ async function reconcileEvent(
       if (funding.status === "not_found") {
         await retry("gas_tank_mapping_changed_during_reconciliation");
         return deadLetter ? "dead_letter" : "retry_pending";
+      }
+      if (funding.status === "conflict") {
+        await updateSolanaWebhookEventState(db, {
+          id: event.id,
+          status: "dead_letter",
+          errorCode: "gas_tank_funding_evidence_conflict",
+          processedAt: now,
+          now
+        });
+        return "dead_letter";
       }
       await updateSolanaWebhookEventState(db, {
         id: event.id, status: "finalized", finalizedAt: now, processedAt: now, now
@@ -653,17 +670,15 @@ async function reconcileEvent(
     await retry("recovery_claim_state_conflict");
     return deadLetter ? "dead_letter" : "retry_pending";
   }
-  if (recovery.status !== "duplicate") {
-    await createWorkspaceNotificationForFinanceMembers(db, {
-      workspaceId: allocation.workspaceId,
-      eventKey: "payroll-recovery:" + event.transactionSignature,
-      category: "Recovery & Offboarding",
-      title: "Payroll allocation recovered",
-      body: "A finalized recovery transaction was reconciled with the allocation's on-chain state.",
-      destination: "/workspace/" + allocation.workspaceId + "/payroll/" + allocation.runId,
-      now
-    });
-  }
+  await createWorkspaceNotificationForFinanceMembers(db, {
+    workspaceId: allocation.workspaceId,
+    eventKey: "payroll-recovery:" + allocation.allocationId,
+    category: "Recovery & Offboarding",
+    title: "Payroll allocation recovered",
+    body: "A finalized recovery transaction was reconciled with the allocation's on-chain state.",
+    destination: "/workspace/" + allocation.workspaceId + "/payroll/" + allocation.runId,
+    now
+  });
 
   await updateSolanaWebhookEventState(db, {
     id: event.id,

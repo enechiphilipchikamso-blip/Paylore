@@ -3211,6 +3211,67 @@ export async function createWorkspaceNotificationForFinanceMembers(
   return rows.length;
 }
 
+
+export async function notifySubscriptionPaymentFailure(
+  db: Database,
+  input: {
+    workspaceId: string;
+    userId: string;
+    signature: string;
+    reason: "transaction_failed" | "intent_mismatch";
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  const isMismatch = input.reason === "intent_mismatch";
+  const eventKey = `subscription-payment-failure:${input.signature}`;
+  return db.transaction(async (tx) => {
+    const financeMembers = await tx
+      .select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships)
+      .where(and(
+        eq(workspaceMemberships.workspaceId, input.workspaceId),
+        or(
+          eq(workspaceMemberships.role, "organization_admin"),
+          eq(workspaceMemberships.role, "finance_auditor")
+        )
+      ));
+    const recipientKeys = [...new Set([
+      input.userId,
+      ...financeMembers.map((member) => member.userId)
+    ])];
+    if (recipientKeys.length === 0) return 0;
+
+    const title = isMismatch
+      ? "Subscription payment was not accepted"
+      : "Subscription payment failed";
+    const body = isMismatch
+      ? "The finalized transaction did not match the expected payer, recipient, token, or amount. Paylore did not apply it as a subscription payment. Review billing details before submitting another payment."
+      : "The finalized Solana transaction failed, so Paylore did not apply it as a subscription payment. Review billing before submitting another payment.";
+    const inserted = await tx
+      .insert(workspaceNotifications)
+      .values(recipientKeys.map((recipientKey) => ({
+        workspaceId: input.workspaceId,
+        recipientKey,
+        eventKey,
+        category: "Workspace & Billing",
+        title,
+        body,
+        destination: `/workspace/${input.workspaceId}/billing`,
+        createdAt: now
+      })))
+      .onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      })
+      .returning({ id: workspaceNotifications.id });
+    return inserted.length;
+  });
+}
+
 export async function listWorkspaceNotifications(
   db: Database,
   input: {
@@ -5800,38 +5861,99 @@ export async function recordVerifiedPublicCashOutLedger(
     }).onConflictDoNothing({
       target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
     }).returning({ id: workspaceLedgerEntries.id });
-    if (inserted[0]) return { status: "finalized" as const };
+    let status: "finalized" | "duplicate";
+    if (inserted[0]) {
+      status = "finalized";
+    } else {
+      const existingRows = await tx.select({
+        entryType: workspaceLedgerEntries.entryType,
+        status: workspaceLedgerEntries.status,
+        amountBaseUnits: workspaceLedgerEntries.amountBaseUnits,
+        mint: workspaceLedgerEntries.mint,
+        referenceType: workspaceLedgerEntries.referenceType,
+        referenceId: workspaceLedgerEntries.referenceId,
+        transactionSignature: workspaceLedgerEntries.transactionSignature,
+        metadata: workspaceLedgerEntries.metadata
+      }).from(workspaceLedgerEntries).where(and(
+        eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+        eq(workspaceLedgerEntries.idempotencyKey, idempotencyKey)
+      )).limit(1);
+      const existing = existingRows[0];
+      const existingMetadata = existing?.metadata !== null &&
+        typeof existing?.metadata === "object" && !Array.isArray(existing.metadata)
+        ? existing.metadata as Record<string, unknown> : null;
+      const sameEvidence = existing?.entryType === entryType &&
+        existing.status === "finalized" &&
+        existing.amountBaseUnits === input.amountBaseUnits &&
+        existing.mint === input.mint &&
+        existing.referenceType === "contributor" &&
+        existing.referenceId === input.contributorId &&
+        existing.transactionSignature === input.signature &&
+        existingMetadata?.contributorWalletAddress === input.contributorWalletAddress &&
+        existingMetadata?.sourceTokenAccount === input.sourceTokenAccount &&
+        existingMetadata?.destinationTokenAccount === input.destinationTokenAccount &&
+        existingMetadata?.balanceDeltaVerified === true &&
+        existingMetadata?.valueTransferred === true;
+      if (!sameEvidence) return { status: "conflict" as const };
+      status = "duplicate";
+    }
 
-    const existingRows = await tx.select({
-      entryType: workspaceLedgerEntries.entryType,
-      status: workspaceLedgerEntries.status,
-      amountBaseUnits: workspaceLedgerEntries.amountBaseUnits,
-      mint: workspaceLedgerEntries.mint,
-      referenceType: workspaceLedgerEntries.referenceType,
-      referenceId: workspaceLedgerEntries.referenceId,
-      transactionSignature: workspaceLedgerEntries.transactionSignature,
-      metadata: workspaceLedgerEntries.metadata
-    }).from(workspaceLedgerEntries).where(and(
-      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
-      eq(workspaceLedgerEntries.idempotencyKey, idempotencyKey)
-    )).limit(1);
-    const existing = existingRows[0];
-    const existingMetadata = existing?.metadata !== null &&
-      typeof existing?.metadata === "object" && !Array.isArray(existing.metadata)
-      ? existing.metadata as Record<string, unknown> : null;
-    const sameEvidence = existing?.entryType === entryType &&
-      existing.status === "finalized" &&
-      existing.amountBaseUnits === input.amountBaseUnits &&
-      existing.mint === input.mint &&
-      existing.referenceType === "contributor" &&
-      existing.referenceId === input.contributorId &&
-      existing.transactionSignature === input.signature &&
-      existingMetadata?.contributorWalletAddress === input.contributorWalletAddress &&
-      existingMetadata?.sourceTokenAccount === input.sourceTokenAccount &&
-      existingMetadata?.destinationTokenAccount === input.destinationTokenAccount &&
-      existingMetadata?.balanceDeltaVerified === true &&
-      existingMetadata?.valueTransferred === true;
-    return sameEvidence ? { status: "duplicate" as const } : { status: "conflict" as const };
+    const contributorUsers = await tx.select({
+      userId: walletIdentities.userId
+    }).from(walletIdentities).where(
+      eq(walletIdentities.address, input.contributorWalletAddress)
+    );
+    if (contributorUsers.length > 0) {
+      await tx.insert(workspaceNotifications).values(contributorUsers.map((user) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: user.userId,
+        eventKey: idempotencyKey,
+        category: "Payroll & Claims",
+        title: input.kind === "confidential_withdrawal"
+          ? "Token withdrawal finalized"
+          : "USDC unwrap finalized",
+        body: "Your public token withdrawal was verified at finality and the exact token balance change was reconciled.",
+        destination: `/workspace/${input.workspaceId}/compensation`,
+        createdAt: now
+      }))).onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+    }
+
+    const financeMembers = await tx.select({
+      userId: workspaceMemberships.userId
+    }).from(workspaceMemberships).where(and(
+      eq(workspaceMemberships.workspaceId, input.workspaceId),
+      or(
+        eq(workspaceMemberships.role, "organization_admin"),
+        eq(workspaceMemberships.role, "finance_auditor")
+      )
+    ));
+    if (financeMembers.length > 0) {
+      await tx.insert(workspaceNotifications).values(financeMembers.map((member) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: member.userId,
+        eventKey: idempotencyKey,
+        category: "Payroll & Claims",
+        title: input.kind === "confidential_withdrawal"
+          ? "Contributor token withdrawal finalized"
+          : "Contributor USDC unwrap finalized",
+        body: "A contributor token withdrawal was verified at finality and reconciled to an exact public token balance change.",
+        destination: `/workspace/${input.workspaceId}/ledger`,
+        createdAt: now
+      }))).onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+    }
+    return { status };
   });
 }
 
@@ -5858,8 +5980,18 @@ export async function recordVerifiedPayrollClaimFinalizationEvent(
       status: payrollAllocations.status,
       claimAddress: payrollAllocations.claimAddress,
       transactionSignature: payrollAllocations.transactionSignature,
-      settlementSignature: payrollAllocations.settlementSignature
-    }).from(payrollAllocations).where(and(
+      settlementSignature: payrollAllocations.settlementSignature,
+      contributorUserId: walletIdentities.userId
+    }).from(payrollAllocations).innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    ).leftJoin(
+      walletIdentities,
+      eq(walletIdentities.address, contributors.identityWalletAddress)
+    ).where(and(
       eq(payrollAllocations.id, input.allocationId),
       eq(payrollAllocations.workspaceId, input.workspaceId),
       eq(payrollAllocations.payrollRunId, input.runId)
@@ -5909,20 +6041,71 @@ export async function recordVerifiedPayrollClaimFinalizationEvent(
     }).onConflictDoNothing({
       target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
     }).returning({ id: workspaceLedgerEntries.id });
-    if (inserted[0]) return { status: "finalized" as const };
-
-    const existing = await tx.select({
-      status: workspaceLedgerEntries.status,
-      transactionSignature: workspaceLedgerEntries.transactionSignature
-    }).from(workspaceLedgerEntries).where(and(
-      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
-      eq(workspaceLedgerEntries.idempotencyKey, key)
-    )).limit(1);
-    if (existing[0]?.status === "finalized" &&
-        existing[0].transactionSignature === input.signature) {
-      return { status: "duplicate" as const };
+    let status: "finalized" | "duplicate";
+    if (inserted[0]) {
+      status = "finalized";
+    } else {
+      const existing = await tx.select({
+        status: workspaceLedgerEntries.status,
+        transactionSignature: workspaceLedgerEntries.transactionSignature
+      }).from(workspaceLedgerEntries).where(and(
+        eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+        eq(workspaceLedgerEntries.idempotencyKey, key)
+      )).limit(1);
+      if (existing[0]?.status !== "finalized" ||
+          existing[0].transactionSignature !== input.signature) {
+        return { status: "conflict" as const };
+      }
+      status = "duplicate";
     }
-    return { status: "conflict" as const };
+
+    // Replays repair missing notification rows without creating duplicates.
+    if (allocation.contributorUserId) {
+      await tx.insert(workspaceNotifications).values({
+        workspaceId: input.workspaceId,
+        recipientKey: allocation.contributorUserId,
+        eventKey: key,
+        category: "Payroll & Claims",
+        title: "Payroll claim finalized",
+        body: "The on-chain Claim PDA finalization was verified against your finalized payroll settlement. This state transition did not move additional funds.",
+        destination: `/workspace/${input.workspaceId}/compensation`,
+        createdAt: now
+      }).onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+    }
+    const financeMembers = await tx.select({
+      userId: workspaceMemberships.userId
+    }).from(workspaceMemberships).where(and(
+      eq(workspaceMemberships.workspaceId, input.workspaceId),
+      or(
+        eq(workspaceMemberships.role, "organization_admin"),
+        eq(workspaceMemberships.role, "finance_auditor")
+      )
+    ));
+    if (financeMembers.length > 0) {
+      await tx.insert(workspaceNotifications).values(financeMembers.map((member) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: member.userId,
+        eventKey: key,
+        category: "Payroll & Claims",
+        title: "Payroll claim finalization verified",
+        body: "The Claim PDA state transition was verified at finality and linked to its finalized settlement ledger entry.",
+        destination: `/workspace/${input.workspaceId}/ledger`,
+        createdAt: now
+      }))).onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+    }
+    return { status };
   });
 }
 
@@ -6118,6 +6301,40 @@ export async function recordVerifiedGasTankFundingEvent(
         ]
       })
       .returning({ id: workspaceLedgerEntries.id });
+    let status: "recorded" | "duplicate";
+    if (entries[0]) {
+      status = "recorded";
+    } else {
+      const priorRows = await tx.select({
+        status: workspaceLedgerEntries.status,
+        amountBaseUnits: workspaceLedgerEntries.amountBaseUnits,
+        referenceType: workspaceLedgerEntries.referenceType,
+        referenceId: workspaceLedgerEntries.referenceId,
+        transactionSignature: workspaceLedgerEntries.transactionSignature,
+        metadata: workspaceLedgerEntries.metadata
+      }).from(workspaceLedgerEntries).where(and(
+        eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+        eq(workspaceLedgerEntries.idempotencyKey, "gas-tank-funding:" + input.signature)
+      )).for("update").limit(1);
+      const prior = priorRows[0];
+      const priorMetadata = prior?.metadata !== null &&
+        typeof prior?.metadata === "object" && !Array.isArray(prior.metadata)
+        ? prior.metadata as Record<string, unknown> : null;
+      const sameEvidence = prior?.status === "finalized" &&
+        prior.amountBaseUnits === input.amountLamports &&
+        prior.referenceType === "gas_tank" &&
+        prior.referenceId === input.workspaceId &&
+        prior.transactionSignature === input.signature &&
+        priorMetadata?.asset === "SOL" &&
+        priorMetadata?.source === input.source &&
+        priorMetadata?.destination === input.destination &&
+        priorMetadata?.amountLamports === input.amountLamports &&
+        priorMetadata?.valueTransferred === true &&
+        priorMetadata?.sourceOfTruth === "finalized_solana_rpc";
+      if (!sameEvidence) return { status: "conflict" as const };
+      status = "duplicate";
+    }
+
     await tx
       .update(workspaceGasTanks)
       .set({
@@ -6130,38 +6347,36 @@ export async function recordVerifiedGasTankFundingEvent(
         eq(workspaceGasTanks.address, input.destination)
       ));
 
-    if (entries[0]) {
-      const members = await tx
-        .select({ userId: workspaceMemberships.userId })
-        .from(workspaceMemberships)
-        .where(and(
-          eq(workspaceMemberships.workspaceId, input.workspaceId),
-          or(
-            eq(workspaceMemberships.role, "organization_admin"),
-            eq(workspaceMemberships.role, "finance_auditor")
-          )
-        ));
-      await tx
-        .insert(workspaceNotifications)
-        .values(members.map((member) => ({
-          workspaceId: input.workspaceId,
-          recipientKey: member.userId,
-          eventKey: "gas-tank-funding:" + input.signature,
-          category: "Gas Tank & Network Operations",
-          title: "Gas Tank funded",
-          body: "A finalized manual SOL transfer was reconciled to this workspace Gas Tank.",
-          destination: "/workspace/" + input.workspaceId + "/gas-tank",
-          createdAt: now
-        })))
-        .onConflictDoNothing({
-          target: [
-            workspaceNotifications.workspaceId,
-            workspaceNotifications.eventKey,
-            workspaceNotifications.recipientKey
-          ]
-        });
-    }
-    return { status: entries[0] ? "recorded" as const : "duplicate" as const };
+    const members = await tx
+      .select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships)
+      .where(and(
+        eq(workspaceMemberships.workspaceId, input.workspaceId),
+        or(
+          eq(workspaceMemberships.role, "organization_admin"),
+          eq(workspaceMemberships.role, "finance_auditor")
+        )
+      ));
+    await tx
+      .insert(workspaceNotifications)
+      .values(members.map((member) => ({
+        workspaceId: input.workspaceId,
+        recipientKey: member.userId,
+        eventKey: "gas-tank-funding:" + input.signature,
+        category: "Gas Tank & Network Operations",
+        title: "Gas Tank funded",
+        body: "A finalized manual SOL transfer was reconciled to this workspace Gas Tank.",
+        destination: "/workspace/" + input.workspaceId + "/gas-tank",
+        createdAt: now
+      })))
+      .onConflictDoNothing({
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
+      });
+    return { status };
   });
 }
 

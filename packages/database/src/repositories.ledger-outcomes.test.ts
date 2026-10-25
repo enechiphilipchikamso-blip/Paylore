@@ -146,16 +146,22 @@ describe("non-financial workspace ledger outcomes", () => {
 describe("verified public cash-out ledger entries", () => {
   it("records an exact server-verified withdrawal amount and destination", async () => {
     const fake = fakeDatabase(
-      [[{
-        id: "contributor-a",
-        identityWalletAddress: cashOut.contributorWalletAddress,
-        lifecycle: "active"
-      }]],
+      [
+        [{
+          id: "contributor-a",
+          identityWalletAddress: cashOut.contributorWalletAddress,
+          lifecycle: "active"
+        }],
+        [{ userId: "contributor-user" }],
+        [{ userId: "finance-user" }]
+      ],
       [[{ id: "entry-1" }]]
     );
     await expect(recordVerifiedPublicCashOutLedger(fake.db, cashOut)).resolves.toEqual({ status: "finalized" });
 
-    const entry = fake.writes.find((write) => write.method === "values")?.value as Record<string, unknown>;
+    const values = fake.writes.filter((write) => write.method === "values").map((write) => write.value);
+    const entry = values.find((value) => !Array.isArray(value) && value &&
+      typeof value === "object" && "idempotencyKey" in value) as Record<string, unknown>;
     expect(entry).toMatchObject({
       category: "cash_out",
       entryType: "confidential_balance_withdrawal",
@@ -173,6 +179,19 @@ describe("verified public cash-out ledger entries", () => {
         valueTransferred: true
       }
     });
+    const notifications = values.flatMap((value) => Array.isArray(value) ? value : [value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      eventKey: `public-cash-out:confidential_withdrawal:${cashOut.signature}`,
+      title: "Token withdrawal finalized"
+    }));
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "finance-user",
+      eventKey: `public-cash-out:confidential_withdrawal:${cashOut.signature}`,
+      title: "Contributor token withdrawal finalized"
+    }));
   });
 
   it("records a Token Wrap unwrap as Circle USDC only after the server-verified credit", async () => {
@@ -237,9 +256,24 @@ describe("verified public cash-out ledger entries", () => {
         identityWalletAddress: cashOut.contributorWalletAddress,
         lifecycle: "active"
       }],
-      [existing]
+      [existing],
+      [{ userId: "contributor-user" }],
+      [{ userId: "finance-user" }]
     ], [[]]);
     await expect(recordVerifiedPublicCashOutLedger(fake.db, cashOut)).resolves.toEqual({ status: "duplicate" });
+    const noticeRows = fake.writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(noticeRows).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      eventKey: `public-cash-out:confidential_withdrawal:${cashOut.signature}`,
+      title: "Token withdrawal finalized"
+    }));
+    expect(noticeRows).toContainEqual(expect.objectContaining({
+      recipientKey: "finance-user",
+      eventKey: `public-cash-out:confidential_withdrawal:${cashOut.signature}`,
+      title: "Contributor token withdrawal finalized"
+    }));
   });
 
   it("rejects malformed and out-of-range public amounts before touching the database", async () => {
