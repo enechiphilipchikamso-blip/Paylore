@@ -5,6 +5,7 @@ import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
+import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
 import {
@@ -514,7 +515,7 @@ export function ContributorCompensation({
                 </thead>
                 <tbody>
                   {allocations.map((allocation) => (
-                    <tr key={allocation.id}>
+                    <tr key={allocation.id} data-testid={`payroll-allocation-${allocation.id}`}>
                       <td>
                         {new Date(allocation.runCreatedAt).toLocaleDateString()}
                         <br />
@@ -689,12 +690,7 @@ export function ContributorCompensation({
           confidential wrapped-USDC mint is initialized and configured.
         </p>
       ) : null}
-      {message ? (
-        <div className="state-callout" data-state={message.state} role={message.state === "error" ? "alert" : "status"}>
-          <span className="state-callout__signal" aria-hidden="true" />
-          <p>{message.text}</p>
-        </div>
-      ) : null}
+      <ClaimAndCashOutStatus message={message} />
     </section>
   );
 }

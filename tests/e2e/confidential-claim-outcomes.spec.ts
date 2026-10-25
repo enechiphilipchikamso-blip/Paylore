@@ -1,191 +1,182 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-const claimRoute = /\/api\/workspaces\/[^/]+\/payroll\/runs\/[^/]+\/allocations\/[^/]+\/claim$/;
+const outcomeUrl = process.env.PAYLORE_E2E_CLAIM_OUTCOME_URL;
+const walletAState = process.env.PAYLORE_E2E_CLAIM_STORAGE_STATE;
+const walletAAllocation = process.env.PAYLORE_E2E_CLAIM_ALLOCATION_ID;
+const walletBState = process.env.PAYLORE_E2E_CLAIM_OTHER_WALLET_STORAGE_STATE;
+const walletBAllocation = process.env.PAYLORE_E2E_CLAIM_OTHER_ALLOCATION_ID;
+const matrixConfigured = Boolean(outcomeUrl && walletAState && walletAAllocation);
+const isolationConfigured = Boolean(
+  outcomeUrl && walletAState && walletAAllocation && walletBState && walletBAllocation
+);
+const claimPath = /\/api\/workspaces\/[^/]+\/payroll\/runs\/[^/]+\/allocations\/([^/]+)\/claim$/;
 
-async function openAuthorizedCompensationPage(browser: Browser): Promise<{
-  context: Awaited<ReturnType<Browser["newContext"]>>;
-  page: Page;
-}> {
-  const url = process.env.PAYLORE_E2E_SETTLEMENT_URL;
-  const storageState = process.env.PAYLORE_E2E_STORAGE_STATE;
-  if (!url || !storageState) {
-    throw new Error("The authorized compensation URL and storage state are required for this hosted UI outcome test.");
+type MockOutcome = {
+  name: string;
+  state: "success" | "partial" | "error";
+  body: Record<string, unknown>;
+  httpStatus?: number;
+  text: RegExp;
+};
+
+const outcomes: MockOutcome[] = [
+  {
+    name: "finalized claim",
+    state: "success",
+    body: { status: "claimed", signature: "test-settlement-signature", amountBaseUnits: "1000000" },
+    text: /1 confidential payroll allocation\(s\) transferred and reconciled/
+  },
+  {
+    name: "idempotent already-settled claim",
+    state: "success",
+    body: { status: "already_settled", signature: "test-settlement-signature", amountBaseUnits: "1000000" },
+    text: /1 confidential payroll allocation\(s\) transferred and reconciled/
+  },
+  {
+    name: "pending finality",
+    state: "partial",
+    body: { status: "pending", signature: "test-settlement-signature" },
+    text: /0 allocation\(s\) settled; 1 await finality or retry/
+  },
+  {
+    name: "retry-ready failure",
+    state: "partial",
+    body: { status: "retry_ready", signature: "test-settlement-signature" },
+    text: /0 allocation\(s\) settled; 1 await finality or retry/
+  },
+  {
+    name: "workspace busy",
+    state: "partial",
+    body: { status: "workspace_busy" },
+    text: /0 allocation\(s\) settled; 1 await finality or retry/
+  },
+  {
+    name: "transfer reconciled but proof cleanup pending",
+    state: "partial",
+    body: { status: "claimed", warning: "proof_context_cleanup_pending" },
+    text: /1 allocation\(s\) settled; 0 await finality or retry, and 1 need proof-context cleanup/
+  },
+  {
+    name: "server failure",
+    state: "error",
+    httpStatus: 503,
+    body: { error: "confidential_settlement_failed" },
+    text: /0 allocation\(s\) settled; 1 need attention/
+  },
+  {
+    name: "Claim PDA state conflict",
+    state: "error",
+    body: { status: "state_conflict", signature: "test-settlement-signature" },
+    text: /No second transfer was attempted/
   }
-  const context = await browser.newContext({ storageState });
+];
+
+async function openReadyContributorPage(
+  browser: Browser,
+  storageState: string,
+  ownAllocationId: string,
+  otherAllocationId?: string
+): Promise<{ page: Page; close: () => Promise<void> }> {
+  const context = await browser.newContext({ storageState, serviceWorkers: "block" });
   const page = await context.newPage();
-  await page.goto(url);
+  await page.goto(outcomeUrl!);
   await expect(page.getByRole("heading", { name: "Your compensation" })).toBeVisible();
-  return { context, page };
-}
-
-async function requireSafeActionPreconditions(page: Page): Promise<void> {
-  const action = page.getByRole("button", { name: "Claim & Cash Out" });
-  const readyAccount = page.getByText("Ready", { exact: true });
-  if (!(await action.isVisible().catch(() => false)) ||
-      !(await readyAccount.isVisible().catch(() => false))) {
-    test.skip(true, "The authorized test wallet needs a ready confidential account and at least one unsettled allocation.");
+  const accountStatus = await page.locator(".billing-period dd").nth(1).textContent();
+  if (accountStatus?.trim() !== "Ready") {
+    await context.close();
+    test.skip(
+      true,
+      "Use an authenticated contributor with a verified confidential account; this spec never signs account setup or payroll transactions."
+    );
   }
-}
-
-async function clickAndWaitForClaimResponse(page: Page): Promise<void> {
-  const response = page.waitForResponse((candidate) =>
-    claimRoute.test(new URL(candidate.url()).pathname) &&
-    candidate.request().method() === "POST",
-  { timeout: 10_000 }).catch(() => null);
-  await page.getByRole("button", { name: "Claim & Cash Out" }).click();
-  if (!await response) {
-    test.skip(true, "The test workspace has no allocation with a committed Claim PDA and creation signature.");
+  await expect(page.getByTestId(`payroll-allocation-${ownAllocationId}`)).toBeVisible();
+  if (otherAllocationId) {
+    await expect(page.getByTestId(`payroll-allocation-${otherAllocationId}`)).toHaveCount(0);
   }
+  return { page, close: () => context.close() };
 }
 
-test.describe("confidential claim rendered outcomes", () => {
-  test("renders settlement success only from the handled claim response", async ({ browser }) => {
-    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
-      "Requires the explicit authorized hosted Devnet test account.");
-    const { context, page } = await openAuthorizedCompensationPage(browser);
-    try {
-      await requireSafeActionPreconditions(page);
-      await page.route(claimRoute, async (route) => {
-        if (route.request().method() !== "POST") {
-          await route.continue();
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            status: "claimed",
-            signature: "test-fixture-only-signature",
-            amountBaseUnits: "1000000",
-            proofDurationMs: 1
-          })
-        });
-      });
+async function mockClaimEndpoint(
+  page: Page,
+  body: Record<string, unknown>,
+  status = 200
+): Promise<string[]> {
+  const requestedAllocationIds: string[] = [];
+  await page.route(claimPath, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const allocationId = new URL(route.request().url()).pathname.match(claimPath)?.[1];
+    if (allocationId) requestedAllocationIds.push(allocationId);
+    await route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify(body)
+    });
+  });
+  return requestedAllocationIds;
+}
 
-      await clickAndWaitForClaimResponse(page);
-      await expect(page.getByRole("status").filter({
-        hasText: /confidential payroll allocation\(s\) transferred and reconciled/
-      })).toBeVisible();
-      await expect(page.getByText(/No second transfer was attempted/)).toHaveCount(0);
-    } finally {
-      await context.close();
+test.describe("rendered Claim & Cash Out outcomes", () => {
+  test("renders each success, partial, retry, error and conflict result from its API outcome", async ({ browser }) => {
+    test.skip(
+      !matrixConfigured,
+      "Configure PAYLORE_E2E_CLAIM_OUTCOME_URL, PAYLORE_E2E_CLAIM_STORAGE_STATE and PAYLORE_E2E_CLAIM_ALLOCATION_ID for a safe authenticated fixture."
+    );
+    for (const outcome of outcomes) {
+      const fixture = await openReadyContributorPage(browser, walletAState!, walletAAllocation!);
+      try {
+        const requested = await mockClaimEndpoint(
+          fixture.page, outcome.body, outcome.httpStatus ?? 200
+        );
+        await fixture.page.getByRole("button", { name: "Claim & Cash Out" }).click();
+        const callout = fixture.page.getByTestId("claim-and-cash-out-outcome");
+        await expect(callout).toHaveAttribute("data-state", outcome.state);
+        await expect(callout).toContainText(outcome.text);
+        await expect(callout).toHaveAttribute("role", outcome.state === "error" ? "alert" : "status");
+        expect(requested).toEqual([walletAAllocation]);
+      } finally {
+        await fixture.close();
+      }
     }
   });
 
-  test("shows pending finality without reporting a completed payment", async ({ browser }) => {
-    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
-      "Requires the explicit authorized hosted Devnet test account.");
-    const { context, page } = await openAuthorizedCompensationPage(browser);
+  test("isolates allocation rows and outcome state between two contributor wallets", async ({ browser }) => {
+    test.skip(
+      !isolationConfigured,
+      "Also configure PAYLORE_E2E_CLAIM_OTHER_WALLET_STORAGE_STATE and PAYLORE_E2E_CLAIM_OTHER_ALLOCATION_ID for a second contributor in the same workspace."
+    );
+    const first = await openReadyContributorPage(
+      browser, walletAState!, walletAAllocation!, walletBAllocation!
+    );
     try {
-      await requireSafeActionPreconditions(page);
-      await page.route(claimRoute, async (route) => {
-        if (route.request().method() !== "POST") {
-          await route.continue();
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ status: "pending", signature: "test-fixture-pending-signature" })
-        });
+      const firstRequests = await mockClaimEndpoint(first.page, {
+        status: "state_conflict", signature: "wallet-a-test-signature"
       });
-
-      await clickAndWaitForClaimResponse(page);
-      await expect(page.getByRole("status").filter({ hasText: /await finality or retry/ })).toBeVisible();
-      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
+      await first.page.getByRole("button", { name: "Claim & Cash Out" }).click();
+      await expect(first.page.getByTestId("claim-and-cash-out-outcome"))
+        .toContainText("No second transfer was attempted");
+      expect(firstRequests).toEqual([walletAAllocation]);
     } finally {
-      await context.close();
+      await first.close();
+    }
+
+    const second = await openReadyContributorPage(
+      browser, walletBState!, walletBAllocation!, walletAAllocation!
+    );
+    try {
+      const secondRequests = await mockClaimEndpoint(second.page, {
+        status: "claimed", signature: "wallet-b-test-signature", amountBaseUnits: "1000000"
+      });
+      await expect(second.page.getByTestId("claim-and-cash-out-outcome")).toHaveCount(0);
+      await second.page.getByRole("button", { name: "Claim & Cash Out" }).click();
+      const outcome = second.page.getByTestId("claim-and-cash-out-outcome");
+      await expect(outcome).toHaveAttribute("data-state", "success");
+      await expect(outcome).not.toContainText("No second transfer was attempted");
+      expect(secondRequests).toEqual([walletBAllocation]);
+    } finally {
+      await second.close();
     }
   });
-
-  test("renders claim/recovery conflict as an error, never as successful settlement", async ({ browser }) => {
-    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
-      "Requires the explicit authorized hosted Devnet test account.");
-    const { context, page } = await openAuthorizedCompensationPage(browser);
-    try {
-      await requireSafeActionPreconditions(page);
-      await page.route(claimRoute, async (route) => {
-        if (route.request().method() !== "POST") {
-          await route.continue();
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ status: "state_conflict", signature: "test-fixture-conflict-signature" })
-        });
-      });
-
-      await clickAndWaitForClaimResponse(page);
-      await expect(page.getByRole("alert").filter({ hasText: /No second transfer was attempted/ })).toBeVisible();
-      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
-    } finally {
-      await context.close();
-    }
-  });
-
-  test("renders cleanup-pending completion as partial rather than fully successful", async ({ browser }) => {
-    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
-      "Requires the explicitly authorized hosted Devnet contributor.");
-    const { context, page } = await openAuthorizedCompensationPage(browser);
-    try {
-      await requireSafeActionPreconditions(page);
-      await page.route(claimRoute, async (route) => {
-        if (route.request().method() !== "POST") { await route.continue(); return; }
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
-          status: "claimed", signature: "test-fixture-cleanup-pending-signature",
-          warning: "proof_context_cleanup_pending", amountBaseUnits: "1000000", proofDurationMs: 1
-        }) });
-      });
-      await clickAndWaitForClaimResponse(page);
-      await expect(page.getByRole("status").filter({ hasText: /need proof-context cleanup/ })).toBeVisible();
-      await expect(page.getByRole("alert")).toHaveCount(0);
-      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
-    } finally { await context.close(); }
-  });
-
-  test("renders failed claim responses as an actionable error, never as success", async ({ browser }) => {
-    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
-      "Requires the explicitly authorized hosted Devnet contributor.");
-    const { context, page } = await openAuthorizedCompensationPage(browser);
-    try {
-      await requireSafeActionPreconditions(page);
-      await page.route(claimRoute, async (route) => {
-        if (route.request().method() !== "POST") { await route.continue(); return; }
-        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily_unavailable" }) });
-      });
-      await clickAndWaitForClaimResponse(page);
-      await expect(page.getByRole("alert").filter({
-        hasText: /need attention\. Unverified transfers are not shown as complete/
-      })).toBeVisible();
-      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
-    } finally { await context.close(); }
-  });
-
-  test("keeps Claim PDA allocations isolated between contributor wallet sessions", async ({ browser }) => {
-    const url = process.env.PAYLORE_E2E_SETTLEMENT_URL;
-    const primaryStorageState = process.env.PAYLORE_E2E_STORAGE_STATE;
-    const otherStorageState = process.env.PAYLORE_E2E_OTHER_STORAGE_STATE;
-    test.skip(!url || !primaryStorageState || !otherStorageState,
-      "Requires two authorized contributor storage states in the same workspace.");
-    const primaryContext = await browser.newContext({ storageState: primaryStorageState! });
-    const otherContext = await browser.newContext({ storageState: otherStorageState! });
-    try {
-      const primaryPage = await primaryContext.newPage();
-      const otherPage = await otherContext.newPage();
-      await Promise.all([primaryPage.goto(url!), otherPage.goto(url!)]);
-      await Promise.all([
-        expect(primaryPage.getByRole("heading", { name: "Your compensation" })).toBeVisible(),
-        expect(otherPage.getByRole("heading", { name: "Your compensation" })).toBeVisible()
-      ]);
-      const primaryClaims = (await primaryPage.locator("table tbody tr td:nth-child(4) code").allTextContents()).map(v => v.trim()).filter(Boolean);
-      const otherClaims = (await otherPage.locator("table tbody tr td:nth-child(4) code").allTextContents()).map(v => v.trim()).filter(Boolean);
-      expect(primaryClaims.length, "The primary test contributor must have at least one Claim PDA allocation").toBeGreaterThan(0);
-      expect(otherClaims.length, "The second contributor must have at least one Claim PDA allocation").toBeGreaterThan(0);
-      const primaryClaimSet = new Set(primaryClaims);
-      expect(otherClaims.some(claimAddress => primaryClaimSet.has(claimAddress)),
-        "A Claim PDA assigned to the first wallet must never appear in the second wallet's compensation table").toBe(false);
-    } finally { await Promise.all([primaryContext.close(), otherContext.close()]); }
-  });
-
 });
