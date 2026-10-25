@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findWorkspaceContributorByWallet, getWorkspaceForUser, getWorkspacePayrollRun } from "@paylore/database";
+import { findWorkspaceContributorByWallet, getWorkspaceForUser, getWorkspacePayrollRun, recordWorkspaceNonFinancialOutcome } from "@paylore/database";
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
@@ -29,10 +29,56 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (!allocation || allocation.contributorId !== contributor.id || allocation.contributorWalletAddress !== wallet) {
       return NextResponse.json({ error: "payroll_allocation_not_found" }, { status: 404 });
     }
-    const result = await settleContributorPayrollAllocation(db, {
-      workspaceId, runId, allocationId, contributorId: contributor.id,
-      contributorAddress: wallet, contributorUserId: session.session.userId
-    });
+    let result: Awaited<ReturnType<typeof settleContributorPayrollAllocation>>;
+    try {
+      result = await settleContributorPayrollAllocation(db, {
+        workspaceId, runId, allocationId, contributorId: contributor.id,
+        contributorAddress: wallet, contributorUserId: session.session.userId
+      });
+    } catch (error) {
+      const errorCode = error instanceof PayrollConfidentialSettlementError
+        ? error.code : "settlement_unavailable";
+      const outcome = await recordWorkspaceNonFinancialOutcome(db, {
+        workspaceId,
+        idempotencyKey: `payroll-settlement-failure:${allocationId}:${errorCode}`,
+        category: "payroll",
+        entryType: "claim_settlement_failed",
+        status: "failed",
+        referenceType: "payroll_allocation",
+        referenceId: allocationId,
+        metadata: { runId, outcome: "failed", errorCode },
+      }).catch(() => ({ status: "conflict" as const }));
+      if (outcome.status === "conflict") {
+        return NextResponse.json({ error: "payroll_settlement_failure_ledger_conflict" }, {
+          status: 503, headers: { "Cache-Control": "no-store" }
+        });
+      }
+      throw error;
+    }
+    if (result.status !== "claimed" && result.status !== "already_settled") {
+      const ledgerStatus = result.status === "pending" || result.status === "workspace_busy"
+        ? "pending" as const : "failed" as const;
+      const outcome = await recordWorkspaceNonFinancialOutcome(db, {
+        workspaceId,
+        idempotencyKey: `payroll-settlement-outcome:${allocationId}:${result.status}:${result.signature ?? "unsubmitted"}`,
+        category: "payroll",
+        entryType: `claim_settlement_${result.status}`,
+        status: ledgerStatus,
+        referenceType: "payroll_allocation",
+        referenceId: allocationId,
+        transactionSignature: result.signature ?? null,
+        metadata: {
+          runId,
+          outcome: result.status,
+          ...(result.warning ? { warning: result.warning } : {})
+        }
+      }).catch(() => ({ status: "conflict" as const }));
+      if (outcome.status === "conflict") {
+        return NextResponse.json({ error: "payroll_settlement_outcome_ledger_conflict" }, {
+          status: 503, headers: { "Cache-Control": "no-store" }
+        });
+      }
+    }
     const headers: Record<string, string> = { "Cache-Control": "no-store" };
     if (result.proofDurationMs !== undefined) headers["Server-Timing"] = "confidential-proof;dur=" + result.proofDurationMs.toFixed(2);
     return NextResponse.json({

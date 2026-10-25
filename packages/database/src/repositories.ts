@@ -3548,6 +3548,26 @@ export async function requestWorkspaceDeletion(
   const scheduledAt = scheduleWorkspaceDeletion(now);
   return db.transaction(async (tx) => {
     const notifyPending = async (scheduled: Date) => {
+      await tx.insert(workspaceLedgerEntries).values({
+        workspaceId,
+        idempotencyKey: `workspace-deletion-request:${scheduled.getTime()}`,
+        category: "recovery",
+        entryType: "workspace_deletion_requested",
+        status: "pending",
+        amountBaseUnits: null,
+        mint: null,
+        referenceType: "workspace",
+        referenceId: workspaceId,
+        metadata: {
+          outcome: "pending",
+          scheduledAt: scheduled.toISOString(),
+          financialValueVerified: false,
+          amountOmittedReason: "non_financial_outcome"
+        },
+        createdAt: now
+      }).onConflictDoNothing({
+        target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+      });
       const members = await tx
         .select({ userId: workspaceMemberships.userId })
         .from(workspaceMemberships)
@@ -3767,6 +3787,25 @@ export async function cancelWorkspaceDeletion(
           updatedAt: now
         }
       });
+    await tx.insert(workspaceLedgerEntries).values({
+      workspaceId,
+      idempotencyKey: `workspace-deletion-canceled:${now.getTime()}`,
+      category: "recovery",
+      entryType: "workspace_deletion_canceled",
+      status: "reversed",
+      amountBaseUnits: null,
+      mint: null,
+      referenceType: "workspace",
+      referenceId: workspaceId,
+      metadata: {
+        outcome: "canceled",
+        financialValueVerified: false,
+        amountOmittedReason: "non_financial_outcome"
+      },
+      createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    });
     const members = await tx
       .select({ userId: workspaceMemberships.userId })
       .from(workspaceMemberships)
@@ -5520,6 +5559,186 @@ export async function getPayrollAllocationForChainReconciliation(
 
 
 /** Records a finalized Claim PDA transition only after its confidential settlement ledger is already reconciled. */
+
+export type WorkspaceNonFinancialOutcomeInput = {
+  workspaceId: string;
+  idempotencyKey: string;
+  category: "billing" | "payroll" | "recovery" | "gas_operations" | "cash_out";
+  entryType: string;
+  status: "pending" | "failed" | "reversed";
+  referenceType?: string | null;
+  referenceId?: string | null;
+  transactionSignature?: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+  now?: Date;
+};
+
+/** Records an operational outcome without assigning an unverified financial amount. */
+export async function recordWorkspaceNonFinancialOutcome(
+  db: Database,
+  input: WorkspaceNonFinancialOutcomeInput
+) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9:_-]{0,199}$/.test(input.idempotencyKey) ||
+      !/^[a-z][a-z0-9_]{0,79}$/.test(input.entryType) ||
+      !/^[a-z0-9_]{1,40}$/.test(input.category) ||
+      Object.keys(input.metadata).some((key) => /ciphertext|private.?key|secret|amountBaseUnits/i.test(key))) {
+    throw new Error("The non-financial ledger outcome is invalid.");
+  }
+  const now = input.now ?? new Date();
+  const metadata = {
+    ...input.metadata,
+    financialValueVerified: false,
+    amountOmittedReason: "non_financial_outcome"
+  };
+  return db.transaction(async (tx) => {
+    const inserted = await tx.insert(workspaceLedgerEntries).values({
+      workspaceId: input.workspaceId,
+      idempotencyKey: input.idempotencyKey,
+      category: input.category,
+      entryType: input.entryType,
+      status: input.status,
+      amountBaseUnits: null,
+      mint: null,
+      referenceType: input.referenceType ?? null,
+      referenceId: input.referenceId ?? null,
+      transactionSignature: input.transactionSignature ?? null,
+      metadata,
+      createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    }).returning({ id: workspaceLedgerEntries.id });
+    if (inserted[0]) return { status: "recorded" as const };
+
+    const existingRows = await tx.select({
+      category: workspaceLedgerEntries.category,
+      entryType: workspaceLedgerEntries.entryType,
+      status: workspaceLedgerEntries.status,
+      referenceType: workspaceLedgerEntries.referenceType,
+      referenceId: workspaceLedgerEntries.referenceId,
+      transactionSignature: workspaceLedgerEntries.transactionSignature,
+      metadata: workspaceLedgerEntries.metadata
+    }).from(workspaceLedgerEntries).where(and(
+      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+      eq(workspaceLedgerEntries.idempotencyKey, input.idempotencyKey)
+    )).limit(1);
+    const existing = existingRows[0];
+    const existingMetadata = existing?.metadata !== null &&
+      typeof existing?.metadata === "object" && !Array.isArray(existing.metadata)
+      ? existing.metadata as Record<string, unknown> : null;
+    const replayMatches = existing?.category === input.category &&
+      existing.entryType === input.entryType &&
+      existing.status === input.status &&
+      existing.referenceType === (input.referenceType ?? null) &&
+      existing.referenceId === (input.referenceId ?? null) &&
+      existing.transactionSignature === (input.transactionSignature ?? null) &&
+      existingMetadata?.outcome === (input.metadata.outcome ?? null) &&
+      existingMetadata?.errorCode === (input.metadata.errorCode ?? null);
+    return replayMatches ? { status: "duplicate" as const } : { status: "conflict" as const };
+  });
+}
+
+export async function recordVerifiedPublicCashOutLedger(
+  db: Database,
+  input: {
+    workspaceId: string;
+    contributorId: string;
+    contributorWalletAddress: string;
+    kind: "confidential_withdrawal" | "circle_usdc_unwrap";
+    signature: string;
+    amountBaseUnits: string;
+    mint: string;
+    sourceTokenAccount: string;
+    destinationTokenAccount: string;
+    now?: Date;
+  }
+) {
+  if (!/^[1-9][0-9]{0,19}$/.test(input.amountBaseUnits) ||
+      BigInt(input.amountBaseUnits) >= (1n << 64n) ||
+      !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature) ||
+      !input.mint || !input.sourceTokenAccount || !input.destinationTokenAccount ||
+      !input.contributorWalletAddress) {
+    throw new Error("The verified public cash-out ledger input is invalid.");
+  }
+  const now = input.now ?? new Date();
+  const entryType = input.kind === "confidential_withdrawal"
+    ? "confidential_balance_withdrawal"
+    : "circle_usdc_unwrap";
+  const idempotencyKey = `public-cash-out:${input.kind}:${input.signature}`;
+
+  return db.transaction(async (tx) => {
+    const contributorRows = await tx.select({
+      id: contributors.id,
+      identityWalletAddress: contributors.identityWalletAddress,
+      lifecycle: contributors.lifecycle
+    }).from(contributors).where(and(
+      eq(contributors.workspaceId, input.workspaceId),
+      eq(contributors.id, input.contributorId)
+    )).for("update").limit(1);
+    const contributor = contributorRows[0];
+    if (!contributor || contributor.lifecycle === "left" ||
+        contributor.identityWalletAddress !== input.contributorWalletAddress) {
+      return { status: "not_found" as const };
+    }
+
+    const metadata = {
+      contributorWalletAddress: input.contributorWalletAddress,
+      sourceTokenAccount: input.sourceTokenAccount,
+      destinationTokenAccount: input.destinationTokenAccount,
+      balanceDeltaVerified: true,
+      valueTransferred: true,
+      sourceOfTruth: "finalized_solana_transaction_and_exact_public_token_balance_delta"
+    };
+    const inserted = await tx.insert(workspaceLedgerEntries).values({
+      workspaceId: input.workspaceId,
+      idempotencyKey,
+      category: "cash_out",
+      entryType,
+      status: "finalized",
+      amountBaseUnits: input.amountBaseUnits,
+      mint: input.mint,
+      referenceType: "contributor",
+      referenceId: input.contributorId,
+      transactionSignature: input.signature,
+      metadata,
+      createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    }).returning({ id: workspaceLedgerEntries.id });
+    if (inserted[0]) return { status: "finalized" as const };
+
+    const existingRows = await tx.select({
+      entryType: workspaceLedgerEntries.entryType,
+      status: workspaceLedgerEntries.status,
+      amountBaseUnits: workspaceLedgerEntries.amountBaseUnits,
+      mint: workspaceLedgerEntries.mint,
+      referenceType: workspaceLedgerEntries.referenceType,
+      referenceId: workspaceLedgerEntries.referenceId,
+      transactionSignature: workspaceLedgerEntries.transactionSignature,
+      metadata: workspaceLedgerEntries.metadata
+    }).from(workspaceLedgerEntries).where(and(
+      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+      eq(workspaceLedgerEntries.idempotencyKey, idempotencyKey)
+    )).limit(1);
+    const existing = existingRows[0];
+    const existingMetadata = existing?.metadata !== null &&
+      typeof existing?.metadata === "object" && !Array.isArray(existing.metadata)
+      ? existing.metadata as Record<string, unknown> : null;
+    const sameEvidence = existing?.entryType === entryType &&
+      existing.status === "finalized" &&
+      existing.amountBaseUnits === input.amountBaseUnits &&
+      existing.mint === input.mint &&
+      existing.referenceType === "contributor" &&
+      existing.referenceId === input.contributorId &&
+      existing.transactionSignature === input.signature &&
+      existingMetadata?.contributorWalletAddress === input.contributorWalletAddress &&
+      existingMetadata?.sourceTokenAccount === input.sourceTokenAccount &&
+      existingMetadata?.destinationTokenAccount === input.destinationTokenAccount &&
+      existingMetadata?.balanceDeltaVerified === true &&
+      existingMetadata?.valueTransferred === true;
+    return sameEvidence ? { status: "duplicate" as const } : { status: "conflict" as const };
+  });
+}
+
 export async function recordVerifiedPayrollClaimFinalizationEvent(
   db: Database,
   input: {

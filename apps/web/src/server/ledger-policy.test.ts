@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   csvCell,
+  LEDGER_CATEGORIES,
+  LEDGER_CATEGORY_LABELS,
   decodeLedgerCursor,
   encodeLedgerCursor,
   parseLedgerDate
 } from "./ledger-policy";
 
 describe("workspace ledger policy", () => {
+  it("exposes verified public cash-out entries as a filterable category", () => {
+    expect(LEDGER_CATEGORIES).toContain("cash_out");
+    expect(LEDGER_CATEGORY_LABELS.cash_out).toBe("Cash Out & Withdrawals");
+  });
+
   it("round-trips a stable timestamp and id cursor", () => {
     const cursor = {
       createdAt: new Date("2026-01-02T03:04:05.000Z"),
