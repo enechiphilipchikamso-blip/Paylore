@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getFinalizedLedgerReconciliationDisposition,
   getWebhookTransactionBindingError,
   normalizeHeliusWebhookPayload
 } from "./webhook-policy";
@@ -121,5 +122,14 @@ describe("Helius transaction trust boundary", () => {
       accountAddress: null,
       transaction
     })).toBeNull();
+  });
+});
+
+
+describe("finalized ledger reconciliation policy", () => {
+  it("requires ledger evidence from exactly one workspace for a transaction signature", () => {
+    expect(getFinalizedLedgerReconciliationDisposition([])).toBe("not_reconciled");
+    expect(getFinalizedLedgerReconciliationDisposition(["workspace-a", "workspace-a"])).toBe("reconciled");
+    expect(getFinalizedLedgerReconciliationDisposition(["workspace-a", "workspace-b"])).toBe("ambiguous_workspace");
   });
 });

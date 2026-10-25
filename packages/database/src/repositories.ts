@@ -2722,6 +2722,19 @@ export async function createWorkspaceLedgerEntry(
   return { entry: existing[0], created: false };
 }
 
+export async function listFinalizedLedgerWorkspaceIdsForSignature(
+  db: Database,
+  signature: string
+) {
+  return db
+    .selectDistinct({ workspaceId: workspaceLedgerEntries.workspaceId })
+    .from(workspaceLedgerEntries)
+    .where(and(
+      eq(workspaceLedgerEntries.transactionSignature, signature),
+      eq(workspaceLedgerEntries.status, "finalized")
+    ));
+}
+
 export async function listHeliusMonitoredAddresses(db: Database): Promise<string[]> {
   const [
     reserves,
@@ -5416,6 +5429,7 @@ export async function getPayrollAllocationForChainReconciliation(
       claimAddress: payrollAllocations.claimAddress,
       allocationStatus: payrollAllocations.status,
       transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature,
       amountBaseUnits: payrollAllocations.amountBaseUnits,
       contributorWalletAddress: contributors.identityWalletAddress,
       allocationCommitment: payrollRuns.allocationCommitment,
@@ -5447,6 +5461,99 @@ export async function getPayrollAllocationForChainReconciliation(
     throw new Error("The Claim PDA address maps to more than one application allocation.");
   }
   return rows[0] ?? null;
+}
+
+
+/** Records a finalized Claim PDA transition only after its confidential settlement ledger is already reconciled. */
+export async function recordVerifiedPayrollClaimFinalizationEvent(
+  db: Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    allocationId: string;
+    claimAddress: string;
+    claimCreationSignature: string;
+    settlementSignature: string;
+    authorityAddress: string;
+    signature: string;
+    now?: Date;
+  }
+) {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select({
+      id: payrollAllocations.id,
+      workspaceId: payrollAllocations.workspaceId,
+      payrollRunId: payrollAllocations.payrollRunId,
+      status: payrollAllocations.status,
+      claimAddress: payrollAllocations.claimAddress,
+      transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature
+    }).from(payrollAllocations).where(and(
+      eq(payrollAllocations.id, input.allocationId),
+      eq(payrollAllocations.workspaceId, input.workspaceId),
+      eq(payrollAllocations.payrollRunId, input.runId)
+    )).for("update").limit(1);
+    const allocation = rows[0];
+    if (!allocation || allocation.claimAddress !== input.claimAddress ||
+        allocation.transactionSignature !== input.claimCreationSignature ||
+        allocation.settlementSignature !== input.settlementSignature ||
+        allocation.status !== "claimed") {
+      return { status: "not_reconciled" as const };
+    }
+
+    const settlementLedger = await tx.select({
+      status: workspaceLedgerEntries.status,
+      transactionSignature: workspaceLedgerEntries.transactionSignature
+    }).from(workspaceLedgerEntries).where(and(
+      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+      eq(workspaceLedgerEntries.idempotencyKey, `payroll-settlement:${input.allocationId}`)
+    )).limit(1);
+    if (!settlementLedger[0] || settlementLedger[0].status !== "finalized" ||
+        settlementLedger[0].transactionSignature !== input.settlementSignature) {
+      return { status: "not_reconciled" as const };
+    }
+
+    const key = `payroll-claim-finalization:${input.allocationId}`;
+    const inserted = await tx.insert(workspaceLedgerEntries).values({
+      workspaceId: input.workspaceId,
+      idempotencyKey: key,
+      category: "payroll",
+      entryType: "claim_finalized",
+      status: "finalized",
+      amountBaseUnits: null,
+      mint: null,
+      referenceType: "payroll_allocation",
+      referenceId: input.allocationId,
+      transactionSignature: input.signature,
+      metadata: {
+        runId: input.runId,
+        claimAddress: input.claimAddress,
+        claimCreationSignature: input.claimCreationSignature,
+        settlementSignature: input.settlementSignature,
+        authorityAddress: input.authorityAddress,
+        valueTransferred: false,
+        source: "finalized_claim_pda_and_existing_settlement_ledger"
+      },
+      createdAt: now
+    }).onConflictDoNothing({
+      target: [workspaceLedgerEntries.workspaceId, workspaceLedgerEntries.idempotencyKey]
+    }).returning({ id: workspaceLedgerEntries.id });
+    if (inserted[0]) return { status: "finalized" as const };
+
+    const existing = await tx.select({
+      status: workspaceLedgerEntries.status,
+      transactionSignature: workspaceLedgerEntries.transactionSignature
+    }).from(workspaceLedgerEntries).where(and(
+      eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+      eq(workspaceLedgerEntries.idempotencyKey, key)
+    )).limit(1);
+    if (existing[0]?.status === "finalized" &&
+        existing[0].transactionSignature === input.signature) {
+      return { status: "duplicate" as const };
+    }
+    return { status: "conflict" as const };
+  });
 }
 
 export async function recordVerifiedPayrollRecoveryEvent(

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "./client";
-import { beginPayrollSettlementAttempt, recordVerifiedPayrollClaimSettlement } from "./repositories";
+import { beginPayrollSettlementAttempt, listFinalizedLedgerWorkspaceIdsForSignature, recordVerifiedPayrollClaimFinalizationEvent, recordVerifiedPayrollClaimSettlement } from "./repositories";
 function query(result: unknown) {
   const builder: Record<string, unknown> = {};
   for (const name of ["from", "innerJoin", "where", "orderBy", "limit", "for"]) builder[name] = vi.fn(() => builder);
@@ -8,20 +8,20 @@ function query(result: unknown) {
   return builder;
 }
 type Mutation = { method: string; value?: unknown };
-function mutation(calls: Mutation[], method: string) {
+function mutation(calls: Mutation[], method: string, returningRows: unknown[] = [{ id: "row-1" }]) {
   const builder: Record<string, unknown> = {};
   let result: unknown = [];
   builder.values = vi.fn((value: unknown) => { calls.push({ method, value }); return builder; });
   builder.set = vi.fn((value: unknown) => { calls.push({ method, value }); return builder; });
   builder.where = vi.fn(() => builder);
   builder.onConflictDoNothing = vi.fn(() => builder);
-  builder.returning = vi.fn(() => { result = [{ id: "row-1" }]; return builder; });
+  builder.returning = vi.fn(() => { result = returningRows; return builder; });
   builder.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(result).then(resolve, reject);
   return builder;
 }
-function fakeDatabase(selects: unknown[][]) {
+function fakeDatabase(selects: unknown[][], insertResults: unknown[][] = []) {
   const mutations: Mutation[] = [];
-  const tx = { select: vi.fn(() => query(selects.shift() ?? [])), update: vi.fn(() => mutation(mutations, "update")), insert: vi.fn(() => mutation(mutations, "insert")) };
+  const tx = { select: vi.fn(() => query(selects.shift() ?? [])), update: vi.fn(() => mutation(mutations, "update")), insert: vi.fn(() => mutation(mutations, "insert", insertResults.shift() ?? [{ id: "row-1" }])) };
   const db = { transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)) };
   return { db: db as unknown as Database, tx, mutations };
 }
@@ -90,5 +90,68 @@ describe("confidential payroll settlement repository", () => {
       sourceAvailableBefore: "9000000"
     })).resolves.toEqual({ status: "workspace_busy" });
     expect(db.tx.update).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("finalized Claim PDA event reconciliation", () => {
+  const claimedAllocation = {
+    id: common.allocationId, workspaceId: common.workspaceId, payrollRunId: common.runId,
+    status: "claimed", claimAddress: common.claimAddress,
+    transactionSignature: common.claimCreationSignature, settlementSignature: common.settlementSignature
+  };
+  const finalizationInput = {
+    workspaceId: common.workspaceId, runId: common.runId, allocationId: common.allocationId,
+    claimAddress: common.claimAddress, claimCreationSignature: common.claimCreationSignature,
+    settlementSignature: common.settlementSignature, authorityAddress: "reserve-authority",
+    signature: "7".repeat(64)
+  };
+
+  it("records a zero-amount state-transition entry only after the settlement ledger is finalized", async () => {
+    const db = fakeDatabase([
+      [claimedAllocation],
+      [{ status: "finalized", transactionSignature: common.settlementSignature }]
+    ]);
+    await expect(recordVerifiedPayrollClaimFinalizationEvent(db.db, finalizationInput))
+      .resolves.toEqual({ status: "finalized" });
+    expect(db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value))
+      .toContainEqual(expect.objectContaining({
+        workspaceId: common.workspaceId,
+        idempotencyKey: "payroll-claim-finalization:allocation-a",
+        entryType: "claim_finalized",
+        status: "finalized",
+        amountBaseUnits: null,
+        transactionSignature: "7".repeat(64),
+        metadata: expect.objectContaining({
+          settlementSignature: common.settlementSignature,
+          valueTransferred: false
+        })
+      }));
+  });
+
+  it("does not record claim finalization before the exact settlement ledger exists", async () => {
+    const db = fakeDatabase([[claimedAllocation], []]);
+    await expect(recordVerifiedPayrollClaimFinalizationEvent(db.db, finalizationInput))
+      .resolves.toEqual({ status: "not_reconciled" });
+    expect(db.tx.update).not.toHaveBeenCalled();
+    expect(db.mutations.filter((entry) => entry.method === "insert")).toHaveLength(0);
+  });
+
+  it("treats only the same finalization transaction as an idempotent replay", async () => {
+    const db = fakeDatabase([
+      [claimedAllocation],
+      [{ status: "finalized", transactionSignature: common.settlementSignature }],
+      [{ status: "finalized", transactionSignature: finalizationInput.signature }]
+    ], [[]]);
+    await expect(recordVerifiedPayrollClaimFinalizationEvent(db.db, finalizationInput))
+      .resolves.toEqual({ status: "duplicate" });
+  });
+
+  it("lists finalized ledger workspaces for a transaction signature", async () => {
+    const rows = [{ workspaceId: common.workspaceId }];
+    const selectDistinct = vi.fn(() => query(rows));
+    const db = { selectDistinct } as unknown as Database;
+    await expect(listFinalizedLedgerWorkspaceIdsForSignature(db, common.settlementSignature)).resolves.toEqual(rows);
+    expect(selectDistinct).toHaveBeenCalledTimes(1);
   });
 });

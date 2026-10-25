@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
+  listFinalizedLedgerWorkspaceIdsForSignature,
+  recordVerifiedPayrollClaimFinalizationEvent,
   createWorkspaceNotificationForFinanceMembers,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
@@ -18,7 +20,7 @@ import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/confi
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
 import { isExactSubscriptionPaymentTransaction } from "../../apps/web/src/server/solana/subscription-payment-chain-check";
-import { getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
+import { findFinalizeClaimedInstruction, getFinalizedLedgerReconciliationDisposition, getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
 import {
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
@@ -33,7 +35,7 @@ type FinalizedTransaction = {
   meta: { err: unknown } | null;
   transaction?: {
     signatures?: unknown;
-    message?: { accountKeys?: unknown };
+    message?: { accountKeys?: unknown; instructions?: Array<Record<string, unknown>> };
   };
 } | null;
 
@@ -226,6 +228,34 @@ async function reconcileEvent(
       now
     });
     return verified.duplicate ? "finalized" : "finalized";
+  }
+
+  const existingLedgerWorkspaces = await listFinalizedLedgerWorkspaceIdsForSignature(
+    db,
+    event.transactionSignature
+  );
+  const existingLedgerDisposition = getFinalizedLedgerReconciliationDisposition(
+    existingLedgerWorkspaces.map((row) => row.workspaceId)
+  );
+  if (existingLedgerDisposition === "ambiguous_workspace") {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "dead_letter",
+      errorCode: "ledger_signature_workspace_conflict",
+      processedAt: now,
+      now
+    });
+    return "dead_letter";
+  }
+  if (existingLedgerDisposition === "reconciled") {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "finalized",
+      finalizedAt: now,
+      processedAt: now,
+      now
+    });
+    return "finalized";
   }
 
   const parsedTransaction = transaction as unknown as {
@@ -448,6 +478,56 @@ async function reconcileEvent(
       result.status !== "duplicate"
     ) {
       await retry("payroll_claim_state_conflict");
+      return deadLetter ? "dead_letter" : "retry_pending";
+    }
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "finalized",
+      finalizedAt: now,
+      processedAt: now,
+      now
+    });
+    return "finalized";
+  }
+
+  const finalizationInstruction = findFinalizeClaimedInstruction({
+    transaction,
+    payrollProgramId
+  });
+  if (finalizationInstruction.kind === "invalid") {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id,
+      status: "dead_letter",
+      errorCode: finalizationInstruction.errorCode,
+      processedAt: now,
+      now
+    });
+    return "dead_letter";
+  }
+  if (finalizationInstruction.kind === "found") {
+    const allocation = await getPayrollAllocationForChainReconciliation(
+      db,
+      finalizationInstruction.claimAddress
+    );
+    if (!allocation || !allocation.claimId || !allocation.transactionSignature ||
+        !allocation.settlementSignature || !allocation.allocationCommitment ||
+        allocation.allocationStatus !== "claimed") {
+      await retry("claim_finalization_application_state_not_reconciled");
+      return deadLetter ? "dead_letter" : "retry_pending";
+    }
+    const recorded = await recordVerifiedPayrollClaimFinalizationEvent(db, {
+      workspaceId: allocation.workspaceId,
+      runId: allocation.runId,
+      allocationId: allocation.allocationId,
+      claimAddress: finalizationInstruction.claimAddress,
+      claimCreationSignature: allocation.transactionSignature,
+      settlementSignature: allocation.settlementSignature,
+      authorityAddress: finalizationInstruction.authorityAddress,
+      signature: event.transactionSignature,
+      now
+    });
+    if (recorded.status !== "finalized" && recorded.status !== "duplicate") {
+      await retry("claim_finalization_settlement_ledger_not_reconciled");
       return deadLetter ? "dead_letter" : "retry_pending";
     }
     await updateSolanaWebhookEventState(db, {

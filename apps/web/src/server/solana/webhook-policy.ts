@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -28,7 +29,7 @@ type TransactionBindingEnvelope = {
   slot: number;
   transaction?: {
     signatures?: unknown;
-    message?: { accountKeys?: unknown };
+    message?: { accountKeys?: unknown; instructions?: unknown };
   };
 };
 
@@ -111,4 +112,100 @@ export function normalizeHeliusWebhookPayload(
 ): NormalizedWebhookEvent[] | null {
   if (!Array.isArray(payload)) return null;
   return normalizeEvents(payload);
+}
+
+
+export type FinalizeClaimedInstructionMatch =
+  | { kind: "not_found" }
+  | { kind: "invalid"; errorCode: string }
+  | { kind: "found"; authorityAddress: string; claimAddress: string };
+
+const FINALIZE_CLAIMED_DISCRIMINATOR = createHash("sha256")
+  .update("global:finalize_claimed")
+  .digest()
+  .subarray(0, 8);
+const INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111";
+
+function decodeBase58Instruction(value: string): Uint8Array | null {
+  if (!value) return null;
+  let number = 0n;
+  for (const character of value) {
+    const digit = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".indexOf(character);
+    if (digit < 0) return null;
+    number = number * 58n + BigInt(digit);
+  }
+  const bytes: number[] = [];
+  while (number > 0n) {
+    bytes.unshift(Number(number & 0xffn));
+    number >>= 8n;
+  }
+  for (const character of value) {
+    if (character !== "1") break;
+    bytes.unshift(0);
+  }
+  return Uint8Array.from(bytes);
+}
+
+/** Identifies the only valid on-chain finalization instruction shape before app-state reconciliation. */
+export function findFinalizeClaimedInstruction(input: {
+  transaction: TransactionBindingEnvelope;
+  payrollProgramId: string;
+}): FinalizeClaimedInstructionMatch {
+  const message = input.transaction.transaction?.message;
+  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
+  const accountKeys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
+  const publicKeys = accountKeys.flatMap((entry) => {
+    if (typeof entry === "string") return [entry];
+    if (entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string") return [entry.pubkey];
+    return [];
+  });
+  const signers = accountKeys.flatMap((entry) => {
+    if (entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string" &&
+        "signer" in entry && entry.signer === true) return [entry.pubkey];
+    return [];
+  });
+  let match: { authorityAddress: string; claimAddress: string } | null = null;
+
+  for (const rawInstruction of instructions) {
+    if (!rawInstruction || typeof rawInstruction !== "object") continue;
+    const instruction = rawInstruction as Record<string, unknown>;
+    if (instruction.programId !== input.payrollProgramId ||
+        typeof instruction.data !== "string") continue;
+    const data = decodeBase58Instruction(instruction.data);
+    if (!data || data.length < 8 ||
+        !FINALIZE_CLAIMED_DISCRIMINATOR.every((byte, index) => data[index] === byte)) continue;
+    if (data.length !== 8) {
+      return { kind: "invalid", errorCode: "finalize_claimed_instruction_data_invalid" };
+    }
+    if (match) {
+      return { kind: "invalid", errorCode: "duplicate_finalize_claimed_instruction" };
+    }
+    const accounts = instruction.accounts;
+    if (!Array.isArray(accounts) || accounts.length !== 6 ||
+        accounts.some((account) => typeof account !== "string")) {
+      return { kind: "invalid", errorCode: "finalize_claimed_account_shape_invalid" };
+    }
+    const authorityAddress = accounts[3] as string;
+    const claimAddress = accounts[4] as string;
+    if (accounts.some((account) => !publicKeys.includes(account as string))) {
+      return { kind: "invalid", errorCode: "finalize_claimed_account_mapping_invalid" };
+    }
+    if (!authorityAddress || !claimAddress ||
+        accounts[5] !== INSTRUCTIONS_SYSVAR ||
+        !signers.includes(authorityAddress)) {
+      return { kind: "invalid", errorCode: "finalize_claimed_authority_not_verified" };
+    }
+    match = { authorityAddress, claimAddress };
+  }
+  return match ? { kind: "found", ...match } : { kind: "not_found" };
+}
+
+export function getFinalizedLedgerReconciliationDisposition(
+  workspaceIds: string[]
+): "not_reconciled" | "reconciled" | "ambiguous_workspace" {
+  const unique = new Set(workspaceIds.filter((workspaceId) => workspaceId.length > 0));
+  if (unique.size === 0) return "not_reconciled";
+  return unique.size === 1 ? "reconciled" : "ambiguous_workspace";
 }

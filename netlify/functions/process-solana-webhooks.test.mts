@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
+import {
+  findFinalizeClaimedInstruction,
+  getFinalizedLedgerReconciliationDisposition,
+  getWebhookTransactionBindingError
+} from "../../apps/web/src/server/solana/webhook-policy";
 
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -70,5 +74,51 @@ describe("worker webhook binding regression", () => {
         }
       }
     })).toBe("webhook_account_hint_mismatch");
+  });
+});
+
+
+describe("finalized webhook ledger reconciliation policy", () => {
+  it("distinguishes missing, single-workspace, and ambiguous ledger evidence", () => {
+    expect(getFinalizedLedgerReconciliationDisposition([])).toBe("not_reconciled");
+    expect(getFinalizedLedgerReconciliationDisposition(["workspace-a", "workspace-a"])).toBe("reconciled");
+    expect(getFinalizedLedgerReconciliationDisposition(["workspace-a", "workspace-b"])).toBe("ambiguous_workspace");
+  });
+
+  it("maps a finalized Claim PDA transition only from the configured program and signed reserve authority", () => {
+    const programId = "PayloreProgram111111111111111111111111111";
+    const authorityAddress = "ReserveAuthority111111111111111111111111";
+    const claimAddress = "Claim111111111111111111111111111111111111";
+    const accounts = ["contributor", "workspace", "reserve-state", authorityAddress, claimAddress,
+      "Sysvar1nstructions1111111111111111111111111"];
+    const discriminator = createHash("sha256").update("global:finalize_claimed").digest().subarray(0, 8);
+    const instruction = { programId, data: encodeBase58(discriminator), accounts };
+    const transaction = {
+      slot: 12,
+      transaction: {
+        signatures: ["1".repeat(64)],
+        message: {
+          accountKeys: accounts.map((pubkey) => ({ pubkey, signer: pubkey === authorityAddress })),
+          instructions: [instruction]
+        }
+      }
+    };
+    expect(findFinalizeClaimedInstruction({ transaction, payrollProgramId: programId }))
+      .toEqual({ kind: "found", authorityAddress, claimAddress });
+    expect(findFinalizeClaimedInstruction({
+      transaction: { ...transaction, transaction: { ...transaction.transaction, message: {
+        ...transaction.transaction.message,
+        accountKeys: transaction.transaction.message.accountKeys.map((entry) =>
+          entry.pubkey === authorityAddress ? { ...entry, signer: false } : entry)
+      } } },
+      payrollProgramId: programId
+    })).toMatchObject({ kind: "invalid", errorCode: "finalize_claimed_authority_not_verified" });
+    expect(findFinalizeClaimedInstruction({
+      transaction: { ...transaction, transaction: { ...transaction.transaction, message: {
+        ...transaction.transaction.message,
+        instructions: [instruction, instruction]
+      } } },
+      payrollProgramId: programId
+    })).toMatchObject({ kind: "invalid", errorCode: "duplicate_finalize_claimed_instruction" });
   });
 });
