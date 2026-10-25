@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { listWorkspaceLedgerEntries } from "@paylore/database";
+import { listWorkspaceDeadLetterSolanaWebhookEvents, listWorkspaceLedgerEntries } from "@paylore/database";
+import { WebhookDeadLetterQueue } from "../../../../components/workspace/WebhookDeadLetterQueue";
 import {
   decodeLedgerCursor,
   encodeLedgerCursor,
@@ -124,6 +125,9 @@ export default async function WorkspaceLedgerPage({
     notFound();
   }
 
+  const deadLetters = context.workspace.role === "organization_admin"
+    ? await listWorkspaceDeadLetterSolanaWebhookEvents(context.db, { workspaceId, limit: 100 })
+    : [];
   const page = await listWorkspaceLedgerEntries(context.db, {
     workspaceId,
     category: query.category,
@@ -201,7 +205,10 @@ export default async function WorkspaceLedgerPage({
           </Link>
         </form>
       </section>
-      <section className="surface-card" aria-labelledby="ledger-entries-title">
+      {context.workspace.role === "organization_admin" ? (
+        <WebhookDeadLetterQueue workspaceId={workspaceId} events={deadLetters} />
+      ) : null}
+            <section className="surface-card" aria-labelledby="ledger-entries-title">
         <h2 id="ledger-entries-title">Entries</h2>
         {entries.length === 0 ? (
           <p>No ledger entries match these filters.</p>
