@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getWebhookTransactionBindingError } from "./webhook-policy";
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
@@ -108,6 +109,7 @@ export async function scanCanonicalSignaturePage(input: {
 }
 
 export type CanonicalTransactionLike = {
+  slot?: number;
   transaction?: {
     signatures?: unknown;
     message?: { instructions?: Array<Record<string, unknown>> };
@@ -183,4 +185,96 @@ export function findSystemTransferDestination(transaction: CanonicalTransactionL
     destinations.add(info.destination);
   }
   return destinations.size === 1 ? [...destinations][0] : null;
+}
+
+
+/** Classifies canonical RPC evidence without trusting provider-supplied event descriptions. */
+export async function inspectCanonicalTransactionEvent(input: {
+  signature: CanonicalSignatureInfo;
+  accountAddress: string;
+  transaction: CanonicalTransactionLike | null;
+  payrollProgramId?: string;
+  subscriptionPaymentAttemptFound?: boolean;
+  isGasTankAddress: (address: string) => Promise<boolean>;
+}): Promise<CanonicalScanInspection> {
+  const event = (eventType: string, sourceAddress: string): CanonicalScanEvent => ({
+    provider: "canonical-rpc-scanner",
+    providerEventId: input.signature.signature,
+    transactionSignature: input.signature.signature,
+    transactionSlot: String(input.signature.slot),
+    accountAddress: input.accountAddress,
+    eventType,
+    payload: {
+      signature: input.signature.signature,
+      slot: input.signature.slot,
+      type: eventType,
+      sourceAddress
+    },
+    status: "received"
+  });
+
+  if (input.subscriptionPaymentAttemptFound) {
+    return { ready: true, event: event("subscription-payment-attempt", input.accountAddress) };
+  }
+  const transaction = input.transaction;
+  if (!transaction || !Number.isSafeInteger(transaction.slot) || transaction.slot! < 0 ||
+      getWebhookTransactionBindingError({
+        requestedSignature: input.signature.signature,
+        expectedSlot: String(input.signature.slot),
+        accountAddress: input.accountAddress,
+        transaction: { ...transaction, slot: transaction.slot! }
+      })) {
+    return { ready: false };
+  }
+
+  const payrollEvent = input.payrollProgramId
+    ? findSupportedPayrollEvent(transaction, input.payrollProgramId)
+    : null;
+  const destination = findSystemTransferDestination(transaction);
+  const gasTank = destination ? await input.isGasTankAddress(destination) : false;
+  const transferSource = destination && gasTank
+    ? signedSystemTransferSource(transaction, destination)
+    : null;
+  const eventType = payrollEvent
+    ? "payroll-" + payrollEvent
+    : gasTank && transferSource ? "gas-tank-funding" : null;
+
+  return {
+    ready: true,
+    event: eventType ? event(eventType, transferSource ?? input.accountAddress) : null
+  };
+}
+
+function signedSystemTransferSource(
+  transaction: CanonicalTransactionLike,
+  destination: string
+): string | null {
+  const message = transaction.transaction?.message;
+  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
+  const keys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
+  const signers = keys.flatMap((entry) => {
+    if (entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string" &&
+        "signer" in entry && entry.signer === true) return [entry.pubkey];
+    return [];
+  });
+  const sources = new Set<string>();
+  for (const instruction of instructions) {
+    if (instruction.programId !== SYSTEM_PROGRAM_ID ||
+        (instruction.program !== undefined && instruction.program !== "system") ||
+        !instruction.parsed || typeof instruction.parsed !== "object") continue;
+    const parsed = instruction.parsed as Record<string, unknown>;
+    if (parsed.type !== "transfer" || !parsed.info || typeof parsed.info !== "object") continue;
+    const info = parsed.info as Record<string, unknown>;
+    if (info.destination !== destination || typeof info.source !== "string" ||
+        !signers.includes(info.source) ||
+        (typeof info.lamports !== "string" && typeof info.lamports !== "number")) continue;
+    try {
+      if (typeof info.lamports === "number" && !Number.isSafeInteger(info.lamports)) continue;
+      const amount = BigInt(info.lamports);
+      if (amount <= 0n || amount >= (1n << 64n)) continue;
+    } catch { continue; }
+    sources.add(info.source);
+  }
+  return sources.size === 1 ? [...sources][0] : null;
 }

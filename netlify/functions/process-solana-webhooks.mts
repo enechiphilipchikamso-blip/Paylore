@@ -39,10 +39,8 @@ import {
   verifyPayrollRecoveryTransaction
 } from "../../apps/web/src/server/solana/payroll-program-verification";
 import {
-  findSupportedPayrollEvent,
-  findSystemTransferDestination,
+  inspectCanonicalTransactionEvent,
   scanCanonicalSignaturePage,
-  type CanonicalScanEvent,
   type CanonicalSignatureInfo,
   type CanonicalTransactionLike
 } from "../../apps/web/src/server/solana/canonical-event-scanner";
@@ -678,40 +676,6 @@ async function reconcileEvent(
 }
 
 
-function signedSystemTransferSource(
-  transaction: CanonicalTransactionLike,
-  destination: string
-): string | null {
-  const message = transaction.transaction?.message;
-  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
-  const keys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
-  const signers = keys.flatMap((entry) => {
-    if (entry && typeof entry === "object" &&
-        "pubkey" in entry && typeof entry.pubkey === "string" &&
-        "signer" in entry && entry.signer === true) return [entry.pubkey];
-    return [];
-  });
-  const sources = new Set<string>();
-  for (const instruction of instructions) {
-    if (instruction.programId !== "11111111111111111111111111111111" ||
-        (instruction.program !== undefined && instruction.program !== "system") ||
-        !instruction.parsed || typeof instruction.parsed !== "object") continue;
-    const parsed = instruction.parsed as Record<string, unknown>;
-    if (parsed.type !== "transfer" || !parsed.info || typeof parsed.info !== "object") continue;
-    const info = parsed.info as Record<string, unknown>;
-    if (info.destination !== destination || typeof info.source !== "string" ||
-        !signers.includes(info.source) ||
-        (typeof info.lamports !== "string" && typeof info.lamports !== "number")) continue;
-    try {
-      if (typeof info.lamports === "number" && !Number.isSafeInteger(info.lamports)) continue;
-      const amount = BigInt(info.lamports);
-      if (amount <= 0n || amount >= (1n << 64n)) continue;
-    } catch { continue; }
-    sources.add(info.source);
-  }
-  return sources.size === 1 ? [...sources][0] : null;
-}
-
 async function discoverMissingCanonicalEvents(
   db: ReturnType<typeof createDatabase>["db"],
   providers: ReturnType<typeof configuredRpc>["providers"],
@@ -760,64 +724,21 @@ async function discoverMissingCanonicalEvents(
         },
         inspect: async (info, address) => {
           const attempt = await getSubscriptionPaymentAttemptBySignature(db, info.signature);
-          if (attempt) {
-            return {
-              ready: true,
-              event: {
-                provider: "canonical-rpc-scanner" as const,
-                providerEventId: info.signature,
-                transactionSignature: info.signature,
-                transactionSlot: String(info.slot),
-                accountAddress: address,
-                eventType: "subscription-payment-attempt",
-                payload: { signature: info.signature, slot: info.slot, type: "subscription-payment-attempt", sourceAddress: address },
-                status: "received" as const
-              }
-            };
-          }
-
-          const transaction = await readSolanaRpcWithProviders<FinalizedTransaction>(
+          const transaction = attempt ? null : await readSolanaRpcWithProviders<FinalizedTransaction>(
             "getTransaction",
             [info.signature, { commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }],
             providers
           );
-          if (!transaction) return { ready: false };
-          const bindingError = getWebhookTransactionBindingError({
-            requestedSignature: info.signature,
-            expectedSlot: String(info.slot),
+          return inspectCanonicalTransactionEvent({
+            signature: info,
             accountAddress: address,
-            transaction
+            transaction: transaction as unknown as CanonicalTransactionLike | null,
+            payrollProgramId,
+            subscriptionPaymentAttemptFound: Boolean(attempt),
+            isGasTankAddress: async (candidate) => Boolean(
+              await getWorkspaceGasTankByAddress(db, candidate)
+            )
           });
-          if (bindingError) return { ready: false };
-
-          const canonical = transaction as unknown as CanonicalTransactionLike;
-          const payrollEvent = payrollProgramId
-            ? findSupportedPayrollEvent(canonical, payrollProgramId)
-            : null;
-          const destination = findSystemTransferDestination(canonical);
-          const gasTank = destination ? await getWorkspaceGasTankByAddress(db, destination) : null;
-          const transferSource = destination && gasTank
-            ? signedSystemTransferSource(canonical, destination)
-            : null;
-          const eventType = payrollEvent
-            ? "payroll-" + payrollEvent
-            : gasTank && transferSource ? "gas-tank-funding" : null;
-          if (!eventType) return { ready: true, event: null };
-
-          const event: CanonicalScanEvent = {
-            provider: "canonical-rpc-scanner",
-            providerEventId: info.signature,
-            transactionSignature: info.signature,
-            transactionSlot: String(info.slot),
-            accountAddress: address,
-            eventType,
-            payload: {
-              signature: info.signature, slot: info.slot, type: eventType,
-              sourceAddress: transferSource ?? address
-            },
-            status: "received"
-          };
-          return { ready: true, event };
         }
       });
       if (!page) continue;
