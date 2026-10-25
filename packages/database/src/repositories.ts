@@ -2941,11 +2941,112 @@ export async function updateSolanaWebhookEventState(
   return rows[0] ?? null;
 }
 
+type WorkspaceDeadLetterScope = {
+  accountAddresses: string[];
+  transactionSignatures: string[];
+};
+
+function uniqueWebhookScopeValues(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+async function loadWorkspaceDeadLetterScope<Executor extends Pick<Database, "select">>(
+  db: Executor,
+  workspaceId: string
+): Promise<WorkspaceDeadLetterScope> {
+  const [
+    reserves,
+    gasTanks,
+    confidentialAccounts,
+    allocations,
+    gasTankOperationsForWorkspace,
+    offboarding,
+    recoveries,
+    payrollRunsForWorkspace,
+    subscriptionPaymentsForWorkspace,
+    subscriptionAttempts
+  ] = await Promise.all([
+    db.select({
+      address: workspaceReserves.address,
+      setupSignature: workspaceReserves.confidentialAccountSetupSignature,
+      programSetupSignature: workspaceReserves.programReserveSetupSignature
+    }).from(workspaceReserves).where(eq(workspaceReserves.workspaceId, workspaceId)),
+    db.select({ address: workspaceGasTanks.address })
+      .from(workspaceGasTanks)
+      .where(eq(workspaceGasTanks.workspaceId, workspaceId)),
+    db.select({
+      address: contributorConfidentialAccounts.tokenAccountAddress,
+      setupSignature: contributorConfidentialAccounts.setupTransactionSignature,
+      closeSignature: contributorConfidentialAccounts.closeTransactionSignature
+    }).from(contributorConfidentialAccounts)
+      .where(eq(contributorConfidentialAccounts.workspaceId, workspaceId)),
+    db.select({
+      claimAddress: payrollAllocations.claimAddress,
+      transactionSignature: payrollAllocations.transactionSignature,
+      settlementSignature: payrollAllocations.settlementSignature
+    }).from(payrollAllocations)
+      .where(eq(payrollAllocations.workspaceId, workspaceId)),
+    db.select({ transactionSignature: gasTankOperations.transactionSignature })
+      .from(gasTankOperations)
+      .where(eq(gasTankOperations.workspaceId, workspaceId)),
+    db.select({ closeTransactionSignature: contributorOffboarding.closeTransactionSignature })
+      .from(contributorOffboarding)
+      .where(eq(contributorOffboarding.workspaceId, workspaceId)),
+    db.select({ transactionSignature: payrollRecoveries.transactionSignature })
+      .from(payrollRecoveries)
+      .where(eq(payrollRecoveries.workspaceId, workspaceId)),
+    db.select({ submissionSignature: payrollRuns.submissionSignature })
+      .from(payrollRuns)
+      .where(eq(payrollRuns.workspaceId, workspaceId)),
+    db.select({ signature: subscriptionPayments.signature })
+      .from(subscriptionPayments)
+      .where(eq(subscriptionPayments.workspaceId, workspaceId)),
+    db.select({ signature: subscriptionPaymentAttempts.signature })
+      .from(subscriptionPaymentAttempts)
+      .where(eq(subscriptionPaymentAttempts.workspaceId, workspaceId))
+  ]);
+
+  return {
+    accountAddresses: uniqueWebhookScopeValues([
+      ...reserves.map((row) => row.address),
+      ...gasTanks.map((row) => row.address),
+      ...confidentialAccounts.map((row) => row.address),
+      ...allocations.map((row) => row.claimAddress)
+    ]),
+    transactionSignatures: uniqueWebhookScopeValues([
+      ...reserves.flatMap((row) => [row.setupSignature, row.programSetupSignature]),
+      ...confidentialAccounts.flatMap((row) => [row.setupSignature, row.closeSignature]),
+      ...allocations.flatMap((row) => [row.transactionSignature, row.settlementSignature]),
+      ...gasTankOperationsForWorkspace.map((row) => row.transactionSignature),
+      ...offboarding.map((row) => row.closeTransactionSignature),
+      ...recoveries.map((row) => row.transactionSignature),
+      ...payrollRunsForWorkspace.map((row) => row.submissionSignature),
+      ...subscriptionPaymentsForWorkspace.map((row) => row.signature),
+      ...subscriptionAttempts.map((row) => row.signature)
+    ])
+  };
+}
+
+function workspaceDeadLetterScopeCondition(scope: WorkspaceDeadLetterScope) {
+  const conditions = [];
+  if (scope.accountAddresses.length > 0) {
+    conditions.push(inArray(solanaWebhookEvents.accountAddress, scope.accountAddresses));
+  }
+  if (scope.transactionSignatures.length > 0) {
+    conditions.push(inArray(solanaWebhookEvents.transactionSignature, scope.transactionSignatures));
+  }
+  return or(...conditions);
+}
+
 export async function listWorkspaceDeadLetterSolanaWebhookEvents(
   db: Database,
   input: { workspaceId: string; limit?: number }
 ) {
   const limit = Math.min(Math.max(Math.trunc(input.limit ?? 50) || 1, 1), 100);
+  const scope = await loadWorkspaceDeadLetterScope(db, input.workspaceId);
+  const scopeCondition = workspaceDeadLetterScopeCondition(scope);
+  if (!scopeCondition) return [];
+
   return db
     .select({
       id: solanaWebhookEvents.id,
@@ -2959,14 +3060,10 @@ export async function listWorkspaceDeadLetterSolanaWebhookEvents(
       processedAt: solanaWebhookEvents.processedAt
     })
     .from(solanaWebhookEvents)
-    .innerJoin(
-      workspaceLedgerEntries,
-      and(
-        eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
-        eq(workspaceLedgerEntries.transactionSignature, solanaWebhookEvents.transactionSignature)
-      )
-    )
-    .where(eq(solanaWebhookEvents.status, "dead_letter"))
+    .where(and(
+      eq(solanaWebhookEvents.status, "dead_letter"),
+      scopeCondition
+    ))
     .orderBy(desc(solanaWebhookEvents.receivedAt))
     .limit(limit);
 }
@@ -2977,19 +3074,17 @@ export async function retryDeadLetterSolanaWebhookEvent(
 ) {
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
+    const scope = await loadWorkspaceDeadLetterScope(tx, input.workspaceId);
+    const scopeCondition = workspaceDeadLetterScopeCondition(scope);
+    if (!scopeCondition) return false;
+
     const matching = await tx
       .select({ id: solanaWebhookEvents.id })
       .from(solanaWebhookEvents)
-      .innerJoin(
-        workspaceLedgerEntries,
-        and(
-          eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
-          eq(workspaceLedgerEntries.transactionSignature, solanaWebhookEvents.transactionSignature)
-        )
-      )
       .where(and(
         eq(solanaWebhookEvents.id, input.eventId),
-        eq(solanaWebhookEvents.status, "dead_letter")
+        eq(solanaWebhookEvents.status, "dead_letter"),
+        scopeCondition
       ))
       .for("update")
       .limit(1);
@@ -3006,7 +3101,8 @@ export async function retryDeadLetterSolanaWebhookEvent(
       })
       .where(and(
         eq(solanaWebhookEvents.id, input.eventId),
-        eq(solanaWebhookEvents.status, "dead_letter")
+        eq(solanaWebhookEvents.status, "dead_letter"),
+        scopeCondition
       ))
       .returning({ id: solanaWebhookEvents.id });
     return updated.length === 1;
