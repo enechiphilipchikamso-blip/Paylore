@@ -48,6 +48,7 @@ const h = vi.hoisted(() => ({
   contextAccounts: new Set<string>(),
   closingContext: "",
   forceDebitOnFailedTransfer: false,
+  forceDebitMismatch: false,
   failStep: null as string | null,
   balanceMode: "enough",
   reserveAccountExists: true,
@@ -260,6 +261,7 @@ function resetHarness(): void {
     contextAccounts: new Set<string>(),
     closingContext: "",
     forceDebitOnFailedTransfer: false,
+  forceDebitMismatch: false,
     failStep: null,
     balanceMode: "enough",
     reserveAccountExists: true,
@@ -336,7 +338,7 @@ vi.mock("@solana/kit", () => ({
             h.escrowFunded = true;
           } else if (h.currentStep === "transfer") {
             if (!h.forceDebitOnFailedTransfer || h.failStep !== "transfer") {
-              h.escrowAvailable -= 1_250_000n;
+              h.escrowAvailable -= h.forceDebitMismatch ? 1_249_999n : 1_250_000n;
               h.claimState = 3;
               h.settlementSubmitted = true;
             }
@@ -802,6 +804,19 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(result).toMatchObject({ status: "retry_ready", signature: payoutSignature() });
     expect(h.releasedFailedCalls).toBe(1);
     expect(h.ledgerCalls).toBe(0);
+  });
+
+  it("keeps a finalized payout pending when the private reserve debit is not exact", async () => {
+    h.forceDebitMismatch = true;
+
+    const result = await settleContributorPayrollAllocation({} as any, input);
+
+    expect(result).toMatchObject({ status: "pending", signature: payoutSignature() });
+    expect(h.claimState).toBe(3);
+    expect(h.ledgerCalls).toBe(0);
+    expect(h.releasedFailedCalls).toBe(0);
+    expect(h.releaseCalls).toBe(0);
+    expect(h.clearContextsCalls).toBe(1);
   });
 
   it("does not release a failed payout when the confidential escrow debit is visible", async () => {
