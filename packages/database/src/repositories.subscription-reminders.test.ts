@@ -19,10 +19,10 @@ function fakeDatabase(
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
   const notificationRows: Array<Record<string, unknown>> = [...existingNotifications];
   const ledgerRows: Array<Record<string, unknown>> = [...existingLedgerRows];
-  const notificationKeys = new Set<string>(existingNotifications.map((row) =>
+  const notificationKeys = new Set(existingNotifications.map((row) =>
     String(row.workspaceId) + ":" + String(row.eventKey) + ":" + String(row.recipientKey)
   ));
-  const ledgerKeys = new Set<string>(existingLedgerRows.map((row) =>
+  const ledgerKeys = new Set(existingLedgerRows.map((row) =>
     String(row.workspaceId) + ":" + String(row.idempotencyKey)
   ));
   let selectIndex = 0;
@@ -69,18 +69,20 @@ function fakeDatabase(
 }
 
 describe("subscription renewal reminder persistence", () => {
-  it("records one idempotent non-financial ledger event and notifies every workspace member", async () => {
+  it("records an idempotent non-financial ledger event and notifies every workspace member", async () => {
     const now = new Date("2026-10-24T08:00:00.000Z");
     const periodEnd = new Date(now.getTime() + 20 * 60 * 60 * 1000);
     const db = fakeDatabase([
       [{ workspaceId: "workspace-a", periodEnd, status: "active" }],
       [{ userId: "member-a" }, { userId: "member-b" }]
     ]);
+
     const first = await createDueSubscriptionRenewalReminders(db.db, now, 999);
+
     expect(first).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 2, ledgerEntriesCreated: 1 });
     expect(db.tx.select).toHaveBeenCalledTimes(2);
     expect(db.notificationRows).toHaveLength(2);
-    expect(db.notificationRows.map((value) => value.recipientKey)).toEqual(["member-a", "member-b"]);
+    expect(db.notificationRows.map((row) => row.recipientKey)).toEqual(["member-a", "member-b"]);
     expect(db.notificationRows[0]).toMatchObject({
       workspaceId: "workspace-a",
       eventKey: "subscription-renewal-reminder:" + periodEnd.getTime() + ":1",
@@ -89,7 +91,7 @@ describe("subscription renewal reminder persistence", () => {
       destination: "/workspace/workspace-a/billing"
     });
     expect(db.notificationRows[0].body).toContain("Renewal is manual");
-    expect(db.notificationRows[0].body).toContain("1 day");
+    expect(db.notificationRows[0].body).toContain("ends in 1 day");
     expect(db.ledgerRows).toHaveLength(1);
     expect(db.ledgerRows[0]).toMatchObject({
       workspaceId: "workspace-a",
@@ -102,6 +104,7 @@ describe("subscription renewal reminder persistence", () => {
       transactionSignature: null,
       metadata: { financial: false, periodEnd: periodEnd.toISOString(), reminderDays: 1, cancellationScheduled: false }
     });
+
     const repeated = await createDueSubscriptionRenewalReminders(db.db, now, 999);
     expect(repeated).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 0, ledgerEntriesCreated: 0 });
     expect(db.notificationRows).toHaveLength(2);
@@ -145,6 +148,7 @@ describe("subscription renewal reminder persistence", () => {
     const db = fakeDatabase([[
       { workspaceId: "workspace-a", periodEnd: new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000), status: "cancel_scheduled" }
     ]]);
+
     await expect(createDueSubscriptionRenewalReminders(db.db, now)).resolves.toEqual({
       subscriptionsProcessed: 0, notificationsCreated: 0, ledgerEntriesCreated: 0
     });
@@ -152,20 +156,26 @@ describe("subscription renewal reminder persistence", () => {
     expect(db.insertCalls).toHaveLength(0);
   });
 
-  it("preserves cancellation meaning and records the same non-financial event", async () => {
+  it("keeps the stable seven-day reminder key but uses truthful countdown copy during catch-up", async () => {
     const now = new Date("2026-10-24T08:00:00.000Z");
-    const periodEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000);
     const db = fakeDatabase([
       [{ workspaceId: "workspace-a", periodEnd, status: "cancel_scheduled" }],
       [{ userId: "member-a" }]
     ]);
-    await createDueSubscriptionRenewalReminders(db.db, now);
+
+    const result = await createDueSubscriptionRenewalReminders(db.db, now);
+
+    expect(result).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 1, ledgerEntriesCreated: 1 });
+    expect(db.notificationRows[0].eventKey).toBe("subscription-renewal-reminder:" + periodEnd.getTime() + ":7");
+    expect(db.notificationRows[0].body).toContain("ends in 6 days");
     expect(db.notificationRows[0].body).toContain("Cancellation is scheduled");
     expect(db.notificationRows[0].body).toContain("Renew manually");
     expect(db.ledgerRows[0]).toMatchObject({
       idempotencyKey: "subscription-renewal-reminder:" + periodEnd.getTime() + ":7",
       metadata: { cancellationScheduled: true, financial: false }
     });
+  });
 
   it("backfills missing member notifications when the idempotent reminder ledger row already exists", async () => {
     const now = new Date("2026-10-24T08:00:00.000Z");
@@ -193,18 +203,5 @@ describe("subscription renewal reminder persistence", () => {
     expect(result).toEqual({ subscriptionsProcessed: 1, notificationsCreated: 2, ledgerEntriesCreated: 0 });
     expect(db.notificationRows.map((row) => row.eventKey)).toEqual([eventKey, eventKey]);
     expect(db.ledgerRows).toEqual([existingLedger]);
-  });
-
-  it("does not send an inaccurate seven-day reminder when processing first resumes at six days", async () => {
-    const now = new Date("2026-10-24T08:00:00.000Z");
-    const db = fakeDatabase([[
-      { workspaceId: "workspace-a", periodEnd: new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000), status: "active" }
-    ]]);
-
-    await expect(createDueSubscriptionRenewalReminders(db.db, now)).resolves.toEqual({
-      subscriptionsProcessed: 0, notificationsCreated: 0, ledgerEntriesCreated: 0
-    });
-    expect(db.insertCalls).toHaveLength(0);
-  });
   });
 });

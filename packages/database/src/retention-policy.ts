@@ -91,7 +91,16 @@ export function getAutomaticContributorCleanupDisposition(): ContributorDepartur
 
 export const SUBSCRIPTION_RENEWAL_REMINDER_DAYS = [7, 1] as const;
 
-/** Emits reminder milestones only in truthful countdown windows; durable event keys make retries safe. */
+export function getSubscriptionDaysRemaining(
+  periodEnd: Date,
+  now: Date
+): number | null {
+  const remainingMs = periodEnd.getTime() - now.getTime();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+  return Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+}
+
+/** Stable milestone keys support retries while notification copy reflects the actual countdown. */
 export function getDueSubscriptionRenewalReminderDays(
   periodEnd: Date,
   now: Date
@@ -100,6 +109,6 @@ export function getDueSubscriptionRenewalReminderDays(
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) return [];
   const dayMs = 24 * 60 * 60 * 1000;
   if (remainingMs <= dayMs) return [1];
-  if (remainingMs > 6 * dayMs && remainingMs <= 7 * dayMs) return [7];
+  if (remainingMs <= 7 * dayMs) return [7];
   return [];
 }

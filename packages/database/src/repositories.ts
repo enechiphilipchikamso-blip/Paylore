@@ -29,6 +29,7 @@ import {
 import {
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   getDueSubscriptionRenewalReminderDays,
+  getSubscriptionDaysRemaining,
   hasReachedInactivityThreshold,
   isContributorAssociationCleanupEligible,
   isWorkspaceRetentionEligible,
@@ -3344,8 +3345,9 @@ export async function createDueSubscriptionRenewalReminders(
     let ledgerEntriesCreated = 0;
     for (const subscription of subscriptions) {
       if (!subscription.periodEnd) continue;
+      const daysRemaining = getSubscriptionDaysRemaining(subscription.periodEnd, now);
       const dueDays = getDueSubscriptionRenewalReminderDays(subscription.periodEnd, now);
-      if (dueDays.length === 0) continue;
+      if (dueDays.length === 0 || daysRemaining === null) continue;
       subscriptionsProcessed += 1;
       const members = await tx
         .select({ userId: workspaceMemberships.userId })
@@ -3361,8 +3363,8 @@ export async function createDueSubscriptionRenewalReminders(
         category: "Workspace & Billing",
         title: "Subscription expires soon",
         body: canceled
-          ? "Your workspace subscription ends in " + days + " day" + (days === 1 ? "" : "s") + ". Cancellation is scheduled at the end of the paid period. Renew manually before then to keep normal workspace operations available."
-          : "Your workspace subscription ends in " + days + " day" + (days === 1 ? "" : "s") + ". Renewal is manual. Review billing to renew before the paid period ends and avoid Read-Only Archive.",
+          ? "Your workspace subscription ends in " + daysRemaining + " day" + (daysRemaining === 1 ? "" : "s") + ". Cancellation is scheduled at the end of the paid period. Renew manually before then to keep normal workspace operations available."
+          : "Your workspace subscription ends in " + daysRemaining + " day" + (daysRemaining === 1 ? "" : "s") + ". Renewal is manual. Review billing to renew before the paid period ends and avoid Read-Only Archive.",
         destination: "/workspace/" + subscription.workspaceId + "/billing",
         createdAt: now
       })));

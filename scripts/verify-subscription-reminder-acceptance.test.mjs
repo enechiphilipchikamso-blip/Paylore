@@ -109,6 +109,43 @@ test("acceptance follows the ledger cursor until the matching reminder appears",
   assert.equal(ledgerPage, 2);
 });
 
+test("acceptance accepts a catch-up reminder whose displayed countdown is accurate", async () => {
+  const catchupNotification = {
+    ...notification,
+    body: "Your workspace subscription ends in 6 days. Renewal is manual."
+  };
+  const fetchImpl = async (url) => new URL(url).pathname.endsWith("/notifications")
+    ? new Response(JSON.stringify({ notifications: [catchupNotification] }), {
+        status: 200, headers: { "content-type": "application/json" }
+      })
+    : new Response(JSON.stringify({ entries: [ledgerEntry], nextCursor: null }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+  await verifySubscriptionReminderOutcome({
+    baseUrl, workspaceId, cookie, periodEnd, reminderDays: "7", fetchImpl
+  });
+});
+
+test("acceptance rejects a one-day countdown under a seven-day reminder key", async () => {
+  const inaccurateNotification = {
+    ...notification,
+    body: "Your workspace subscription ends in 1 day. Renewal is manual."
+  };
+  const fetchImpl = async (url) => new URL(url).pathname.endsWith("/notifications")
+    ? new Response(JSON.stringify({ notifications: [inaccurateNotification] }), {
+        status: 200, headers: { "content-type": "application/json" }
+      })
+    : new Response(JSON.stringify({ entries: [ledgerEntry], nextCursor: null }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+  await assert.rejects(
+    verifySubscriptionReminderOutcome({
+      baseUrl, workspaceId, cookie, periodEnd, reminderDays: "7", fetchImpl
+    }),
+    /notification_content_mismatch/
+  );
+});
+
 test("acceptance requires canonical inputs and HTTPS for hosted checks", async () => {
   await assert.rejects(
     verifySubscriptionReminderOutcome({

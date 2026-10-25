@@ -66,13 +66,19 @@ function requireOneMatchingNotification(notifications, eventKey, reminderDays) {
     throw new Error("subscription_reminder_notification_count_mismatch");
   }
   const notification = matches[0];
-  const expectedCountdown = `ends in ${reminderDays} day${reminderDays === 1 ? "" : "s"}`;
+  const countdown = typeof notification.body === "string"
+    ? notification.body.match(/ends in ([1-7]) days?/)
+    : null;
+  const daysRemaining = countdown ? Number(countdown[1]) : null;
+  const minimumDays = reminderDays === 1 ? 1 : 2;
   if (
     notification.category !== REMINDER_CATEGORY ||
     notification.title !== "Subscription expires soon" ||
-    typeof notification.body !== "string" ||
-    !notification.body.includes(expectedCountdown) ||
-    notification.destination === undefined ||
+    daysRemaining === null ||
+    daysRemaining < minimumDays ||
+    daysRemaining > reminderDays ||
+    (reminderDays === 1 && daysRemaining !== 1) ||
+    typeof notification.destination !== "string" ||
     !notification.destination.endsWith("/billing")
   ) {
     throw new Error("subscription_reminder_notification_content_mismatch");
@@ -158,11 +164,7 @@ export async function verifySubscriptionReminderOutcome({
     cookie,
     "subscription_reminder_notifications"
   );
-  requireOneMatchingNotification(
-    notificationPayload.notifications,
-    eventKey,
-    reminderDays
-  );
+  requireOneMatchingNotification(notificationPayload.notifications, eventKey, reminderDays);
   const ledgerEntries = await findLedgerMatches(
     fetchImpl,
     base,
@@ -173,7 +175,6 @@ export async function verifySubscriptionReminderOutcome({
   requireOneMatchingLedgerEntry(ledgerEntries, eventKey, periodEnd, reminderDays);
   return { notifications: 1, ledgerEntries: 1, reminderDays };
 }
-
 async function main() {
   const result = await verifySubscriptionReminderOutcome({
     baseUrl: process.env.PAYLORE_SUBSCRIPTION_REMINDER_ACCEPTANCE_BASE_URL,
