@@ -20,10 +20,36 @@ type OnChainAccountState = {
   publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
+  fundingState?: "unfunded" | "public_funds_available" | "pending_confidential_balance" | "confidential_funds_available";
   programReserveConfigured?: boolean;
   signature?: string;
   phase?: ReservePhase;
 };
+
+function fundingStateLabel(state: OnChainAccountState["fundingState"]): string {
+  switch (state) {
+    case "confidential_funds_available": return "Confidential funds available";
+    case "pending_confidential_balance": return "Confidential funds pending";
+    case "public_funds_available": return "Public wrapped-USDC available";
+    case "unfunded": return "No funds detected";
+    default: return "Unavailable";
+  }
+}
+
+function fundingStateDescription(state: OnChainAccountState["fundingState"]): string {
+  switch (state) {
+    case "confidential_funds_available":
+      return "A finalized confidential available balance is present. Each payroll claim still checks the exact amount required before transfer.";
+    case "pending_confidential_balance":
+      return "Funds are in the confidential pending balance and cannot be transferred until applied. Paylore applies pending reserve funds during settlement.";
+    case "public_funds_available":
+      return "Public wrapped-USDC is present. Settlement deposits the required amount into the confidential balance before transferring, after checking the exact allocation.";
+    case "unfunded":
+      return "No public, pending, or available wrapped-USDC funds were found in finalized state. Fund this reserve before expecting a payroll claim to settle.";
+    default:
+      return "Funding state is unavailable. Refresh the finalized on-chain check before relying on reserve readiness.";
+  }
+}
 
 export function ReserveActions({
   workspaceId,
@@ -117,6 +143,7 @@ export function ReserveActions({
         publicBalanceBaseUnits?: string;
         availableBalanceBaseUnits?: string;
         pendingBalanceBaseUnits?: string;
+        fundingState?: "unfunded" | "public_funds_available" | "pending_confidential_balance" | "confidential_funds_available";
         programReserveConfigured?: boolean;
         created?: boolean;
         restoredAt?: string | null;
@@ -262,10 +289,12 @@ export function ReserveActions({
 
               <dl className="billing-period">
                 <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
+                <div><dt>Funding readiness</dt><dd>{fundingStateLabel(onChainAccount.fundingState)}</dd></div>
                 <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
                 <div><dt>Available confidential balance</dt><dd>{onChainAccount.availableBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
                 <div><dt>Pending confidential balance</dt><dd>{onChainAccount.pendingBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
               </dl>
+              <p role="status">{fundingStateDescription(onChainAccount.fundingState)}</p>
             </>
           ) : onChainAccount.status === "not_configured" ? (
             <p role="status">The wrapped-USDC mint or Payroll Program is not configured. On-chain reserve setup is unavailable.</p>
