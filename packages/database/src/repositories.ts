@@ -2876,6 +2876,78 @@ export async function updateSolanaWebhookEventState(
   return rows[0] ?? null;
 }
 
+export async function listWorkspaceDeadLetterSolanaWebhookEvents(
+  db: Database,
+  input: { workspaceId: string; limit?: number }
+) {
+  const limit = Math.min(Math.max(Math.trunc(input.limit ?? 50) || 1, 1), 100);
+  return db
+    .select({
+      id: solanaWebhookEvents.id,
+      transactionSignature: solanaWebhookEvents.transactionSignature,
+      transactionSlot: solanaWebhookEvents.transactionSlot,
+      eventType: solanaWebhookEvents.eventType,
+      status: solanaWebhookEvents.status,
+      attempts: solanaWebhookEvents.attempts,
+      lastErrorCode: solanaWebhookEvents.lastErrorCode,
+      receivedAt: solanaWebhookEvents.receivedAt,
+      processedAt: solanaWebhookEvents.processedAt
+    })
+    .from(solanaWebhookEvents)
+    .innerJoin(
+      workspaceLedgerEntries,
+      and(
+        eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+        eq(workspaceLedgerEntries.transactionSignature, solanaWebhookEvents.transactionSignature)
+      )
+    )
+    .where(eq(solanaWebhookEvents.status, "dead_letter"))
+    .orderBy(desc(solanaWebhookEvents.receivedAt))
+    .limit(limit);
+}
+
+export async function retryDeadLetterSolanaWebhookEvent(
+  db: Database,
+  input: { workspaceId: string; eventId: string; now?: Date }
+) {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const matching = await tx
+      .select({ id: solanaWebhookEvents.id })
+      .from(solanaWebhookEvents)
+      .innerJoin(
+        workspaceLedgerEntries,
+        and(
+          eq(workspaceLedgerEntries.workspaceId, input.workspaceId),
+          eq(workspaceLedgerEntries.transactionSignature, solanaWebhookEvents.transactionSignature)
+        )
+      )
+      .where(and(
+        eq(solanaWebhookEvents.id, input.eventId),
+        eq(solanaWebhookEvents.status, "dead_letter")
+      ))
+      .for("update")
+      .limit(1);
+    if (!matching[0]) return false;
+    const updated = await tx
+      .update(solanaWebhookEvents)
+      .set({
+        status: "retry_pending",
+        attempts: 0,
+        nextAttemptAt: now,
+        lastErrorCode: null,
+        processedAt: null,
+        finalizedAt: null
+      })
+      .where(and(
+        eq(solanaWebhookEvents.id, input.eventId),
+        eq(solanaWebhookEvents.status, "dead_letter")
+      ))
+      .returning({ id: solanaWebhookEvents.id });
+    return updated.length === 1;
+  });
+}
+
 export async function listWorkspaceLedgerEntries(
   db: Database,
   input: {

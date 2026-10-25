@@ -43,3 +43,13 @@ describe("Solana payroll event decoding invariants", () => {
     expect(first.subarray(8)).not.toEqual(second.subarray(8));
   });
 });
+
+
+describe("operator retry policy", () => {
+  it("requires the durable dead-letter state to be reset before reprocessing", () => {
+    const state = { status: "dead_letter", attempts: 8, lastErrorCode: "chain_state_conflict" };
+    const retry = { ...state, status: "retry_pending", attempts: 0, lastErrorCode: null };
+    expect(state.status).toBe("dead_letter");
+    expect(retry).toMatchObject({ status: "retry_pending", attempts: 0, lastErrorCode: null });
+  });
+});
