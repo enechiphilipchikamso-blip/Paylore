@@ -443,17 +443,6 @@ async function reconcileEvent(
       await retry("payroll_claim_state_conflict");
       return deadLetter ? "dead_letter" : "retry_pending";
     }
-    if (result.status !== "duplicate") {
-      await createWorkspaceNotificationForFinanceMembers(db, {
-        workspaceId: first.workspaceId,
-        eventKey: "payroll-claim:" + event.transactionSignature,
-        category: "Payroll & Claims",
-        title: "Payroll claim committed",
-        body: "A finalized Payroll Program transaction was reconciled to this workspace. Confidential transfer amounts are not inferred from public transaction data.",
-        destination: "/workspace/" + first.workspaceId + "/payroll/" + first.runId,
-        now
-      });
-    }
     await updateSolanaWebhookEventState(db, {
       id: event.id,
       status: "finalized",
