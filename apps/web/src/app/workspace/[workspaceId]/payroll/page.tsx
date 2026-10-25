@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getWorkspaceSubscription,
+  listWorkspacePayrollRecoveryQueue,
   listWorkspacePayrollRuns
 } from "@paylore/database";
 import { PayrollRunManager } from "../../../../components/workspace/PayrollRunManager";
@@ -10,6 +11,7 @@ import {
   WorkspaceLegalFooter,
   WorkspaceNavigation
 } from "../../../../components/workspace/WorkspaceNavigation";
+import { assessPayrollRecoveryEligibility } from "../../../../server/payroll-recovery-queue-policy";
 import { getWorkspacePageContext } from "../../../../server/workspace-page-context";
 
 export const metadata: Metadata = {
@@ -63,9 +65,12 @@ export default async function WorkspacePayrollPage({
     `/workspace/${workspaceId}/payroll`
   );
   if (context.workspace.role === "contributor") notFound();
-  const [subscription, runs] = await Promise.all([
+  const [subscription, runs, recoveryQueue] = await Promise.all([
     getWorkspaceSubscription(context.db, workspaceId),
-    listWorkspacePayrollRuns(context.db, workspaceId)
+    listWorkspacePayrollRuns(context.db, workspaceId),
+    context.workspace.role === "organization_admin"
+      ? listWorkspacePayrollRecoveryQueue(context.db, workspaceId)
+      : Promise.resolve([])
   ]);
   const editable =
     context.workspace.role === "organization_admin" &&
@@ -101,6 +106,72 @@ export default async function WorkspacePayrollPage({
           <Link className="button" href={`/workspace/${workspaceId}/billing`}>
             Manage billing
           </Link>
+        </section>
+      ) : null}
+
+      {context.workspace.role === "organization_admin" ? (
+        <section className="surface-card" aria-labelledby="payroll-recovery-queue-title">
+          <h2 id="payroll-recovery-queue-title">Recovery queue</h2>
+          <p>
+            Review allocations across this workspace. Paylore checks the Claim PDA transition
+            and finalized confidential balance movement before recording a recovery.
+          </p>
+          {recoveryQueue.length === 0 ? (
+            <p>No payroll allocations are available for recovery review.</p>
+          ) : (
+            <>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Allocation</th>
+                      <th scope="col">Payroll run</th>
+                      <th scope="col">Contributor</th>
+                      <th scope="col">Amount (USDC)</th>
+                      <th scope="col">Claim PDA</th>
+                      <th scope="col">Recorded Claim state</th>
+                      <th scope="col">Eligibility</th>
+                      <th scope="col">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recoveryQueue.map((item) => {
+                      const eligibility = assessPayrollRecoveryEligibility({
+                        claimState: item.claimState,
+                        claimAddress: item.claimAddress,
+                        escrowStatus: item.escrowStatus
+                      });
+                      return (
+                        <tr key={item.allocationId}>
+                          <td>{item.allocationId}</td>
+                          <td>
+                            <Link href={`/workspace/${workspaceId}/payroll/${item.runId}`}>
+                              {item.runId}
+                            </Link>
+                            <p>{payrollStatus(item.runStatus)}</p>
+                          </td>
+                          <td>
+                            {item.contributorName}
+                            <p>{item.contributorId}</p>
+                          </td>
+                          <td>{formatUsdc(item.amountBaseUnits)}</td>
+                          <td>{item.claimAddress ?? "Not created"}</td>
+                          <td>{item.claimState}</td>
+                          <td>{eligibility.label}</td>
+                          <td>
+                            <Link href={`/workspace/${workspaceId}/payroll/${item.runId}#allocation-${item.allocationId}`}>
+                              Review allocation
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p>Showing up to the latest 100 allocations in this workspace.</p>
+            </>
+          )}
         </section>
       ) : null}
 

@@ -213,6 +213,8 @@ pub mod paylore_payroll {
             ctx.accounts.mint.key(),
         )?;
         require!(ctx.accounts.claim.escrow_funded, PayrollError::ClaimEscrowNotFunded);
+        // Token-2022's equality proof is bound to the remaining source ciphertext, not the payroll allocation amount.
+        // Bind recovery to the exact transfer instruction here; the finalized owner-decrypted balance delta is reconciled server-side.
         require!(
             has_matching_confidential_transfer(
                 &ctx.accounts.instructions_sysvar.to_account_info(),
@@ -223,11 +225,6 @@ pub mod paylore_payroll {
             )?,
             PayrollError::RecoveryTransferMissing
         );
-        validate_amount_commitment_context(
-            &ctx.accounts.amount_commitment_context.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.claim.amount_commitment,
-        )?;
         transition_claim_to_recovered(&mut ctx.accounts.claim)
     }
 }

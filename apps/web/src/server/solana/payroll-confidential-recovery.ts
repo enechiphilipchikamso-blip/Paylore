@@ -34,7 +34,6 @@ import { withWorkspaceReserveKey } from "../reserve";
 import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
-import { bindAmountCommitmentProof, PayrollAmountProofBindingError } from "./payroll-amount-proof-binding";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
 import { classifyTransactionFinality, getProofContextAddresses } from "./payroll-confidential-settlement-policy";
 
@@ -496,19 +495,8 @@ export async function recoverPayrollAllocation(
           destinationTokenAccount: refreshedDestination.token, authority: signer, amount,
           sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
         }))();
-        const transferPlan = {
-          ...proofStartedPlan,
-          plans: proofStartedPlan.plans.map((plan, index) => {
-            if (index !== 0) return plan;
-            try { return bindAmountCommitmentProof(plan, elgamal, material); }
-            catch (error) {
-              if (error instanceof PayrollAmountProofBindingError) {
-                throw new PayrollConfidentialRecoveryError(error.code, 503);
-              }
-              throw error;
-            }
-          })
-        } as typeof proofStartedPlan;
+        // Keep the SDK-generated plan intact because Token-2022 proofs bind the actual encrypted source balance.
+        const transferPlan = proofStartedPlan;
         if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 ||
             transferPlan.plans[1]?.kind !== "single") {
           throw new PayrollConfidentialRecoveryError("confidential_transfer_plan_invalid", 503);
@@ -682,7 +670,7 @@ async function reconcileSubmittedRecovery(
       escrowTokenAccount: context.escrowTokenAddress,
       reserveTokenAccount: context.reserveTokenAddress,
       mint: context.mint,
-      recoveryReasonCommitment: recoveryReasonCommitment(effectiveInput.reason, effectiveInput.reason === "other" ? effectiveInput.note : null)
+      recoveryReasonCommitment: recoveryReasonCommitment(input.reason, input.reason === "other" ? input.note : null)
     });
     if (!await attachPayrollClaimEscrowRecoverySignature(db, {
       workspaceId: input.workspaceId, allocationId: input.allocationId, signature
@@ -749,7 +737,7 @@ async function reconcileSubmittedRecovery(
     });
     const recorded = await recordPayrollRecovery(db, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-      actorUserId: input.actorUserId, reason: effectiveInput.reason, reasonNote: effectiveInput.reason === "other" ? effectiveInput.note : null,
+      actorUserId: input.actorUserId, reason: input.reason, reasonNote: input.reason === "other" ? input.note : null,
       signature, claimAddress: context.allocation.claimAddress!, sourceAvailableBefore: sourceBefore,
       sourceAvailableAfter: source.available.toString(), reserveAvailableBefore: reserveBefore,
       reserveAvailableAfter: destination.available.toString()

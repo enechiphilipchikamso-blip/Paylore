@@ -374,16 +374,6 @@ vi.mock("./payroll-amount-commitment", () => ({
   }))
 }));
 
-vi.mock("./payroll-amount-proof-binding", () => {
-  class PayrollAmountProofBindingError extends Error {
-    code = "payroll_amount_proof_binding_failed";
-  }
-  return {
-    bindAmountCommitmentProof: vi.fn((plan: unknown) => plan),
-    PayrollAmountProofBindingError
-  };
-});
-
 vi.mock("./payroll-confidential-settlement-policy", () => ({
   classifyTransactionFinality: (status: any) =>
     !status || status.confirmationStatus !== "finalized"
@@ -439,6 +429,16 @@ describe("confidential payroll recovery orchestration", () => {
       reserveAvailableAfter: "6250"
     });
     expect(h.clearedProofs).toHaveLength(1);
+  });
+
+  it("does not record recovery when owner-decrypted balance deltas differ from the allocation", async () => {
+    h.sourceAfter = "749";
+
+    const result = await recoverPayrollAllocation({} as any, input);
+
+    expect(result.status).toBe("pending");
+    expect(h.transferExecuted).toBe(true);
+    expect(h.recoveryRecords).toHaveLength(0);
   });
 
   it("reconciles a duplicate request from the durable recovered record without a second transfer", async () => {

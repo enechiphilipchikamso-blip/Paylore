@@ -3852,6 +3852,56 @@ export async function listWorkspacePayrollRuns(
     .limit(100);
 }
 
+export async function listWorkspacePayrollRecoveryQueue(
+  db: Database,
+  workspaceId: string
+) {
+  return db
+    .select({
+      allocationId: payrollAllocations.id,
+      runId: payrollRuns.id,
+      runCreatedAt: payrollRuns.createdAt,
+      runStatus: payrollRuns.status,
+      contributorId: contributors.id,
+      contributorName: contributors.displayName,
+      contributorWalletAddress: contributors.identityWalletAddress,
+      amountBaseUnits: payrollAllocations.amountBaseUnits,
+      claimId: payrollAllocations.claimId,
+      claimAddress: payrollAllocations.claimAddress,
+      claimState: payrollAllocations.status,
+      transactionSignature: payrollAllocations.transactionSignature,
+      escrowStatus: payrollClaimEscrows.status,
+      recoverySignature: payrollClaimEscrows.recoverySignature,
+      recoveredAt: payrollClaimEscrows.recoveredAt
+    })
+    .from(payrollAllocations)
+    .innerJoin(
+      payrollRuns,
+      and(
+        eq(payrollRuns.id, payrollAllocations.payrollRunId),
+        eq(payrollRuns.workspaceId, workspaceId)
+      )
+    )
+    .innerJoin(
+      contributors,
+      and(
+        eq(contributors.id, payrollAllocations.contributorId),
+        eq(contributors.workspaceId, workspaceId)
+      )
+    )
+    .leftJoin(
+      payrollClaimEscrows,
+      and(
+        eq(payrollClaimEscrows.allocationId, payrollAllocations.id),
+        eq(payrollClaimEscrows.workspaceId, workspaceId),
+        eq(payrollClaimEscrows.payrollRunId, payrollRuns.id)
+      )
+    )
+    .where(eq(payrollAllocations.workspaceId, workspaceId))
+    .orderBy(desc(payrollAllocations.updatedAt))
+    .limit(100);
+}
+
 export async function getWorkspacePayrollRun(
   db: Database,
   workspaceId: string,
@@ -3891,7 +3941,12 @@ export async function getWorkspacePayrollRun(
       claimedAt: payrollAllocations.claimedAt,
       recoveredAt: payrollAllocations.recoveredAt,
       createdAt: payrollAllocations.createdAt,
-      updatedAt: payrollAllocations.updatedAt
+      updatedAt: payrollAllocations.updatedAt,
+      escrowStatus: payrollClaimEscrows.status,
+      recoverySignature: payrollClaimEscrows.recoverySignature,
+      recoveryApplySignature: payrollClaimEscrows.recoveryApplySignature,
+      recoveryProofContextAddresses: payrollClaimEscrows.recoveryProofContextAddresses,
+      recoveryContextSignatures: payrollClaimEscrows.recoveryContextSignatures
     })
     .from(payrollAllocations)
     .innerJoin(
@@ -3899,6 +3954,14 @@ export async function getWorkspacePayrollRun(
       and(
         eq(contributors.id, payrollAllocations.contributorId),
         eq(contributors.workspaceId, payrollAllocations.workspaceId)
+      )
+    )
+    .leftJoin(
+      payrollClaimEscrows,
+      and(
+        eq(payrollClaimEscrows.allocationId, payrollAllocations.id),
+        eq(payrollClaimEscrows.workspaceId, workspaceId),
+        eq(payrollClaimEscrows.payrollRunId, runId)
       )
     )
     .where(

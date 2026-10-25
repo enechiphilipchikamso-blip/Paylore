@@ -74,12 +74,12 @@ export function PayrollRecoveryAction({
       if (!active || !current || current.status !== "recovery_pending") return;
       if (current.reason && isRecoveryReason(current.reason)) setReason(current.reason);
       if (current.reason === "other" && current.note) setNote(current.note);
-      if (current.recoveryApplySignature) {
-        setPendingSignature(current.recoveryApplySignature);
-        setPendingPhase("reserve_balance_apply");
-      } else if (current.recoverySignature) {
+      if (current.recoverySignature) {
         setPendingSignature(current.recoverySignature);
         setPendingPhase("recovery");
+      } else if (current.recoveryApplySignature) {
+        setPendingSignature(current.recoveryApplySignature);
+        setPendingPhase("reserve_balance_apply");
       } else if (current.proofSetupSignature) {
         setPendingSignature(current.proofSetupSignature);
         setPendingPhase("proof_setup");
