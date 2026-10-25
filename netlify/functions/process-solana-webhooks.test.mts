@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
 
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -51,5 +52,23 @@ describe("operator retry policy", () => {
     const retry = { ...state, status: "retry_pending", attempts: 0, lastErrorCode: null };
     expect(state.status).toBe("dead_letter");
     expect(retry).toMatchObject({ status: "retry_pending", attempts: 0, lastErrorCode: null });
+  });
+});
+
+
+describe("worker webhook binding regression", () => {
+  it("rejects account hints that are not present in canonical RPC transaction keys", () => {
+    expect(getWebhookTransactionBindingError({
+      requestedSignature: "1".repeat(64),
+      expectedSlot: "12",
+      accountAddress: "Vote111111111111111111111111111111111111111",
+      transaction: {
+        slot: 12,
+        transaction: {
+          signatures: ["1".repeat(64)],
+          message: { accountKeys: ["11111111111111111111111111111111"] }
+        }
+      }
+    })).toBe("webhook_account_hint_mismatch");
   });
 });

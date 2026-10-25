@@ -55,6 +55,7 @@ describe("Helius webhook intake", () => {
         providerEventId: "1".repeat(64),
         transactionSignature: "1".repeat(64),
         transactionSlot: "12",
+        accountAddress: null,
         eventType: null,
         payload: {
           signature: "1".repeat(64),

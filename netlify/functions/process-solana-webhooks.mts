@@ -18,6 +18,7 @@ import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/confi
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
 import { isExactSubscriptionPaymentTransaction } from "../../apps/web/src/server/solana/subscription-payment-chain-check";
+import { getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
 import {
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
@@ -30,6 +31,10 @@ export const config = {
 type FinalizedTransaction = {
   slot: number;
   meta: { err: unknown } | null;
+  transaction?: {
+    signatures?: unknown;
+    message?: { accountKeys?: unknown };
+  };
 } | null;
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -119,15 +124,17 @@ async function reconcileEvent(
     await retry("transaction_not_finalized");
     return deadLetter ? "dead_letter" : "retry_pending";
   }
-  if (
-    !Number.isSafeInteger(transaction.slot) ||
-    (event.transactionSlot !== null &&
-      String(transaction.slot) !== event.transactionSlot)
-  ) {
+  const bindingError = getWebhookTransactionBindingError({
+    requestedSignature: event.transactionSignature,
+    expectedSlot: event.transactionSlot,
+    accountAddress: event.accountAddress,
+    transaction
+  });
+  if (bindingError) {
     await updateSolanaWebhookEventState(db, {
       id: event.id,
       status: "dead_letter",
-      errorCode: "transaction_slot_mismatch",
+      errorCode: bindingError,
       processedAt: now,
       now
     });

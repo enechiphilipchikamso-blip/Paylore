@@ -2839,6 +2839,7 @@ export async function claimDueSolanaWebhookEvents(
         transactionSignature:
           solanaWebhookEvents.transactionSignature,
         transactionSlot: solanaWebhookEvents.transactionSlot,
+        accountAddress: solanaWebhookEvents.accountAddress,
         attempts: solanaWebhookEvents.attempts
       });
   });
