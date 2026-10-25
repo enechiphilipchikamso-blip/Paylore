@@ -169,7 +169,7 @@ export default async function WorkspacePayrollPage({
                   </tbody>
                 </table>
               </div>
-              <p>Showing up to the latest 100 allocations in this workspace.</p>
+              <p>All payroll allocations in this workspace are included.</p>
             </>
           )}
         </section>

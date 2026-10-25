@@ -59,7 +59,7 @@ describe("workspace payroll recovery queue query", () => {
     expect(builder.leftJoin).toHaveBeenCalledTimes(1);
     expect(builder.where).toHaveBeenCalledTimes(1);
     expect(builder.orderBy).toHaveBeenCalledTimes(1);
-    expect(builder.limit).toHaveBeenCalledWith(100);
+    expect(builder.limit).not.toHaveBeenCalled();
   });
 });
 

@@ -3899,7 +3899,7 @@ export async function listWorkspacePayrollRecoveryQueue(
     )
     .where(eq(payrollAllocations.workspaceId, workspaceId))
     .orderBy(desc(payrollAllocations.updatedAt))
-    .limit(100);
+    ;
 }
 
 export async function getWorkspacePayrollRun(
