@@ -26,7 +26,8 @@ import {
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import {
-  hasApprovedConfidentialTransferAccount, verifyWorkspaceProgramState
+  classifyReserveFundingState, hasApprovedConfidentialTransferAccount, verifyWorkspaceProgramState,
+  type ReserveFundingState
 } from "./workspace-reserve-policy";
 import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
 
@@ -55,6 +56,7 @@ export type WorkspaceConfidentialReserveResult = {
   publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
+  fundingState?: ReserveFundingState;
   programReserveConfigured?: boolean;
   signature?: string;
   phase?: WorkspaceReservePhase;
@@ -406,7 +408,7 @@ export async function getWorkspaceConfidentialReserveSnapshot(
   const context = await withReserveContext(db, workspaceId, fallbackAuthorityAddress, async (input) => {
     const {
       status, tokenAccount, confidentialTransferReady, publicBalanceBaseUnits,
-      availableBalanceBaseUnits, pendingBalanceBaseUnits
+      availableBalanceBaseUnits, pendingBalanceBaseUnits, fundingState
     } = await inspectTokenAccount(input);
     if (status === "account_missing") {
       return { status: "account_missing", reserveAddress: input.reserveAddress, tokenAccount };
@@ -419,7 +421,7 @@ export async function getWorkspaceConfidentialReserveSnapshot(
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
         tokenAccount, confidentialTransferReady, publicBalanceBaseUnits, availableBalanceBaseUnits, pendingBalanceBaseUnits,
-        programReserveConfigured: false
+        fundingState, programReserveConfigured: false
       };
     }
     const reserveStatus = await inspectReserveProgramState(input.rpc, {
@@ -430,7 +432,7 @@ export async function getWorkspaceConfidentialReserveSnapshot(
       status: reserveStatus === "program_configured" ? "program_configured" : "confidential_account_ready",
       reserveAddress: input.reserveAddress, tokenAccount,
       confidentialTransferReady, publicBalanceBaseUnits, availableBalanceBaseUnits, pendingBalanceBaseUnits,
-      programReserveConfigured: reserveStatus === "program_configured"
+      fundingState, programReserveConfigured: reserveStatus === "program_configured"
     };
   });
   return context as WorkspaceConfidentialReserveResult;
@@ -450,6 +452,7 @@ async function inspectTokenAccount(input: {
   publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
   pendingBalanceBaseUnits?: string;
+  fundingState?: ReserveFundingState;
 }> {
   const encoded = await fetchEncodedAccount(input.rpc, address(input.reserveTokenAddress));
   if (!encoded.exists) {
@@ -469,12 +472,21 @@ async function inspectTokenAccount(input: {
     }))
   }, { owner: input.reserveAddress, mint: input.mintAddress });
   if (!ready) throw new WorkspaceReserveInitializationError("reserve_confidential_account_not_ready", 409);
+  const publicBalanceBaseUnits = token.amount.toString();
+  const confidentialBalances = await deriveConfidentialBalanceSnapshot(
+    input.rpc, input.reserveTokenAddress, input.secret, input.aesKey
+  );
+  const fundingState = classifyReserveFundingState({
+    publicBalanceBaseUnits,
+    ...confidentialBalances
+  });
   return {
     status: "account_ready",
     tokenAccount: input.reserveTokenAddress,
     confidentialTransferReady: true,
-    publicBalanceBaseUnits: token.amount.toString(),
-    ...(await deriveConfidentialBalanceSnapshot(input.rpc, input.reserveTokenAddress, input.secret, input.aesKey))
+    publicBalanceBaseUnits,
+    ...confidentialBalances,
+    fundingState
   };
 }
 
@@ -591,7 +603,8 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
         publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
         availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
-        pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: false
+        pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, fundingState: tokenState.fundingState,
+        programReserveConfigured: false
       };
     }
     const existingState = await inspectReserveProgramState(input.rpc, {
@@ -604,7 +617,8 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
         publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
         availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
-        pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: true
+        pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, fundingState: tokenState.fundingState,
+        programReserveConfigured: true
       };
     }
 
@@ -648,7 +662,8 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
       publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
       availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
-      pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, programReserveConfigured: true
+      pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, fundingState: tokenState.fundingState,
+      programReserveConfigured: true
     };
   });
   return result as WorkspaceConfidentialReserveResult;

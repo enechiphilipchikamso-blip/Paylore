@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
   accountOwner: "",
   workspaceInitialized: true,
   reserveConfigured: false,
+  publicBalanceBaseUnits: 0n,
+  availableBalanceBaseUnits: 0n,
+  pendingBalanceBaseUnits: 0n,
   currentPlan: null as any,
   submittedSteps: [] as string[],
   setupSignature: "setup-signature",
@@ -85,6 +88,9 @@ function reset(): void {
     accountOwner: h.tokenProgram,
     workspaceInitialized: true,
     reserveConfigured: false,
+    publicBalanceBaseUnits: 0n,
+    availableBalanceBaseUnits: 0n,
+    pendingBalanceBaseUnits: 0n,
     currentPlan: null,
     submittedSteps: [],
     setupCalls: 0,
@@ -192,7 +198,7 @@ vi.mock("@solana-program/token-2022", () => ({
     data: {
       owner: h.reserve,
       mint: h.mint,
-      amount: 0n,
+      amount: h.publicBalanceBaseUnits,
       extensions: [{
         __kind: "ConfidentialTransferAccount",
         approved: true,
@@ -209,8 +215,8 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
     aeKey: new Uint8Array(32).fill(8)
   })),
   fetchConfidentialTransferBalance: vi.fn(async () => ({
-    availableBalance: 0n,
-    pendingBalance: 0n
+    availableBalance: h.availableBalanceBaseUnits,
+    pendingBalance: h.pendingBalanceBaseUnits
   })),
   getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async () => ({
     kind: "single",
@@ -354,4 +360,23 @@ describe("workspace confidential reserve initialization", () => {
   it("uses only the workspace reserve setup-signature repository to persist returned transaction signatures", async () => {
     expect(attachWorkspaceReserveSetupSignature).toBeTypeOf("function");
   });
+  it.each([
+    { state: "unfunded", publicBalance: 0n, availableBalance: 0n, pendingBalance: 0n },
+    { state: "public_funds_available", publicBalance: 1250000n, availableBalance: 0n, pendingBalance: 0n },
+    { state: "pending_confidential_balance", publicBalance: 0n, availableBalance: 0n, pendingBalance: 25n },
+    { state: "confidential_funds_available", publicBalance: 0n, availableBalance: 25n, pendingBalance: 0n }
+  ] as const)("reports $state from the finalized reserve snapshot", async ({ state, publicBalance, availableBalance, pendingBalance }) => {
+    h.publicBalanceBaseUnits = publicBalance;
+    h.availableBalanceBaseUnits = availableBalance;
+    h.pendingBalanceBaseUnits = pendingBalance;
+    const result = await getWorkspaceConfidentialReserveSnapshot({} as any, "workspace-a", h.authority);
+    expect(result).toMatchObject({
+      status: "confidential_account_ready",
+      publicBalanceBaseUnits: publicBalance.toString(),
+      availableBalanceBaseUnits: availableBalance.toString(),
+      pendingBalanceBaseUnits: pendingBalance.toString(),
+      fundingState: state
+    });
+  });
+
 });
