@@ -190,7 +190,7 @@ const EXPECTED_INSTRUCTIONS = [
     accounts: ["contributor", "workspace", "reserve_state", "reserve_authority", "reserve_token_account", "mint", "claim", "escrow_token_account", "instructions_sysvar", "amount_commitment_context"],
     args: [{ name: "recovery_reason_commitment", type: BYTE32 }] },
   { name: "finalize_claimed", context: "FinalizeClaimed",
-    accounts: ["contributor", "workspace", "reserve_state", "reserve_authority", "claim"], args: [] }
+    accounts: ["contributor", "workspace", "reserve_state", "reserve_authority", "claim", "instructions_sysvar"], args: [] }
 ];
 
 const CLAIM_STATE_LAYOUT = [

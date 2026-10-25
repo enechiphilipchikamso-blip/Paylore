@@ -36,8 +36,8 @@ export function getProofContextAddresses(plan: InstructionPlan): string[] {
   return [...new Set(addresses)];
 }
 
-/** Makes the on-chain Claim-PDA transition indivisible with its confidential transfer. */
-export function bindAmountBoundClaimedStateToConfidentialTransfer(
+/** Atomically reserves the entitlement for settlement with the confidential transfer; final CLAIMED awaits server reconciliation. */
+export function bindSettlementPendingStateToConfidentialTransfer(
   plan: InstructionPlan,
   markSettlementPending: Instruction,
   expected: { source: string; mint: string; destination: string }

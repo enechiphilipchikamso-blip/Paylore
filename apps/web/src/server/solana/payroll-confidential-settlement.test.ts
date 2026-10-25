@@ -135,9 +135,15 @@ function finalizedTransaction(signature: string) {
         programId: h.programId,
         accounts: [h.contributor, h.workspace, h.reserveState, h.reserveAuthority, h.reserveToken,
           h.mint, h.claim, h.escrowToken, h.destination, SYSVAR_INSTRUCTIONS, h.context4],
-        data: encodeBase58(anchorDiscriminator("global:mark_claimed"))
+        data: encodeBase58(anchorDiscriminator("global:mark_settlement_pending"))
       }
     ];
+  } else if (step === "finalize_claimed") {
+    instructions = [{
+      programId: h.programId,
+      accounts: [h.contributor, h.workspace, h.reserveState, h.reserveAuthority, h.claim, SYSVAR_INSTRUCTIONS],
+      data: encodeBase58(anchorDiscriminator("global:finalize_claimed"))
+    }];
   } else if (step === "configure") {
     instructions = [{
       programId: h.programId,
@@ -194,7 +200,8 @@ function identifyTransactionStep(plan: unknown): string {
     Buffer.from(instruction.data).equals(anchorDiscriminator(name))
   );
   if (programInstruction("global:mark_claim_escrow_funded")) return "escrow_funding";
-  if (programInstruction("global:mark_claimed")) return "transfer";
+  if (programInstruction("global:mark_settlement_pending")) return "transfer";
+  if (programInstruction("global:finalize_claimed")) return "finalize_claimed";
   if (has(h.tokenProgram, 27, 7)) {
     const transfer = instructions.find((instruction) => instruction.programAddress === h.tokenProgram &&
       instruction.data instanceof Uint8Array && instruction.data[0] === 27 && instruction.data[1] === 7);
@@ -330,9 +337,11 @@ vi.mock("@solana/kit", () => ({
           } else if (h.currentStep === "transfer") {
             if (!h.forceDebitOnFailedTransfer || h.failStep !== "transfer") {
               h.escrowAvailable -= 1_250_000n;
-              h.claimState = 1;
+              h.claimState = 3;
               h.settlementSubmitted = true;
             }
+          } else if (h.currentStep === "finalize_claimed") {
+            h.claimState = 1;
           } else if (h.currentStep === "account_setup") {
             h.reserveAccountExists = true;
           } else if (h.currentStep === "funding_proof_setup") {
@@ -852,4 +861,31 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.sendCount).toBe(sends);
     expect(h.ledgerCalls).toBe(1);
   });
+
+  it.each(["pending", "failed"] as const)(
+    "keeps the claim settlement-pending when finalization is %s and retries only finalization",
+    async (mode) => {
+      if (mode === "pending") {
+        h.pendingSteps.add("finalize_claimed");
+        vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(121_000);
+      } else {
+        h.failStep = "finalize_claimed";
+      }
+      const first = await settleContributorPayrollAllocation({} as any, input);
+      expect(first.status).toBe("pending");
+      expect(h.claimState).toBe(3);
+      expect(h.ledgerCalls).toBe(0);
+      expect(Object.values(h.signatureSteps).filter((step) => step === "transfer")).toHaveLength(1);
+      h.pendingSteps.delete("finalize_claimed");
+      h.failStep = null;
+      const sendCountBeforeRetry = h.sendCount;
+      const retried = await settleContributorPayrollAllocation({} as any, input);
+      expect(retried.status).toBe("claimed");
+      expect(h.claimState).toBe(1);
+      expect(h.ledgerCalls).toBe(1);
+      expect(Object.values(h.signatureSteps).filter((step) => step === "transfer")).toHaveLength(1);
+      expect(h.sendCount).toBe(sendCountBeforeRetry + 1);
+    }
+  );
+
 });

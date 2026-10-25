@@ -123,4 +123,69 @@ test.describe("confidential claim rendered outcomes", () => {
       await context.close();
     }
   });
+
+  test("renders cleanup-pending completion as partial rather than fully successful", async ({ browser }) => {
+    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
+      "Requires the explicitly authorized hosted Devnet contributor.");
+    const { context, page } = await openAuthorizedCompensationPage(browser);
+    try {
+      await requireSafeActionPreconditions(page);
+      await page.route(claimRoute, async (route) => {
+        if (route.request().method() !== "POST") { await route.continue(); return; }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+          status: "claimed", signature: "test-fixture-cleanup-pending-signature",
+          warning: "proof_context_cleanup_pending", amountBaseUnits: "1000000", proofDurationMs: 1
+        }) });
+      });
+      await clickAndWaitForClaimResponse(page);
+      await expect(page.getByRole("status").filter({ hasText: /need proof-context cleanup/ })).toBeVisible();
+      await expect(page.getByRole("alert")).toHaveCount(0);
+      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
+    } finally { await context.close(); }
+  });
+
+  test("renders failed claim responses as an actionable error, never as success", async ({ browser }) => {
+    test.skip(!process.env.PAYLORE_E2E_SETTLEMENT_URL || !process.env.PAYLORE_E2E_STORAGE_STATE,
+      "Requires the explicitly authorized hosted Devnet contributor.");
+    const { context, page } = await openAuthorizedCompensationPage(browser);
+    try {
+      await requireSafeActionPreconditions(page);
+      await page.route(claimRoute, async (route) => {
+        if (route.request().method() !== "POST") { await route.continue(); return; }
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily_unavailable" }) });
+      });
+      await clickAndWaitForClaimResponse(page);
+      await expect(page.getByRole("alert").filter({
+        hasText: /need attention\. Unverified transfers are not shown as complete/
+      })).toBeVisible();
+      await expect(page.getByText(/transferred and reconciled/)).toHaveCount(0);
+    } finally { await context.close(); }
+  });
+
+  test("keeps Claim PDA allocations isolated between contributor wallet sessions", async ({ browser }) => {
+    const url = process.env.PAYLORE_E2E_SETTLEMENT_URL;
+    const primaryStorageState = process.env.PAYLORE_E2E_STORAGE_STATE;
+    const otherStorageState = process.env.PAYLORE_E2E_OTHER_STORAGE_STATE;
+    test.skip(!url || !primaryStorageState || !otherStorageState,
+      "Requires two authorized contributor storage states in the same workspace.");
+    const primaryContext = await browser.newContext({ storageState: primaryStorageState! });
+    const otherContext = await browser.newContext({ storageState: otherStorageState! });
+    try {
+      const primaryPage = await primaryContext.newPage();
+      const otherPage = await otherContext.newPage();
+      await Promise.all([primaryPage.goto(url!), otherPage.goto(url!)]);
+      await Promise.all([
+        expect(primaryPage.getByRole("heading", { name: "Your compensation" })).toBeVisible(),
+        expect(otherPage.getByRole("heading", { name: "Your compensation" })).toBeVisible()
+      ]);
+      const primaryClaims = (await primaryPage.locator("table tbody tr td:nth-child(4) code").allTextContents()).map(v => v.trim()).filter(Boolean);
+      const otherClaims = (await otherPage.locator("table tbody tr td:nth-child(4) code").allTextContents()).map(v => v.trim()).filter(Boolean);
+      expect(primaryClaims.length, "The primary test contributor must have at least one Claim PDA allocation").toBeGreaterThan(0);
+      expect(otherClaims.length, "The second contributor must have at least one Claim PDA allocation").toBeGreaterThan(0);
+      const primaryClaimSet = new Set(primaryClaims);
+      expect(otherClaims.some(claimAddress => primaryClaimSet.has(claimAddress)),
+        "A Claim PDA assigned to the first wallet must never appear in the second wallet's compensation table").toBe(false);
+    } finally { await Promise.all([primaryContext.close(), otherContext.close()]); }
+  });
+
 });

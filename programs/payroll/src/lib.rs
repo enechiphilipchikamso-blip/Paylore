@@ -142,47 +142,15 @@ pub mod paylore_payroll {
             )?,
             PayrollError::SettlementTransferMissing
         );
-        validate_amount_commitment_context(
-            &ctx.accounts.amount_commitment_context.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.claim.amount_commitment,
-        )?;
         transition_claim_to_settlement_pending(&mut ctx.accounts.claim)
     }
 
     pub fn mark_claimed(ctx: Context<MarkClaimed>) -> Result<()> {
-        validate_token_account_identity(
-            &ctx.accounts.reserve_token_account.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.mint.key(),
+        ensure_claim_finalization_is_separate_transaction(
+            &ctx.accounts.instructions_sysvar.to_account_info(),
+            ctx.accounts.claim.key(),
         )?;
-        validate_token_account_identity(
-            &ctx.accounts.escrow_token_account.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.mint.key(),
-        )?;
-        validate_token_account_identity(
-            &ctx.accounts.destination_token_account.to_account_info(),
-            ctx.accounts.contributor.key(),
-            ctx.accounts.mint.key(),
-        )?;
-        require!(ctx.accounts.claim.escrow_funded, PayrollError::ClaimEscrowNotFunded);
-        require!(
-            has_matching_confidential_transfer(
-                &ctx.accounts.instructions_sysvar.to_account_info(),
-                ctx.accounts.escrow_token_account.key(),
-                ctx.accounts.mint.key(),
-                ctx.accounts.destination_token_account.key(),
-                ctx.accounts.amount_commitment_context.key(),
-            )?,
-            PayrollError::SettlementTransferMissing
-        );
-        validate_amount_commitment_context(
-            &ctx.accounts.amount_commitment_context.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.claim.amount_commitment,
-        )?;
-        transition_claim_to_claimed_after_transfer(&mut ctx.accounts.claim)
+        transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
 
     pub fn mark_claim_escrow_funded(ctx: Context<MarkClaimEscrowFunded>) -> Result<()> {
@@ -206,11 +174,6 @@ pub mod paylore_payroll {
             )?,
             PayrollError::SettlementTransferMissing
         );
-        validate_amount_commitment_context(
-            &ctx.accounts.amount_commitment_context.to_account_info(),
-            ctx.accounts.reserve_authority.key(),
-            ctx.accounts.claim.amount_commitment,
-        )?;
         require!(
             ctx.accounts.claim.status == ClaimStatus::Unclaimed,
             PayrollError::InvalidClaimTransition
@@ -224,6 +187,10 @@ pub mod paylore_payroll {
     }
 
     pub fn finalize_claimed(ctx: Context<FinalizeClaimed>) -> Result<()> {
+        ensure_claim_finalization_is_separate_transaction(
+            &ctx.accounts.instructions_sysvar.to_account_info(),
+            ctx.accounts.claim.key(),
+        )?;
         transition_claim_to_claimed(&mut ctx.accounts.claim)
     }
 
@@ -274,12 +241,6 @@ fn transition_claim_to_settlement_pending(claim: &mut ClaimState) -> Result<()> 
     Ok(())
 }
 
-fn transition_claim_to_claimed_after_transfer(claim: &mut ClaimState) -> Result<()> {
-    require!(claim.status == ClaimStatus::Unclaimed, PayrollError::InvalidClaimTransition);
-    claim.status = ClaimStatus::Claimed;
-    Ok(())
-}
-
 fn transition_claim_to_claimed(claim: &mut ClaimState) -> Result<()> {
     require!(
         claim.status == ClaimStatus::SettlementPending,
@@ -295,6 +256,28 @@ fn transition_claim_to_recovered(claim: &mut ClaimState) -> Result<()> {
         PayrollError::InvalidClaimTransition
     );
     claim.status = ClaimStatus::Recovered;
+    Ok(())
+}
+
+fn is_settlement_pending_instruction_for_claim(instruction: &Instruction, claim: Pubkey) -> bool {
+    let expected = hashv(&[b"global:mark_settlement_pending"]).to_bytes();
+    instruction.program_id == crate::ID
+        && instruction.data.get(..8) == Some(&expected[..])
+        && instruction.accounts.get(6).map(|account| account.pubkey) == Some(claim)
+}
+
+fn ensure_claim_finalization_is_separate_transaction(
+    instructions_sysvar: &AccountInfo,
+    claim: Pubkey,
+) -> Result<()> {
+    let current_index = load_current_index_checked(instructions_sysvar)?;
+    for index in 0..current_index {
+        let instruction = load_instruction_at_checked(index as usize, instructions_sysvar)?;
+        require!(
+            !is_settlement_pending_instruction_for_claim(&instruction, claim),
+            PayrollError::ClaimFinalizationMustUseSeparateTransaction
+        );
+    }
     Ok(())
 }
 
@@ -750,6 +733,9 @@ pub struct FinalizeClaimed<'info> {
         constraint = claim.status == ClaimStatus::SettlementPending
     )]
     pub claim: Account<'info, ClaimState>,
+    /// Finalization must be separate from the transfer that reserved the claim.
+    #[account(address = solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -859,6 +845,8 @@ pub enum PayrollError {
     InvalidIdentifier,
     #[msg("This contributor claim has already been completed.")]
     InvalidClaimTransition,
+    #[msg("Claim finalization must be in a separate transaction after settlement reconciliation.")]
+    ClaimFinalizationMustUseSeparateTransaction,
     #[msg("A recovery reason commitment is required.")]
     InvalidRecoveryReason,
     #[msg("The workspace PDA already belongs to a different workspace identity.")]
@@ -1088,19 +1076,45 @@ mod tests {
     }
 
     #[test]
-    fn atomic_claimed_transition_only_accepts_an_unclaimed_entitlement() {
+    fn claimed_state_requires_a_prior_settlement_pending_transition() {
         let mut claim = claim_state();
-        assert!(transition_claim_to_claimed_after_transfer(&mut claim).is_ok());
+        assert!(transition_claim_to_claimed(&mut claim).is_err());
+        assert_eq!(claim.status, ClaimStatus::Unclaimed);
+        assert!(transition_claim_to_settlement_pending(&mut claim).is_ok());
+        assert_eq!(claim.status, ClaimStatus::SettlementPending);
+        assert!(transition_claim_to_claimed(&mut claim).is_ok());
         assert_eq!(claim.status, ClaimStatus::Claimed);
-        assert!(transition_claim_to_claimed_after_transfer(&mut claim).is_err());
-
-        let mut pending = claim_state();
-        assert!(transition_claim_to_settlement_pending(&mut pending).is_ok());
-        assert!(transition_claim_to_claimed_after_transfer(&mut pending).is_err());
-
+        assert!(transition_claim_to_claimed(&mut claim).is_err());
         let mut recovered = claim_state();
         recovered.status = ClaimStatus::Recovered;
-        assert!(transition_claim_to_claimed_after_transfer(&mut recovered).is_err());
+        assert!(transition_claim_to_claimed(&mut recovered).is_err());
+    }
+
+    #[test]
+    fn settlement_pending_instruction_is_claim_scoped_and_exact() {
+        let claim = Pubkey::new_unique();
+        let other_claim = Pubkey::new_unique();
+        let data = hashv(&[b"global:mark_settlement_pending"]).to_bytes()[..8].to_vec();
+        let instruction = Instruction {
+            program_id: crate::ID,
+            accounts: vec![
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), true),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new(claim, false),
+            ], data: data.clone(),
+        };
+        assert!(is_settlement_pending_instruction_for_claim(&instruction, claim));
+        assert!(!is_settlement_pending_instruction_for_claim(&instruction, other_claim));
+        let other_program = Instruction { program_id: TOKEN_2022_PROGRAM_ID, ..instruction.clone() };
+        assert!(!is_settlement_pending_instruction_for_claim(&other_program, claim));
+        let mut wrong_data = data;
+        wrong_data[0] ^= 0xff;
+        let wrong_discriminator = Instruction { data: wrong_data, ..instruction };
+        assert!(!is_settlement_pending_instruction_for_claim(&wrong_discriminator, claim));
     }
 
     #[test]

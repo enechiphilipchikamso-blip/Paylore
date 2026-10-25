@@ -42,10 +42,6 @@ import {
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
 import {
-  bindAmountCommitmentProof,
-  PayrollAmountProofBindingError
-} from "./payroll-amount-proof-binding";
-import {
   advanceConfidentialSequence,
   assertConfidentialStepAllowed,
   createConfidentialSequenceProgress
@@ -309,7 +305,7 @@ function configureReserveInstruction(input: {
     data: discriminator("global:configure_workspace_reserve")
   };
 }
-function markClaimedInstruction(input: {
+function markSettlementPendingInstruction(input: {
   programId: string; contributor: string; workspace: string; reserveState: string;
   reserveAuthority: string; reserveToken: string; mint: string; claim: string; escrowTokenAccount: string;
   destination: string; amountCommitmentContext: string;
@@ -329,7 +325,7 @@ function markClaimedInstruction(input: {
       { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY },
       { address: address(input.amountCommitmentContext), role: AccountRole.READONLY }
     ],
-    data: discriminator("global:mark_claimed")
+    data: discriminator("global:mark_settlement_pending")
   };
 }
 function finalizeClaimedInstruction(input: {
@@ -343,7 +339,8 @@ function finalizeClaimedInstruction(input: {
       { address: address(input.workspace), role: AccountRole.READONLY },
       { address: address(input.reserveState), role: AccountRole.READONLY },
       { address: address(input.reserveAuthority), role: AccountRole.READONLY_SIGNER },
-      { address: address(input.claim), role: AccountRole.WRITABLE }
+      { address: address(input.claim), role: AccountRole.WRITABLE },
+      { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY }
     ],
     data: discriminator("global:finalize_claimed")
   };
@@ -459,7 +456,7 @@ async function verifyFinalizedSettlement(input: {
       transferContext = accounts[4] ?? "";
       transfers++;
     }
-    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_claimed")) &&
+    if (programId === input.programId && data && sameBytes(data, discriminator("global:mark_settlement_pending")) &&
         accounts.length === 11 && accounts[0] === input.contributor && accounts[1] === input.workspace &&
         accounts[2] === input.reserveState && accounts[3] === input.reserveAuthority &&
         accounts[4] === input.reserveToken && accounts[5] === input.mint && accounts[6] === input.claim &&
@@ -496,7 +493,7 @@ async function verifyFinalizedSettlement(input: {
       !sameBytes(data.subarray(104, 136), commitment) ||
       !sameBytes(data.subarray(136, 168), amountCommitment) ||
       !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
-      data[200] !== 1 || data[201] !== 1 || data[202] !== bump) {
+      data[200] !== 1 || (data[201] !== 3 && data[201] !== 1) || data[202] !== bump) {
     throw new PayrollConfidentialSettlementError("settlement_claim_state_not_verified", 409);
   }
 }
@@ -634,7 +631,6 @@ async function fundPayrollClaimEscrow(
     contributor: string; programId: string; authority: string; workspace: string; reserveState: string;
     reserveToken: string; escrowTokenAccount: string; mint: string; amountBaseUnits: string;
     allocationCommitment: string; amountCommitment: string;
-    amountCommitmentMaterial: ReturnType<typeof derivePayrollAmountCommitmentMaterial>;
     proofContexts: string[]; contextSignatures: string[];
   }
 ): Promise<{ status: "funded" | "pending" | "retry_ready"; signature?: string; warning?: "proof_context_cleanup_pending" }> {
@@ -874,20 +870,7 @@ async function fundPayrollClaimEscrow(
       sourceTokenAccount: before.source.token, destinationTokenAccount: before.destination.token,
       authority: signer, amount, sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
     });
-    const transferPlan = {
-      ...rawPlan,
-      plans: rawPlan.plans.map((plan, index) => {
-        if (index !== 0) return plan;
-        try {
-          return bindAmountCommitmentProof(plan, elgamal, input.amountCommitmentMaterial);
-        } catch (error) {
-          if (error instanceof PayrollAmountProofBindingError) {
-            throw new PayrollConfidentialSettlementError(error.code, 503);
-          }
-          throw error;
-        }
-      })
-    } as typeof rawPlan;
+    const transferPlan = rawPlan;
     if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 ||
         transferPlan.plans[1]?.kind !== "single") {
       throw new PayrollConfidentialSettlementError("confidential_transfer_plan_invalid", 503);
@@ -1016,7 +999,7 @@ function isClaimSettlementTransaction(input: {
       transfers++;
     }
     if (programId === input.programId && data &&
-        sameBytes(data, discriminator("global:mark_claimed")) &&
+        sameBytes(data, discriminator("global:mark_settlement_pending")) &&
         accounts.length === 11 && accounts[0] === input.contributor &&
         accounts[1] === input.workspace && accounts[2] === input.reserveState &&
         accounts[3] === input.reserveAuthority && accounts[4] === input.reserveToken &&
@@ -1442,7 +1425,7 @@ export async function settleContributorPayrollAllocation(
           programId, authority: evidence.authorityAddress, workspace, reserveState, reserveToken,
           escrowTokenAccount, mint, amountBaseUnits: allocation.amountBaseUnits,
           allocationCommitment: evidence.allocationCommitment, amountCommitment: allocation.amountCommitment!,
-          amountCommitmentMaterial, proofContexts,
+          proofContexts,
           contextSignatures: allocation.settlementContextSignatures ?? []
         });
         if (funding.status === "pending") {
@@ -1488,20 +1471,7 @@ export async function settleContributorPayrollAllocation(
           destinationTokenAccount: target.data, authority: signer, amount,
           sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
         });
-        const transferPlan = {
-          ...rawTransferPlan,
-          plans: rawTransferPlan.plans.map((plan, index) => {
-            if (index !== 0) return plan;
-            try {
-              return bindAmountCommitmentProof(plan, elgamal, amountCommitmentMaterial);
-            } catch (error) {
-              if (error instanceof PayrollAmountProofBindingError) {
-                throw new PayrollConfidentialSettlementError(error.code, 503);
-              }
-              throw error;
-            }
-          })
-        } as typeof rawTransferPlan;
+        const transferPlan = rawTransferPlan;
         proofDurationMs = Math.max(0, performance.now() - proofStarted);
         if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 ||
             transferPlan.plans[1]?.kind !== "single") {
@@ -1541,9 +1511,9 @@ export async function settleContributorPayrollAllocation(
         }
 
         sequence = advanceConfidentialSequence(sequence, "proof_setup", "finalized");
-        const boundPlan = bindAmountBoundClaimedStateToConfidentialTransfer(
+        const boundPlan = bindSettlementPendingStateToConfidentialTransfer(
           transferPlan,
-          markClaimedInstruction({
+          markSettlementPendingInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
             reserveAuthority: signer.address, reserveToken, mint, claim: allocation.claimAddress,
             escrowTokenAccount, destination, amountCommitmentContext

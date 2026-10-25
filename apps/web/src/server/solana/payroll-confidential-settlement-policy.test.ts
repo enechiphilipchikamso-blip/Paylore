@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { address, singleInstructionPlan, type Instruction } from "@solana/kit";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
-import { bindAmountBoundClaimedStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer, matchesExactConfidentialDebit } from "./payroll-confidential-settlement-policy";
+import { bindSettlementPendingStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer, matchesExactConfidentialDebit } from "./payroll-confidential-settlement-policy";
 
 const source = address("So11111111111111111111111111111111111111112");
 const mint = address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -32,11 +32,11 @@ describe("confidential settlement instruction binding", () => {
     expect(isExpectedConfidentialTransfer(ix(other, [27, 7], [source, mint, destination]), expected)).toBe(false);
     expect(isExpectedConfidentialTransfer(ix(TOKEN_2022_PROGRAM_ADDRESS, [27, 6], [source, mint, destination]), expected)).toBe(false);
   });
-  it("binds the CLAIMED transition to the exact transfer as an indivisible stage", () => {
+  it("binds the settlement-pending transition to the exact transfer as an indivisible stage", () => {
     const setup = ix(other, [1]), cleanup = ix(other, [2]), mark = ix(other, [3]);
     const plan = { kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
       plans: [singleInstructionPlan(setup), singleInstructionPlan(transfer), singleInstructionPlan(cleanup)] };
-    const bound = bindAmountBoundClaimedStateToConfidentialTransfer(plan, mark, expected);
+    const bound = bindSettlementPendingStateToConfidentialTransfer(plan, mark, expected);
     expect(bound.kind).toBe("sequential");
     if (bound.kind !== "sequential" || bound.plans[1]?.kind !== "sequential") return;
     expect(bound.plans[0]).toEqual(singleInstructionPlan(setup));
@@ -55,13 +55,13 @@ describe("confidential settlement instruction binding", () => {
       kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
       plans: [singleInstructionPlan(setup), singleInstructionPlan(cleanup), singleInstructionPlan(wrongTransfer)]
     };
-    expect(() => bindAmountBoundClaimedStateToConfidentialTransfer(wrongOrder, mark, expected))
+    expect(() => bindSettlementPendingStateToConfidentialTransfer(wrongOrder, mark, expected))
       .toThrow("plan shape has changed");
     const wrongAccounts = {
       kind: "sequential" as const, planType: "instructionPlan" as const, divisible: true,
       plans: [singleInstructionPlan(setup), singleInstructionPlan(wrongTransfer), singleInstructionPlan(cleanup)]
     };
-    expect(() => bindAmountBoundClaimedStateToConfidentialTransfer(wrongAccounts, mark, expected))
+    expect(() => bindSettlementPendingStateToConfidentialTransfer(wrongAccounts, mark, expected))
       .toThrow("plan shape has changed");
   });
   it("extracts only ZK proof-context close instructions and deduplicates addresses", () => {
