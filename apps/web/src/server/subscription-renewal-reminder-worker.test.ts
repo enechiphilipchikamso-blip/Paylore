@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   archiveExpiredWorkspaceSubscriptions: vi.fn(),
@@ -46,6 +46,10 @@ describe("scheduled subscription reminder delivery", () => {
     mocks.listDueWorkspaceRetentionNotifications.mockResolvedValue([]);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("runs reminder persistence on the scheduled path and reports both durable outcomes", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -54,7 +58,7 @@ describe("scheduled subscription reminder delivery", () => {
 
     expect(mocks.createDueSubscriptionRenewalReminders).toHaveBeenCalledOnce();
     expect(mocks.createDueSubscriptionRenewalReminders).toHaveBeenCalledWith(db, expect.any(Date), 500);
-    expect(mocks.listDueWorkspaceRetentionNotifications).toHaveBeenCalledWith(db, expect.any(Date), 500);
+    expect(mocks.listDueWorkspaceRetentionNotifications).toHaveBeenCalledWith(db, 500);
     const completion = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(completion).toMatchObject({
       event: "workspace_retention_processing_completed",
@@ -63,7 +67,6 @@ describe("scheduled subscription reminder delivery", () => {
       subscriptionsWithDueReminders: 1
     });
     expect(client.end).toHaveBeenCalledWith({ timeout: 5 });
-    log.mockRestore();
   });
 
   it("does not log a successful run when reminder persistence fails and still closes the database client", async () => {
@@ -74,6 +77,5 @@ describe("scheduled subscription reminder delivery", () => {
 
     expect(log).not.toHaveBeenCalled();
     expect(client.end).toHaveBeenCalledWith({ timeout: 5 });
-    log.mockRestore();
   });
 });
