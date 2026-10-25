@@ -209,3 +209,117 @@ export function getFinalizedLedgerReconciliationDisposition(
   if (unique.size === 0) return "not_reconciled";
   return unique.size === 1 ? "reconciled" : "ambiguous_workspace";
 }
+
+
+export type RecoverClaimInstructionMatch =
+  | { kind: "not_found" }
+  | { kind: "invalid"; errorCode: string }
+  | {
+      kind: "found";
+      contributorAddress: string;
+      workspaceAddress: string;
+      reserveStateAddress: string;
+      reserveAuthorityAddress: string;
+      reserveTokenAccount: string;
+      mint: string;
+      claimAddress: string;
+      escrowTokenAccount: string;
+      amountCommitmentContext: string;
+      reasonCommitment: string;
+    };
+
+const RECOVER_CLAIM_DISCRIMINATOR = createHash("sha256")
+  .update("global:recover_claim")
+  .digest()
+  .subarray(0, 8);
+const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+/** Trusts recovery only when the ten-account Anchor instruction is atomically adjacent to its exact escrow-to-reserve transfer. */
+export function findRecoverClaimInstruction(input: {
+  transaction: TransactionBindingEnvelope;
+  payrollProgramId: string;
+}): RecoverClaimInstructionMatch {
+  const message = input.transaction.transaction?.message;
+  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
+  const accountKeys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
+  const publicKeys = accountKeys.flatMap((entry) => {
+    if (typeof entry === "string") return [entry];
+    if (entry && typeof entry === "object" && "pubkey" in entry && typeof entry.pubkey === "string") {
+      return [entry.pubkey];
+    }
+    return [];
+  });
+  const signers = accountKeys.flatMap((entry) => {
+    if (entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string" &&
+        "signer" in entry && entry.signer === true) return [entry.pubkey];
+    return [];
+  });
+  let result: Extract<RecoverClaimInstructionMatch, { kind: "found" }> | null = null;
+  let matchingTransfers = 0;
+
+  for (const [index, raw] of instructions.entries()) {
+    if (!raw || typeof raw !== "object") continue;
+    const instruction = raw as Record<string, unknown>;
+    if (instruction.programId !== input.payrollProgramId || typeof instruction.data !== "string") continue;
+    const data = decodeBase58Instruction(instruction.data);
+    if (!data || data.length < 8 ||
+        !RECOVER_CLAIM_DISCRIMINATOR.every((byte, offset) => data[offset] === byte)) continue;
+    if (data.length !== 40) return { kind: "invalid", errorCode: "recover_claim_instruction_data_invalid" };
+    if (result) return { kind: "invalid", errorCode: "duplicate_recover_claim_instruction" };
+
+    const rawAccounts = instruction.accounts;
+    if (!Array.isArray(rawAccounts) || rawAccounts.length !== 10 ||
+        rawAccounts.some((account) => typeof account !== "string")) {
+      return { kind: "invalid", errorCode: "recover_claim_account_shape_invalid" };
+    }
+    const accounts = rawAccounts as string[];
+    if (accounts.some((account) => !publicKeys.includes(account))) {
+      return { kind: "invalid", errorCode: "recover_claim_account_mapping_invalid" };
+    }
+    if (!signers.includes(accounts[3])) {
+      return { kind: "invalid", errorCode: "recover_claim_reserve_authority_not_verified" };
+    }
+    if (accounts[8] !== INSTRUCTIONS_SYSVAR || !accounts[9]) {
+      return { kind: "invalid", errorCode: "recover_claim_context_account_invalid" };
+    }
+
+    const prior = instructions[index - 1];
+    if (!prior || typeof prior !== "object") {
+      return { kind: "invalid", errorCode: "recover_claim_transfer_not_atomically_bound" };
+    }
+    const transfer = prior as Record<string, unknown>;
+    const transferData = typeof transfer.data === "string" ? decodeBase58Instruction(transfer.data) : null;
+    const transferAccounts = Array.isArray(transfer.accounts) ? transfer.accounts : [];
+    const transferIsBound = transfer.programId === TOKEN_2022_PROGRAM_ID &&
+      transferData !== null && transferData.length >= 2 &&
+      transferData[0] === 27 && transferData[1] === 7 &&
+      transferAccounts.length >= 5 &&
+      transferAccounts[0] === accounts[7] &&
+      transferAccounts[1] === accounts[5] &&
+      transferAccounts[2] === accounts[4] &&
+      transferAccounts[4] === accounts[9];
+    if (!transferIsBound) {
+      return { kind: "invalid", errorCode: "recover_claim_transfer_not_atomically_bound" };
+    }
+
+    matchingTransfers++;
+    result = {
+      kind: "found",
+      contributorAddress: accounts[0],
+      workspaceAddress: accounts[1],
+      reserveStateAddress: accounts[2],
+      reserveAuthorityAddress: accounts[3],
+      reserveTokenAccount: accounts[4],
+      mint: accounts[5],
+      claimAddress: accounts[6],
+      escrowTokenAccount: accounts[7],
+      amountCommitmentContext: accounts[9],
+      reasonCommitment: Buffer.from(data.subarray(8)).toString("hex")
+    };
+  }
+  if (result && matchingTransfers !== 1) {
+    return { kind: "invalid", errorCode: "recover_claim_transfer_not_atomically_bound" };
+  }
+  return result ?? { kind: "not_found" };
+}

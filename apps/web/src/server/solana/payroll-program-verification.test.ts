@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
 import { readSolanaRpc } from "./rpc";
 import {
+  derivePayrollReserveTokenAccount,
   getFinalizedPayrollClaimState,
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
@@ -584,3 +585,12 @@ describe("payroll program transaction verification", () => {
     ).rejects.toThrow("does not perform this Claim PDA recovery");
   });
 });
+
+describe("canonical recovery account derivation", () => {
+  it("derives the workspace reserve Token-2022 account from the signer and configured mint", async () => {
+    const account = await derivePayrollReserveTokenAccount(reserveAuthorityAddress, mintAddress);
+    expect(typeof account).toBe("string");
+    expect(account.length).toBeGreaterThanOrEqual(32);
+  });
+});
+

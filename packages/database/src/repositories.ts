@@ -44,6 +44,7 @@ import {
   payrollRecoveries,
   payrollRuns,
   solanaWebhookEvents,
+  solanaReconciliationCursors,
   contributors,
   contributorConfidentialAccounts,
   contributorOffboarding,
@@ -2792,6 +2793,55 @@ export async function persistSolanaWebhookEvents(
   };
 }
 
+export async function getCanonicalReconciliationCursor(db: Database, address: string) {
+  const rows = await db.select().from(solanaReconciliationCursors)
+    .where(eq(solanaReconciliationCursors.address, address)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function listCanonicalReconciliationCursors(db: Database) {
+  return db.select().from(solanaReconciliationCursors);
+}
+
+/** Stores discovered events and the cursor in one transaction so a failed insert cannot skip a chain range. */
+export async function persistCanonicalReconciliationScanPage(
+  db: Database,
+  input: {
+    address: string;
+    highWaterSignature: string | null;
+    backfillBeforeSignature: string | null;
+    backfillUntilSignature: string | null;
+    events: Array<typeof solanaWebhookEvents.$inferInsert>;
+    now?: Date;
+  }
+): Promise<{ inserted: number; duplicates: number }> {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const inserted = input.events.length
+      ? await tx.insert(solanaWebhookEvents).values(input.events)
+          .onConflictDoNothing({
+            target: [solanaWebhookEvents.provider, solanaWebhookEvents.providerEventId]
+          }).returning({ id: solanaWebhookEvents.id })
+      : [];
+    await tx.insert(solanaReconciliationCursors).values({
+      address: input.address,
+      highWaterSignature: input.highWaterSignature,
+      backfillBeforeSignature: input.backfillBeforeSignature,
+      backfillUntilSignature: input.backfillUntilSignature,
+      updatedAt: now
+    }).onConflictDoUpdate({
+      target: solanaReconciliationCursors.address,
+      set: {
+        highWaterSignature: input.highWaterSignature,
+        backfillBeforeSignature: input.backfillBeforeSignature,
+        backfillUntilSignature: input.backfillUntilSignature,
+        updatedAt: now
+      }
+    });
+    return { inserted: inserted.length, duplicates: input.events.length - inserted.length };
+  });
+}
+
 export async function claimDueSolanaWebhookEvents(
   db: Database,
   input: {
@@ -5435,8 +5485,11 @@ export async function getPayrollAllocationForChainReconciliation(
       amountBaseUnits: payrollAllocations.amountBaseUnits,
       contributorWalletAddress: contributors.identityWalletAddress,
       allocationCommitment: payrollRuns.allocationCommitment,
+      amountCommitment: payrollAllocations.amountCommitment,
       recoveryStatus: payrollRecoveries.status,
-      recoverySignature: payrollRecoveries.transactionSignature
+      recoverySignature: payrollRecoveries.transactionSignature,
+      recoveryReason: payrollRecoveries.reason,
+      recoveryReasonNote: payrollRecoveries.reasonNote
     })
     .from(payrollAllocations)
     .innerJoin(

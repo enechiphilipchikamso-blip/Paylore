@@ -2,12 +2,19 @@ import { createHash } from "node:crypto";
 import {
   applyVerifiedSubscriptionPayment,
   claimDueSolanaWebhookEvents,
+  getCanonicalReconciliationCursor,
+  listCanonicalReconciliationCursors,
+  listHeliusMonitoredAddresses,
+  persistCanonicalReconciliationScanPage,
   listFinalizedLedgerWorkspaceIdsForSignature,
   recordVerifiedPayrollClaimFinalizationEvent,
   createWorkspaceNotificationForFinanceMembers,
   createDatabase,
   getSubscriptionPaymentAttemptBySignature,
   getWorkspaceGasTankByAddress,
+  getWorkspaceReserve,
+  getPayrollClaimEscrow,
+  getPayrollClaimCreationEvidence,
   recordVerifiedGasTankFundingEvent,
   getPayrollAllocationForChainReconciliation,
   getPayrollAllocationsForChainReconciliationByClaimIds,
@@ -20,11 +27,25 @@ import { parseConfig, parsePayloreConfig } from "../../apps/web/src/server/confi
 import { readSolanaRpcWithProviders } from "../../apps/web/src/server/solana/rpc-core";
 import { transactionInvokesProgram } from "../../apps/web/src/server/solana/transaction-program-invocation";
 import { isExactSubscriptionPaymentTransaction } from "../../apps/web/src/server/solana/subscription-payment-chain-check";
-import { findFinalizeClaimedInstruction, getFinalizedLedgerReconciliationDisposition, getWebhookTransactionBindingError } from "../../apps/web/src/server/solana/webhook-policy";
 import {
+  findFinalizeClaimedInstruction,
+  findRecoverClaimInstruction,
+  getFinalizedLedgerReconciliationDisposition,
+  getWebhookTransactionBindingError
+} from "../../apps/web/src/server/solana/webhook-policy";
+import {
+  derivePayrollReserveTokenAccount,
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
 } from "../../apps/web/src/server/solana/payroll-program-verification";
+import {
+  findSupportedPayrollEvent,
+  findSystemTransferDestination,
+  scanCanonicalSignaturePage,
+  type CanonicalScanEvent,
+  type CanonicalSignatureInfo,
+  type CanonicalTransactionLike
+} from "../../apps/web/src/server/solana/canonical-event-scanner";
 
 export const config = {
   schedule: "* * * * *"
@@ -79,7 +100,9 @@ function configuredRpc() {
   }
   return {
     providers,
-    payrollProgramId: config.PAYLORE_PAYROLL_PROGRAM_ID
+    payrollProgramId: config.PAYLORE_PAYROLL_PROGRAM_ID,
+    wrappedMint: config.PAYLORE_WRAPPED_USDC_MINT,
+    subscriptionRecipient: config.PAYLORE_SUBSCRIPTION_RECIPIENT
   };
 }
 
@@ -88,6 +111,7 @@ async function reconcileEvent(
   event: Awaited<ReturnType<typeof claimDueSolanaWebhookEvents>>[number],
   providers: ReturnType<typeof configuredRpc>["providers"],
   payrollProgramId: string | undefined,
+  wrappedMint: string | undefined,
   now: Date
 ) {
   const deadLetter = event.attempts >= 8;
@@ -540,56 +564,80 @@ async function reconcileEvent(
     return "finalized";
   }
 
-  const recoveryDiscriminator = createHash("sha256")
-    .update("global:recover_claim")
-    .digest()
-    .subarray(0, 8);
-  let recoveryIntent: {
-    claimAddress: string;
-    authorityAddress: string;
-    reasonCommitment: string;
-  } | null = null;
-  for (const instruction of instructions) {
-    if (instruction.programId !== payrollProgramId ||
-        typeof instruction.data !== "string" ||
-        !Array.isArray(instruction.accounts)) continue;
-    const data = decodeBase58(instruction.data);
-    if (!data || data.length !== 40 ||
-        !Buffer.from(data.subarray(0, 8)).equals(recoveryDiscriminator) ||
-        data.subarray(8).every((byte) => byte === 0)) continue;
-    const accounts = instruction.accounts;
-    if (accounts.length !== 4 ||
-        accounts.some((account) => typeof account !== "string")) continue;
-    recoveryIntent = {
-      authorityAddress: accounts[0] as string,
-      claimAddress: accounts[3] as string,
-      reasonCommitment: Buffer.from(data.subarray(8, 40)).toString("hex")
-    };
-    break;
+  const recoveryMatch = findRecoverClaimInstruction({ transaction, payrollProgramId });
+  if (recoveryMatch.kind === "invalid") {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id, status: "dead_letter", errorCode: recoveryMatch.errorCode, processedAt: now, now
+    });
+    return "dead_letter";
   }
-  if (!recoveryIntent) {
+  if (recoveryMatch.kind !== "found") {
     await retry("payroll_event_not_supported_for_reconciliation");
     return deadLetter ? "dead_letter" : "retry_pending";
   }
 
-  const allocation = await getPayrollAllocationForChainReconciliation(
-    db,
-    recoveryIntent.claimAddress
-  );
-  if (!allocation || !allocation.claimId || !allocation.allocationCommitment) {
+  const allocation = await getPayrollAllocationForChainReconciliation(db, recoveryMatch.claimAddress);
+  if (!allocation || !allocation.claimId || !allocation.claimAddress ||
+      !allocation.allocationCommitment || !allocation.amountCommitment ||
+      !allocation.contributorWalletAddress || !allocation.recoveryReason) {
     await retry("recovery_claim_not_mapped");
     return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  const [escrow, reserve, evidence] = await Promise.all([
+    getPayrollClaimEscrow(db, allocation.workspaceId, allocation.allocationId),
+    getWorkspaceReserve(db, allocation.workspaceId),
+    getPayrollClaimCreationEvidence(db, {
+      workspaceId: allocation.workspaceId, runId: allocation.runId,
+      claimId: allocation.claimId, claimAddress: recoveryMatch.claimAddress
+    }).catch(() => null)
+  ]);
+  if (!escrow || !reserve || !evidence || !wrappedMint) {
+    await retry("recovery_claim_application_state_unavailable");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  let expectedReserveToken: string;
+  try {
+    expectedReserveToken = await derivePayrollReserveTokenAccount(reserve.address, wrappedMint);
+  } catch {
+    await retry("recovery_reserve_token_account_unavailable");
+    return deadLetter ? "dead_letter" : "retry_pending";
+  }
+  const expectedReasonCommitment = createHash("sha256")
+    .update(`paylore:recovery:v1:${JSON.stringify({
+      reason: allocation.recoveryReason,
+      note: allocation.recoveryReasonNote ?? null
+    })}`)
+    .digest("hex");
+  if (evidence.programId !== payrollProgramId ||
+      evidence.allocationCommitment !== allocation.allocationCommitment ||
+      recoveryMatch.contributorAddress !== allocation.contributorWalletAddress ||
+      recoveryMatch.claimAddress !== allocation.claimAddress ||
+      recoveryMatch.reserveAuthorityAddress !== reserve.address ||
+      recoveryMatch.reserveTokenAccount !== expectedReserveToken ||
+      recoveryMatch.mint !== wrappedMint ||
+      recoveryMatch.escrowTokenAccount !== escrow.tokenAccountAddress ||
+      recoveryMatch.reasonCommitment !== expectedReasonCommitment) {
+    await updateSolanaWebhookEventState(db, {
+      id: event.id, status: "dead_letter",
+      errorCode: "recovery_claim_application_binding_mismatch", processedAt: now, now
+    });
+    return "dead_letter";
   }
   try {
     await verifyPayrollRecoveryTransaction({
       signature: event.transactionSignature,
-      authorityAddress: recoveryIntent.authorityAddress,
+      authorityAddress: evidence.authorityAddress,
+      reserveAuthorityAddress: reserve.address,
       workspaceId: allocation.workspaceId,
       contributorAddress: allocation.contributorWalletAddress,
       claimId: allocation.claimId,
-      claimAddress: recoveryIntent.claimAddress,
-      allocationCommitment: allocation.allocationCommitment,
-      recoveryReasonCommitment: recoveryIntent.reasonCommitment
+      claimAddress: recoveryMatch.claimAddress,
+      allocationCommitment: evidence.allocationCommitment,
+      amountCommitment: allocation.amountCommitment,
+      escrowTokenAccount: escrow.tokenAccountAddress,
+      reserveTokenAccount: expectedReserveToken,
+      mint: wrappedMint,
+      recoveryReasonCommitment: recoveryMatch.reasonCommitment
     });
   } catch {
     await retry("recovery_claim_chain_state_not_reconciled");
@@ -600,7 +648,7 @@ async function reconcileEvent(
     runId: allocation.runId,
     allocationId: allocation.allocationId,
     signature: event.transactionSignature,
-    claimAddress: recoveryIntent.claimAddress,
+    claimAddress: recoveryMatch.claimAddress,
     now
   });
   if (recovery.status === "conflict" || recovery.status === "not_found") {
@@ -629,18 +677,180 @@ async function reconcileEvent(
   return "finalized";
 }
 
+
+function signedSystemTransferSource(
+  transaction: CanonicalTransactionLike,
+  destination: string
+): string | null {
+  const message = transaction.transaction?.message;
+  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
+  const keys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
+  const signers = keys.flatMap((entry) => {
+    if (entry && typeof entry === "object" &&
+        "pubkey" in entry && typeof entry.pubkey === "string" &&
+        "signer" in entry && entry.signer === true) return [entry.pubkey];
+    return [];
+  });
+  const sources = new Set<string>();
+  for (const instruction of instructions) {
+    if (instruction.programId !== "11111111111111111111111111111111" ||
+        (instruction.program !== undefined && instruction.program !== "system") ||
+        !instruction.parsed || typeof instruction.parsed !== "object") continue;
+    const parsed = instruction.parsed as Record<string, unknown>;
+    if (parsed.type !== "transfer" || !parsed.info || typeof parsed.info !== "object") continue;
+    const info = parsed.info as Record<string, unknown>;
+    if (info.destination !== destination || typeof info.source !== "string" ||
+        !signers.includes(info.source) ||
+        (typeof info.lamports !== "string" && typeof info.lamports !== "number")) continue;
+    try {
+      if (typeof info.lamports === "number" && !Number.isSafeInteger(info.lamports)) continue;
+      const amount = BigInt(info.lamports);
+      if (amount <= 0n || amount >= (1n << 64n)) continue;
+    } catch { continue; }
+    sources.add(info.source);
+  }
+  return sources.size === 1 ? [...sources][0] : null;
+}
+
+async function discoverMissingCanonicalEvents(
+  db: ReturnType<typeof createDatabase>["db"],
+  providers: ReturnType<typeof configuredRpc>["providers"],
+  payrollProgramId: string | undefined,
+  subscriptionRecipient: string | undefined
+): Promise<void> {
+  const monitored = await listHeliusMonitoredAddresses(db);
+  const watchedAddresses = [...new Set([
+    ...monitored,
+    ...(payrollProgramId ? [payrollProgramId] : []),
+    ...(subscriptionRecipient ? [subscriptionRecipient] : [])
+  ])].sort();
+  if (watchedAddresses.length === 0) return;
+
+  const cursors = await listCanonicalReconciliationCursors(db);
+  const cursorByAddress = new Map(cursors.map((cursor) => [cursor.address, cursor]));
+  const scanAddresses = watchedAddresses.sort((left, right) => {
+    const leftTime = cursorByAddress.get(left)?.updatedAt?.getTime() ?? 0;
+    const rightTime = cursorByAddress.get(right)?.updatedAt?.getTime() ?? 0;
+    return leftTime - rightTime || left.localeCompare(right);
+  }).slice(0, 8);
+
+  for (const watchedAddress of scanAddresses) {
+    try {
+      const stored = await getCanonicalReconciliationCursor(db, watchedAddress);
+      const page = await scanCanonicalSignaturePage({
+        address: watchedAddress,
+        cursor: stored,
+        fetchSignatures: async (address, options) => {
+          const raw = await readSolanaRpcWithProviders<unknown>(
+            "getSignaturesForAddress",
+            [address, {
+              commitment: "finalized", limit: options.limit,
+              ...(options.before ? { before: options.before } : {}),
+              ...(options.until ? { until: options.until } : {})
+            }],
+            providers
+          );
+          if (!Array.isArray(raw) || raw.some((item) => !item || typeof item !== "object" ||
+              typeof (item as Record<string, unknown>).signature !== "string" ||
+              !Number.isSafeInteger((item as Record<string, unknown>).slot) ||
+              Number((item as Record<string, unknown>).slot) < 0)) {
+            throw new Error("Canonical signature listing returned an invalid page.");
+          }
+          return raw as CanonicalSignatureInfo[];
+        },
+        inspect: async (info, address) => {
+          const attempt = await getSubscriptionPaymentAttemptBySignature(db, info.signature);
+          if (attempt) {
+            return {
+              ready: true,
+              event: {
+                provider: "canonical-rpc-scanner" as const,
+                providerEventId: info.signature,
+                transactionSignature: info.signature,
+                transactionSlot: String(info.slot),
+                accountAddress: address,
+                eventType: "subscription-payment-attempt",
+                payload: { signature: info.signature, slot: info.slot, type: "subscription-payment-attempt", sourceAddress: address },
+                status: "received" as const
+              }
+            };
+          }
+
+          const transaction = await readSolanaRpcWithProviders<FinalizedTransaction>(
+            "getTransaction",
+            [info.signature, { commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }],
+            providers
+          );
+          if (!transaction) return { ready: false };
+          const bindingError = getWebhookTransactionBindingError({
+            requestedSignature: info.signature,
+            expectedSlot: String(info.slot),
+            accountAddress: address,
+            transaction
+          });
+          if (bindingError) return { ready: false };
+
+          const canonical = transaction as unknown as CanonicalTransactionLike;
+          const payrollEvent = payrollProgramId
+            ? findSupportedPayrollEvent(canonical, payrollProgramId)
+            : null;
+          const destination = findSystemTransferDestination(canonical);
+          const gasTank = destination ? await getWorkspaceGasTankByAddress(db, destination) : null;
+          const transferSource = destination && gasTank
+            ? signedSystemTransferSource(canonical, destination)
+            : null;
+          const eventType = payrollEvent
+            ? "payroll-" + payrollEvent
+            : gasTank && transferSource ? "gas-tank-funding" : null;
+          if (!eventType) return { ready: true, event: null };
+
+          const event: CanonicalScanEvent = {
+            provider: "canonical-rpc-scanner",
+            providerEventId: info.signature,
+            transactionSignature: info.signature,
+            transactionSlot: String(info.slot),
+            accountAddress: address,
+            eventType,
+            payload: {
+              signature: info.signature, slot: info.slot, type: eventType,
+              sourceAddress: transferSource ?? address
+            },
+            status: "received"
+          };
+          return { ready: true, event };
+        }
+      });
+      if (!page) continue;
+      const now = new Date();
+      await persistCanonicalReconciliationScanPage(db, {
+        ...page.cursor,
+        events: page.events.map((event) => ({ ...event, receivedAt: now })),
+        now
+      });
+    } catch {
+      // Failed pages leave both the durable cursor and event queue untouched for the next scheduled run.
+      continue;
+    }
+  }
+}
+
 export default async function processSolanaWebhooks() {
   const appConfig = parseConfig(process.env);
-  const { providers, payrollProgramId } = configuredRpc();
+  const { providers, payrollProgramId, wrappedMint, subscriptionRecipient } = configuredRpc();
   const { db, client } = createDatabase(appConfig.DATABASE_URL);
   try {
+    try {
+      await discoverMissingCanonicalEvents(db, providers, payrollProgramId, subscriptionRecipient);
+    } catch {
+      console.error(JSON.stringify({ event: "canonical_event_scanner_deferred" }));
+    }
     const events = await claimDueSolanaWebhookEvents(db, {
       limit: 5,
       leaseMilliseconds: 60_000
     });
     const results = await Promise.allSettled(
       events.map((event) =>
-        reconcileEvent(db, event, providers, payrollProgramId, new Date())
+        reconcileEvent(db, event, providers, payrollProgramId, wrappedMint, new Date())
       )
     );
     const failures = results.filter((result) => result.status === "rejected");

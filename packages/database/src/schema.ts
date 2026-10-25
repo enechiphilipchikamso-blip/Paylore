@@ -1198,6 +1198,18 @@ export const solanaWebhookEvents =
     ]
   );
 
+export const solanaReconciliationCursors = pgTable(
+  "solana_reconciliation_cursors",
+  {
+    address: text("address").primaryKey(),
+    highWaterSignature: text("high_water_signature"),
+    backfillBeforeSignature: text("backfill_before_signature"),
+    backfillUntilSignature: text("backfill_until_signature"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  }
+);
+
+
 export const workspaceLedgerEntries =
   pgTable(
     "workspace_ledger_entries",
@@ -1451,42 +1463,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -1746,42 +1723,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -2036,42 +1978,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -2331,42 +2238,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -2621,42 +2493,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -2916,42 +2753,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -3210,42 +3012,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -3505,42 +3272,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -3795,42 +3527,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -4090,42 +3787,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -4380,42 +4042,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -4675,42 +4302,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -4965,42 +4557,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -5260,42 +4817,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -5555,42 +5077,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(
@@ -5850,42 +5337,7 @@ export const payrollRecoveries =
     ]
   );
 
-export const solanaWebhookEvents =
-  pgTable(
-    "solana_webhook_events",
-    {
-      id: uuid("id").defaultRandom().primaryKey(),
-      provider: text("provider").notNull(),
-      providerEventId: text("provider_event_id").notNull(),
-      transactionSignature: text("transaction_signature"),
-      accountAddress: text("account_address"),
-      eventType: text("event_type"),
-      payload: jsonb("payload").notNull(),
-      status: text("status").notNull().default("received"),
-      attempts: integer("attempts").notNull().default(0),
-      nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-      lastErrorCode: text("last_error_code"),
-      transactionSlot: text("transaction_slot"),
-      finalizedAt: timestamp("finalized_at", { withTimezone: true }),
-      receivedAt: timestamp("received_at", { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      processedAt: timestamp("processed_at", { withTimezone: true })
-    },
-    (table) => [
-      uniqueIndex("solana_webhook_events_provider_event_uq").on(
-        table.provider,
-        table.providerEventId
-      ),
-      index("solana_webhook_events_status_retry_idx").on(
-        table.status,
-        table.nextAttemptAt
-      ),
-      index("solana_webhook_events_signature_idx").on(
-        table.transactionSignature
-      )
-    ]
-  );
+
 
 export const workspaceLedgerEntries =
   pgTable(

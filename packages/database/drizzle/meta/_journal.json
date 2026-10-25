@@ -85,6 +85,13 @@
       "when": 1792860000000,
       "tag": "0011_payroll_recovery_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792941600000,
+      "tag": "0012_solana_reconciliation_cursors",
+      "breakpoints": true
     }
   ]
 }

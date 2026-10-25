@@ -6,7 +6,7 @@ import {
   getAddressEncoder,
   getProgramDerivedAddress
 } from "@solana/kit";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { loadPayloreConfig } from "../config";
 import { readSolanaRpc } from "./rpc";
 
@@ -387,6 +387,19 @@ export async function getFinalizedPayrollClaimState(input: {
   }
 }
 
+/** Derives the reserve token account from the verified authority and configured mint. */
+export async function derivePayrollReserveTokenAccount(
+  reserveAuthorityAddress: string,
+  mint: string
+): Promise<string> {
+  const [tokenAddress] = await findAssociatedTokenPda({
+    owner: address(reserveAuthorityAddress),
+    mint: address(mint),
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+  });
+  return tokenAddress;
+}
+
 export async function verifyPayrollRecoveryTransaction(input: {
   signature: string;
   authorityAddress: string;
@@ -499,7 +512,6 @@ export async function verifyPayrollRecoveryTransaction(input: {
     }
     if (
       instruction.programId === programId &&
-      sameBytes(data, recoverDiscriminator) === false &&
       data.length === 40 &&
       sameBytes(data.subarray(0, 8), recoverDiscriminator) &&
       sameBytes(data.subarray(8), reasonCommitment) &&

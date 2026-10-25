@@ -6,7 +6,8 @@ export default defineConfig({
     include: [
       "src/**/*.test.ts",
       "../../packages/database/src/repositories.subscription-reminders.test.ts",
-      "../../packages/database/src/retention-policy.subscription-reminders.test.ts"
+      "../../packages/database/src/retention-policy.subscription-reminders.test.ts",
+      "../../packages/database/src/repositories.canonical-reconciliation.test.ts"
     ]
   }
 });
