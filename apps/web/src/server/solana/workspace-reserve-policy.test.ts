@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { address, getAddressEncoder } from "@solana/kit";
 import { createHash } from "node:crypto";
 import {
-  hasApprovedConfidentialTransferAccount,
+  classifyReserveFundingState, hasApprovedConfidentialTransferAccount,
   verifyWorkspaceProgramState
 } from "./workspace-reserve-policy";
 
@@ -79,5 +79,26 @@ describe("workspace reserve program account identity", () => {
     expect(hasApprovedConfidentialTransferAccount(token, {
       owner: "OtherWallet", mint: "WrappedMint"
     })).toBe(false);
+  });
+
+  it("distinguishes unfunded, public, pending, and confidentially available reserve balances", () => {
+    const cases = [
+      { publicBalanceBaseUnits: "0", availableBalanceBaseUnits: "0", pendingBalanceBaseUnits: "0", expected: "unfunded" },
+      { publicBalanceBaseUnits: "1250000", availableBalanceBaseUnits: "0", pendingBalanceBaseUnits: "0", expected: "public_funds_available" },
+      { publicBalanceBaseUnits: "0", availableBalanceBaseUnits: "0", pendingBalanceBaseUnits: "25", expected: "pending_confidential_balance" },
+      { publicBalanceBaseUnits: "0", availableBalanceBaseUnits: "25", pendingBalanceBaseUnits: "0", expected: "confidential_funds_available" }
+    ] as const;
+    for (const { expected, ...balances } of cases) {
+      expect(classifyReserveFundingState(balances)).toBe(expected);
+    }
+  });
+
+  it("rejects malformed or negative balance evidence", () => {
+    expect(() => classifyReserveFundingState({
+      publicBalanceBaseUnits: "-1", availableBalanceBaseUnits: "0", pendingBalanceBaseUnits: "0"
+    })).toThrow(/public balance is invalid/);
+    expect(() => classifyReserveFundingState({
+      publicBalanceBaseUnits: "01", availableBalanceBaseUnits: "0", pendingBalanceBaseUnits: "0"
+    })).toThrow(/public balance is invalid/);
   });
 });

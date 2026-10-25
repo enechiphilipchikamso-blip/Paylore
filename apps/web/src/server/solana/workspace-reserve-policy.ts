@@ -81,3 +81,31 @@ export function hasApprovedConfidentialTransferAccount(
     extension?.approved === true &&
     extension.allowConfidentialCredits === true;
 }
+
+
+export type ReserveFundingState =
+  | "unfunded"
+  | "public_funds_available"
+  | "pending_confidential_balance"
+  | "confidential_funds_available";
+
+/** Classifies only canonical integer balances read from finalized reserve account state. */
+export function classifyReserveFundingState(input: {
+  publicBalanceBaseUnits: string;
+  availableBalanceBaseUnits: string;
+  pendingBalanceBaseUnits: string;
+}): ReserveFundingState {
+  const parseBalance = (value: string, label: string): bigint => {
+    if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+      throw new Error(`The reserve ${label} balance is invalid.`);
+    }
+    return BigInt(value);
+  };
+  const publicBalance = parseBalance(input.publicBalanceBaseUnits, "public");
+  const availableBalance = parseBalance(input.availableBalanceBaseUnits, "available confidential");
+  const pendingBalance = parseBalance(input.pendingBalanceBaseUnits, "pending confidential");
+  if (availableBalance > 0n) return "confidential_funds_available";
+  if (pendingBalance > 0n) return "pending_confidential_balance";
+  if (publicBalance > 0n) return "public_funds_available";
+  return "unfunded";
+}
