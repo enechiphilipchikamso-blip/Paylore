@@ -1,15 +1,23 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import type { Database } from "./client";
 import {
   cleanupEligibleContributorAssociations,
   permanentlyDeleteEligibleWorkspace
 } from "./repositories";
-import { workspaceDeletionAudit } from "./schema";
+import {
+  payrollAllocations,
+  payrollRecoveries,
+  payrollRuns,
+  workspaceDeletionAudit,
+  workspaces
+} from "./schema";
 
 type Write = { method: string; value?: unknown };
 type QueryObservations = { limits: number[]; locks: string[] };
+type DeletePredicate = { table: unknown; condition: SQL };
 
 function query(result: unknown, observations: QueryObservations) {
   const builder: Record<string, any> = {};
@@ -76,14 +84,20 @@ function createTransaction(
   deleteResults: unknown[][],
   writes: Write[],
   observations: QueryObservations,
-  deletedTables: unknown[]
+  deletedTables: unknown[],
+  deletePredicates: DeletePredicate[]
 ) {
   return {
     select: vi.fn(() => query(selectResults.shift() ?? [], observations)),
     insert: vi.fn(() => mutation([], writes, "insert")),
     delete: vi.fn((table: unknown) => {
       deletedTables.push(table);
-      return mutation(deleteResults.shift() ?? [], writes, "delete");
+      const builder = mutation(deleteResults.shift() ?? [], writes, "delete");
+      builder.where = vi.fn((condition: SQL) => {
+        deletePredicates.push({ table, condition });
+        return builder;
+      });
+      return builder;
     })
   };
 }
@@ -95,6 +109,7 @@ function createPurgeDb(
   const writes: Write[] = [];
   const observations: QueryObservations = { limits: [], locks: [] };
   const deletedTables: unknown[] = [];
+  const deletePredicates: DeletePredicate[] = [];
   let transactionTail: Promise<unknown> = Promise.resolve();
 
   const db = {
@@ -106,7 +121,8 @@ function createPurgeDb(
           [...next.deleteResults],
           writes,
           observations,
-          deletedTables
+          deletedTables,
+          deletePredicates
         );
         return callback(tx);
       });
@@ -119,7 +135,7 @@ function createPurgeDb(
     })
   } as unknown as Database;
 
-  return { db, writes, observations, deletedTables };
+  return { db, writes, observations, deletedTables, deletePredicates };
 }
 
 function successfulPurgeResult() {
@@ -179,7 +195,7 @@ describe("workspace deletion purge contract", () => {
     expect(migration).toContain('"workspace_id" uuid PRIMARY KEY NOT NULL');
     expect(migration).not.toMatch(/FOREIGN KEY|REFERENCES\s+"workspaces"/i);
 
-    const { db, writes, deletedTables, observations } = createPurgeDb([
+    const { db, writes, deletedTables, observations, deletePredicates } = createPurgeDb([
       successfulPurgeResult()
     ]);
     await expect(permanentlyDeleteEligibleWorkspace(db, {
@@ -212,7 +228,21 @@ describe("workspace deletion purge contract", () => {
         set: expect.objectContaining({ outcome: "deleted", completedAt: now })
       })
     });
-    expect(deletedTables).toHaveLength(4);
+    expect(deletedTables).toEqual([
+      payrollRecoveries,
+      payrollAllocations,
+      payrollRuns,
+      workspaces
+    ]);
+    expect(deletePredicates).toHaveLength(4);
+    const dialect = new PgDialect();
+    for (const { table, condition } of deletePredicates) {
+      const query = dialect.sqlToQuery(condition);
+      expect(query.params).toContain("workspace-a");
+      expect(query.sql).toContain(
+        table === workspaces ? '"id" = $1' : '"workspace_id" = $1'
+      );
+    }
     expect(observations.locks).toContain("update");
   });
 
