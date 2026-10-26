@@ -87,7 +87,7 @@ describe("confidential payroll settlement repository", () => {
     expect(db.tx.update).not.toHaveBeenCalled();
   });
 
-  it("serializes different allocations against the same reserve", async () => {
+  it("blocks a new claim while another allocation is recovering", async () => {
     const db = fakeDatabase([
       [{ workspaceId: common.workspaceId }],
       [{
@@ -95,7 +95,7 @@ describe("confidential payroll settlement repository", () => {
         transactionSignature: creationSignature, settlementSignature: null,
         settlementSourceAvailableBefore: null
       }],
-      [{ id: "allocation-a" }]
+      [{ id: "allocation-a", status: "recovery_pending" }]
     ]);
     await expect(beginPayrollSettlementAttempt(db.db, {
       workspaceId: common.workspaceId, runId: common.runId, allocationId: "allocation-b",
@@ -104,6 +104,19 @@ describe("confidential payroll settlement repository", () => {
     })).resolves.toEqual({ status: "workspace_busy" });
     expect(db.tx.update).not.toHaveBeenCalled();
   });
+  it("refuses to start a claim when that allocation is already reserved for recovery", async () => {
+    const db = fakeDatabase([
+      [{ workspaceId: common.workspaceId }],
+      [{ id: common.allocationId, claimAddress: common.claimAddress, status: "recovery_pending", transactionSignature: creationSignature, settlementSignature: null, settlementSourceAvailableBefore: null }]
+    ]);
+    await expect(beginPayrollSettlementAttempt(db.db, {
+      workspaceId: common.workspaceId, runId: common.runId, allocationId: common.allocationId,
+      claimAddress: common.claimAddress, claimCreationSignature: creationSignature, sourceAvailableBefore: "9000000"
+    })).resolves.toEqual({ status: "conflict" });
+    expect(db.tx.update).not.toHaveBeenCalled();
+    expect(db.tx.insert).not.toHaveBeenCalled();
+  });
+
 });
 
 

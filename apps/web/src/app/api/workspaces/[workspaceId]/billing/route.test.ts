@@ -181,4 +181,16 @@ describe("workspace billing role/read-write matrix", () => {
     expect(nonMember.status).toBe(403);
     expect(mocks.getWorkspaceSubscription).not.toHaveBeenCalled();
   });
+  it("surfaces a replayed payment as a duplicate and binds verification to the session wallet", async () => {
+    mocks.applyVerifiedSubscriptionPayment.mockResolvedValue({ duplicate: true, status: "active", periodEnd: new Date("2026-11-25T00:00:00.000Z") });
+    const response = await POST(writeRequest("POST", { signature }), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ status: "active", duplicate: true });
+    expect(mocks.verifySubscriptionPayment).toHaveBeenCalledWith(signature, "wallet-a");
+    expect(mocks.applyVerifiedSubscriptionPayment).toHaveBeenCalledWith({}, {
+      workspaceId: "workspace-a", userId: "user-a", signature,
+      amountBaseUnits: "49000000", mint: "usdc-mint", recipient: "subscription-recipient"
+    });
+  });
+
 });

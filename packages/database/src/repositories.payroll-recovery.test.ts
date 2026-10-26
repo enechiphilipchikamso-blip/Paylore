@@ -139,4 +139,11 @@ describe("payroll recovery durable reconciliation", () => {
     expect(db.tx.update).not.toHaveBeenCalled();
     expect(db.tx.insert).not.toHaveBeenCalled();
   });
+  it("refuses recovery after claim settlement has reserved the allocation", async () => {
+    const db = fakeDatabase([[{ ...allocation, status: "settlement_pending" }], [{ ...escrow, status: "settlement_pending" }], []]);
+    await expect(recordPayrollRecovery(db.db, common)).resolves.toEqual({ status: "conflict" });
+    expect(db.tx.update).not.toHaveBeenCalled();
+    expect(db.tx.insert).not.toHaveBeenCalled();
+  });
+
 });

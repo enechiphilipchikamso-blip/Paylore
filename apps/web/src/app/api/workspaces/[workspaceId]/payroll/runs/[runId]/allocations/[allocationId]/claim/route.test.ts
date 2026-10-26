@@ -132,4 +132,14 @@ describe("confidential payroll claim route", () => {
     mocks.getSessionState.mockResolvedValue({ status: "authenticated", session: { userId: "user-a", walletAddress: null } });
     expect((await POST(request(), context)).status).toBe(403);
   });
+  it("denies access when the route workspace has no matching membership", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const foreignContext = { params: Promise.resolve({ workspaceId: "workspace-b", runId: "run-a", allocationId: "allocation-a" }) };
+    const response = await POST(request(), foreignContext);
+    expect(response.status).toBe(403);
+    expect(mocks.getWorkspaceForUser).toHaveBeenCalledWith({}, "user-a", "workspace-b");
+    expect(mocks.getWorkspacePayrollRun).not.toHaveBeenCalled();
+    expect(mocks.settleContributorPayrollAllocation).not.toHaveBeenCalled();
+  });
+
 });

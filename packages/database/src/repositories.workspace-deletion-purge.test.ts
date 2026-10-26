@@ -337,4 +337,26 @@ describe("workspace deletion purge contract", () => {
     expect(retainedRows).toHaveLength(1);
     expect((retainedRows[0].value as Record<string, unknown>).outcome).toBe("deleted");
   });
+  const blockerMatrix: Array<{ label: string; selectResults: unknown[][]; status: string }> = [
+    { label: "open confidential account", selectResults: [[eligibleRetention], [], [{ status: "inactive" }], [], [{ contributorId: "contributor-a" }]], status: "confidential_accounts_unclosed" },
+    { label: "configured reserve", selectResults: [[eligibleRetention], [], [{ status: "inactive" }], [], [], [{ workspaceId: "workspace-a" }]], status: "reserve_closure_unverified" },
+    { label: "open payroll allocation", selectResults: [[eligibleRetention], [], [{ status: "inactive" }], [], [], [], [{ id: "allocation-open" }]], status: "outstanding_payroll_obligations" },
+    { label: "open payroll run", selectResults: [[eligibleRetention], [], [{ status: "inactive" }], [], [], [], [], [{ id: "run-open" }]], status: "outstanding_payroll_obligations" },
+    { label: "Gas Tank balance", selectResults: [[eligibleRetention], [], [{ status: "inactive" }], [{ balanceLamports: "1" }]], status: "gas_tank_funds_remain" }
+  ];
+  for (const scenario of blockerMatrix) {
+    it(`refuses destructive deletion with ${scenario.label}`, async () => {
+      const { db, writes, deletedTables } = createPurgeDb([{ selectResults: scenario.selectResults, deleteResults: [] }]);
+      await expect(permanentlyDeleteEligibleWorkspace(db, { workspaceId: "workspace-a", now }))
+        .resolves.toEqual({ status: scenario.status });
+      expect(deletedTables).toEqual([]);
+      expect(writes.some((write) =>
+        write.method === "values" && write.value && typeof write.value === "object" &&
+        (write.value as Record<string, unknown>).workspaceId === "workspace-a" &&
+        (write.value as Record<string, unknown>).outcome === "blocked" &&
+        (write.value as Record<string, unknown>).blockerCode === scenario.status
+      )).toBe(true);
+    });
+  }
+
 });

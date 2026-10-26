@@ -53,7 +53,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     if ("response" in access) return access.response;
 
     const escrow = await getPayrollClaimEscrow(access.db, workspaceId, allocationId);
-    if (!escrow || escrow.payrollRunId !== runId) {
+    if (!escrow || escrow.workspaceId !== workspaceId || escrow.payrollRunId !== runId) {
       return NextResponse.json({ status: "not_available" }, {
         headers: { "Cache-Control": "no-store" }
       });

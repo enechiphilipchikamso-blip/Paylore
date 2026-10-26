@@ -263,4 +263,19 @@ describe("verified subscription payment ledger and notifications", () => {
     });
   });
 
+  it("rejects reuse of a payment signature by a different workspace or user", async () => {
+    const db = fakeDatabase();
+    const input = {
+      workspaceId: "workspace-a", userId: "admin-a", signature: "cross-workspace-payment-signature",
+      mint: "circle-devnet-usdc-mint", recipient: "configured-subscription-recipient",
+      amountBaseUnits: "49000000", now: new Date("2026-10-24T08:00:00.000Z")
+    };
+    await expect(applyVerifiedSubscriptionPayment(db.db, input)).resolves.toMatchObject({ duplicate: false, status: "active" });
+    await expect(applyVerifiedSubscriptionPayment(db.db, { ...input, workspaceId: "workspace-b", userId: "admin-b" }))
+      .rejects.toThrow("This payment signature has already been used.");
+    expect(db.paymentRows).toHaveLength(1);
+    expect(db.ledgerRows).toHaveLength(1);
+    expect(db.notificationRows).toHaveLength(2);
+  });
+
 });

@@ -166,4 +166,12 @@ describe("workspace retention role/read-write matrix", () => {
     expect(nonMember.status).toBe(403);
     expect(mocks.getWorkspaceGasTankSnapshot).not.toHaveBeenCalled();
   });
+  it("does not present workspace deletion as complete while payroll obligations remain", async () => {
+    mocks.permanentlyDeleteEligibleWorkspace.mockResolvedValue({ status: "outstanding_payroll_obligations" });
+    const response = await POST(writeRequest(bodyFor("finalize")), context);
+    expect(response.status).toBe(423);
+    await expect(response.json()).resolves.toEqual({ error: "outstanding_payroll_obligations" });
+    expect(mocks.permanentlyDeleteEligibleWorkspace).toHaveBeenCalledWith({}, { workspaceId: "workspace-a" });
+  });
+
 });

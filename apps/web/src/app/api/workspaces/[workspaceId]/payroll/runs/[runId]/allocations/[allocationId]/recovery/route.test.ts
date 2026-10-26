@@ -211,4 +211,27 @@ describe("payroll recovery route", () => {
       retryable: false
     });
   });
+  it("does not disclose an escrow returned from a different workspace", async () => {
+    const foreignContext = { params: Promise.resolve({ workspaceId: "workspace-b", runId: "run-a", allocationId: "allocation-a" }) };
+    const response = await GET(new Request("https://paylore.test/api/recovery"), { params: foreignContext.params });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "not_available" });
+    expect(mocks.getPayrollClaimEscrow).toHaveBeenCalledWith({}, "workspace-b", "allocation-a");
+  });
+
+  it("does not disclose recovery state when the run does not match", async () => {
+    const response = await GET(new Request("https://paylore.test/api/recovery"), {
+      params: Promise.resolve({ workspaceId: "workspace-a", runId: "run-b", allocationId: "allocation-a" })
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "not_available" });
+  });
+
+  it("rejects recovery submissions from non-admin workspace roles", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue({ role: "finance_auditor" });
+    const response = await POST(request({ reason: "payroll_correction" }), { params: routeContext.params });
+    expect(response.status).toBe(403);
+    expect(mocks.recoverPayrollAllocation).not.toHaveBeenCalled();
+  });
+
 });
