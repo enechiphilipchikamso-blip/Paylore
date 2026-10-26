@@ -51,6 +51,9 @@ export default async function WorkspaceBillingPage({
   if (!workspace) {
     notFound();
   }
+  if (workspace.role === "contributor") {
+    notFound();
+  }
 
   const [subscription, payments] = await Promise.all([
     getWorkspaceSubscription(db, workspaceId),
