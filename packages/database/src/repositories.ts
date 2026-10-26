@@ -4046,6 +4046,18 @@ export async function permanentlyDeleteEligibleWorkspace(
           }
         });
     };
+
+    // The audit row survives workspace cascades; keep a completed purge terminal on retries.
+    const priorAuditRows = await tx
+      .select({ outcome: workspaceDeletionAudit.outcome })
+      .from(workspaceDeletionAudit)
+      .where(eq(workspaceDeletionAudit.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (priorAuditRows[0]?.outcome === "deleted") {
+      return { status: "deleted" as const };
+    }
+
     if (!retention?.deletionScheduledAt || retention.deletionCanceledAt) {
       await recordOutcome("blocked", "request_required");
       return { status: "request_required" as const };
