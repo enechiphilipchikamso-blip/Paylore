@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "./client";
-import { archiveExpiredWorkspaceSubscriptions, cancelWorkspaceDeletion, requestWorkspaceDeletion } from "./repositories";
+import { archiveExpiredWorkspaceSubscriptions, cancelWorkspaceDeletion, createWorkspaceRetentionNotice, requestWorkspaceDeletion } from "./repositories";
 
 type Write = { method: string; value?: unknown };
 function query(result: unknown) {
@@ -78,7 +78,7 @@ describe("workspace deletion operational ledger", () => {
   it("records cancellation only after the pending deletion schedule was atomically canceled", async () => {
     const now = new Date("2026-10-25T12:00:00.000Z");
     const writes: Write[] = [];
-    const selectResults: unknown[][] = [[{ userId: "admin-a" }]];
+    const selectResults: unknown[][] = [[{ userId: "admin-a" }, { userId: "contributor-a" }]];
     const insertResults: unknown[][] = [[], []];
     const updated = [{ workspaceId: "workspace-a" }];
     const updateBuilder: Record<string, any> = {};
@@ -116,14 +116,78 @@ describe("workspace deletion operational ledger", () => {
     const notices = writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
       .filter((value): value is Record<string, unknown> => Boolean(value) &&
         typeof value === "object" && "eventKey" in value);
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.recipientKey)).toEqual(["admin-a", "contributor-a"]);
+    expect(notices.every((notice) =>
+      notice.eventKey === `workspace-deletion-canceled:${now.getTime()}`
+    )).toBe(true);
     expect(notices).toContainEqual(expect.objectContaining({
       recipientKey: "admin-a",
-      eventKey: `workspace-deletion-canceled:${now.getTime()}`,
+      title: "Workspace deletion request canceled",
+      body: "The pending application-data deletion request was canceled. No application data was deleted."
+    }));
+    expect(notices).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-a",
       title: "Workspace deletion request canceled"
     }));
   });
 });
 
+
+describe("workspace retention notices", () => {
+  it("notifies administrators and contributors once per inactivity milestone without member-specific data", async () => {
+    const now = new Date("2026-10-25T12:00:00.000Z");
+    const lastActivityAt = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000);
+    const writes: Write[] = [];
+    const members = [{ userId: "admin-a" }, { userId: "contributor-a" }];
+    const selectResults: unknown[][] = [
+      [{ lastActivityAt, lastNoticeDay: 0 }],
+      members,
+      [{ lastActivityAt, lastNoticeDay: 30 }]
+    ];
+    const tx = {
+      select: vi.fn(() => query(selectResults.shift() ?? [])),
+      insert: vi.fn(() => writeBuilder(writes, [{ id: "notice-admin" }, { id: "notice-contributor" }])),
+      update: vi.fn(() => writeBuilder(writes, []))
+    };
+    const db = {
+      transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))
+    } as unknown as Database;
+    const input = {
+      workspaceId: "workspace-a",
+      lastActivityAt,
+      day: 30,
+      title: "Workspace inactivity notice",
+      body: "Your workspace has been inactive for 30 days.",
+      destination: "/workspace/workspace-a/settings/deletion",
+      now
+    };
+
+    await expect(createWorkspaceRetentionNotice(db, input)).resolves.toEqual({
+      created: 2,
+      advanced: true
+    });
+    await expect(createWorkspaceRetentionNotice(db, input)).resolves.toEqual({
+      created: 0,
+      advanced: false
+    });
+
+    const notices = writes.flatMap((write) => Array.isArray(write.value) ? write.value : [write.value])
+      .filter((value): value is Record<string, unknown> => Boolean(value) &&
+        typeof value === "object" && "eventKey" in value);
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.recipientKey)).toEqual(["admin-a", "contributor-a"]);
+    expect(notices.every((notice) =>
+      notice.workspaceId === "workspace-a" &&
+      notice.eventKey === `workspace-inactivity:${lastActivityAt.getTime()}:30` &&
+      notice.category === "Data Retention & Deletion" &&
+      notice.title === input.title &&
+      notice.body === input.body &&
+      !("amountBaseUnits" in notice) &&
+      !("walletAddress" in notice)
+    )).toBe(true);
+  });
+});
 
 describe("workspace archive notifications", () => {
   it("notifies workspace members once when an expired subscription is archived", async () => {

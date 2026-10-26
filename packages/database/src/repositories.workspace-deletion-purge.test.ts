@@ -11,6 +11,7 @@ import {
   payrollAllocations,
   payrollRecoveries,
   payrollRuns,
+  userNotifications,
   workspaceDeletionAudit,
   workspaces
 } from "./schema";
@@ -47,6 +48,10 @@ function mutation(result: unknown[], writes: Write[], method: string) {
     writes.push({ method: "onConflictDoUpdate", value });
     return builder;
   });
+  builder.onConflictDoNothing = vi.fn((value: unknown) => {
+    writes.push({ method: "onConflictDoNothing", value });
+    return builder;
+  });
   builder.where = vi.fn(() => builder);
   builder.returning = vi.fn(() => builder);
   builder.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -75,7 +80,13 @@ function eligiblePurgeSelectResults() {
     [],
     [],
     [],
-    []
+    [],
+    [{ name: "Workspace Alpha" }],
+    [
+      { userId: "admin-a", role: "organization_admin" },
+      { userId: "contributor-a", role: "contributor" },
+      { userId: "finance-a", role: "finance_auditor" }
+    ]
   ] as unknown[][];
 }
 
@@ -195,6 +206,17 @@ describe("workspace deletion purge contract", () => {
     expect(migration).toContain('"workspace_id" uuid PRIMARY KEY NOT NULL');
     expect(migration).not.toMatch(/FOREIGN KEY|REFERENCES\s+"workspaces"/i);
 
+    const notificationConfig = getTableConfig(userNotifications);
+    const notificationMigration = readFileSync(
+      new URL("../drizzle/0013_user_notifications.sql", import.meta.url),
+      "utf8"
+    );
+    expect(notificationConfig.name).toBe("user_notifications");
+    expect(notificationConfig.foreignKeys).toHaveLength(0);
+    expect(notificationConfig.columns.map((column) => column.name)).toContain("workspace_name");
+    expect(notificationMigration).toContain('CREATE TABLE "user_notifications"');
+    expect(notificationMigration).not.toMatch(/FOREIGN KEY|REFERENCES\s+"workspaces"/i);
+
     const { db, writes, deletedTables, observations, deletePredicates } = createPurgeDb([
       successfulPurgeResult()
     ]);
@@ -244,6 +266,28 @@ describe("workspace deletion purge contract", () => {
       );
     }
     expect(observations.locks).toContain("update");
+    const retainedNotificationBatch = writes.find((write) =>
+      Array.isArray(write.value) && write.value.some((value) =>
+        Boolean(value) && typeof value === "object" && "eventKey" in value
+      )
+    )?.value as Array<Record<string, unknown>> | undefined;
+    expect(retainedNotificationBatch).toHaveLength(2);
+    expect(retainedNotificationBatch?.map((notice) => notice.recipientKey)).toEqual([
+      "admin-a",
+      "contributor-a"
+    ]);
+    expect(retainedNotificationBatch?.every((notice) =>
+      notice.workspaceId === "workspace-a" &&
+      notice.workspaceName === "Workspace Alpha" &&
+      notice.eventKey === "workspace-deletion-completed:workspace-a" &&
+      notice.category === "Data Retention & Deletion" &&
+      notice.title === "Workspace application data deleted" &&
+      notice.body === "The workspace's Paylore application records were deleted after the 72-hour waiting period and final eligibility checks. Solana transactions, program accounts, token accounts, and other blockchain state remain." &&
+      notice.destination === "/notifications" &&
+      !("amountBaseUnits" in notice) &&
+      !("walletAddress" in notice)
+    )).toBe(true);
+    expect(retainedNotificationBatch?.some((notice) => notice.recipientKey === "finance-a")).toBe(false);
   });
 
   it("returns the prior deleted result on repeat without overwriting the retained audit outcome", async () => {

@@ -92,6 +92,13 @@
       "when": 1792941600000,
       "tag": "0012_solana_reconciliation_cursors",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792941600001,
+      "tag": "0013_user_notifications",
+      "breakpoints": true
     }
   ]
 }

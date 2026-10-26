@@ -64,6 +64,7 @@ import {
   workspaceDeletionAudit,
   workspaceMemberships,
   workspaceNotifications,
+  userNotifications,
   workspaceRetention,
   workspaces
 } from "./schema";
@@ -1305,7 +1306,8 @@ export async function listUserNotifications(
   recipientKey: string,
   limit = 100
 ) {
-  return db
+  const boundedLimit = Math.min(Math.max(limit, 1), 100);
+  const workspaceRows = await db
     .select({
       id: workspaceNotifications.id,
       workspaceId: workspaceNotifications.workspaceId,
@@ -1324,16 +1326,40 @@ export async function listUserNotifications(
     )
     .where(eq(workspaceNotifications.recipientKey, recipientKey))
     .orderBy(desc(workspaceNotifications.createdAt), desc(workspaceNotifications.id))
-    .limit(Math.min(Math.max(limit, 1), 100));
+    .limit(boundedLimit);
+  const retainedRows = await db
+    .select({
+      id: userNotifications.id,
+      workspaceId: userNotifications.workspaceId,
+      workspaceName: userNotifications.workspaceName,
+      category: userNotifications.category,
+      title: userNotifications.title,
+      body: userNotifications.body,
+      destination: userNotifications.destination,
+      readAt: userNotifications.readAt,
+      createdAt: userNotifications.createdAt
+    })
+    .from(userNotifications)
+    .where(eq(userNotifications.recipientKey, recipientKey))
+    .orderBy(desc(userNotifications.createdAt), desc(userNotifications.id))
+    .limit(boundedLimit);
+
+  return [...workspaceRows, ...retainedRows]
+    .sort((left, right) =>
+      right.createdAt.getTime() - left.createdAt.getTime() ||
+      right.id.localeCompare(left.id)
+    )
+    .slice(0, boundedLimit);
 }
 
 export async function markUserNotificationRead(
   db: Database,
   input: { recipientKey: string; notificationId: string; now?: Date }
 ) {
-  const rows = await db
+  const now = input.now ?? new Date();
+  const workspaceRows = await db
     .update(workspaceNotifications)
-    .set({ readAt: input.now ?? new Date() })
+    .set({ readAt: now })
     .where(
       and(
         eq(workspaceNotifications.id, input.notificationId),
@@ -1342,24 +1368,50 @@ export async function markUserNotificationRead(
       )
     )
     .returning({ id: workspaceNotifications.id });
-  return rows[0] ?? null;
+  if (workspaceRows[0]) return workspaceRows[0];
+
+  const retainedRows = await db
+    .update(userNotifications)
+    .set({ readAt: now })
+    .where(
+      and(
+        eq(userNotifications.id, input.notificationId),
+        eq(userNotifications.recipientKey, input.recipientKey),
+        isNull(userNotifications.readAt)
+      )
+    )
+    .returning({ id: userNotifications.id });
+  return retainedRows[0] ?? null;
 }
 
 export async function markAllUserNotificationsRead(
   db: Database,
   input: { recipientKey: string; now?: Date }
 ) {
-  const rows = await db
-    .update(workspaceNotifications)
-    .set({ readAt: input.now ?? new Date() })
-    .where(
-      and(
-        eq(workspaceNotifications.recipientKey, input.recipientKey),
-        isNull(workspaceNotifications.readAt)
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const workspaceRows = await tx
+      .update(workspaceNotifications)
+      .set({ readAt: now })
+      .where(
+        and(
+          eq(workspaceNotifications.recipientKey, input.recipientKey),
+          isNull(workspaceNotifications.readAt)
+        )
       )
-    )
-    .returning({ id: workspaceNotifications.id });
-  return rows.length;
+      .returning({ id: workspaceNotifications.id });
+    const retainedRows = await tx
+      .update(userNotifications)
+      .set({ readAt: now })
+      .where(
+        and(
+          eq(userNotifications.recipientKey, input.recipientKey),
+          isNull(userNotifications.readAt)
+        )
+      )
+      .returning({ id: userNotifications.id });
+    return workspaceRows.length + retainedRows.length;
+  });
 }
 
 export async function listWorkspaceContributors(
@@ -1795,7 +1847,11 @@ export async function completeContributorOffboarding(
   const disposition = getContributorDepartureDisposition(Boolean(input.closeTransactionSignature));
   return db.transaction(async (tx) => {
     const matchingContributor = await tx
-      .select({ id: contributors.id, lifecycle: contributors.lifecycle })
+      .select({
+        id: contributors.id,
+        displayName: contributors.displayName,
+        lifecycle: contributors.lifecycle
+      })
       .from(contributors)
       .where(
         and(
@@ -1941,22 +1997,58 @@ export async function completeContributorOffboarding(
     await tx
       .insert(workspaceNotifications)
       .values({
-      workspaceId: input.workspaceId,
-      recipientKey: input.userId,
-      eventKey: `contributor-offboarding-completed:${input.contributorId}`,
-      category: "Recovery & Offboarding",
-      title: "You have left the workspace",
-      body: disposition.notificationBody,
-      destination: "/notifications",
-      createdAt: now
+        workspaceId: input.workspaceId,
+        recipientKey: input.userId,
+        eventKey: `contributor-offboarding-completed:${input.contributorId}`,
+        category: "Recovery & Offboarding",
+        title: "You have left the workspace",
+        body: disposition.notificationBody,
+        destination: "/notifications",
+        createdAt: now
       })
       .onConflictDoNothing({
-      target: [
-        workspaceNotifications.workspaceId,
-        workspaceNotifications.eventKey,
-        workspaceNotifications.recipientKey
-      ]
+        target: [
+          workspaceNotifications.workspaceId,
+          workspaceNotifications.eventKey,
+          workspaceNotifications.recipientKey
+        ]
       });
+
+    const adminMembers = await tx
+      .select({ userId: workspaceMemberships.userId })
+      .from(workspaceMemberships)
+      .where(
+        and(
+          eq(workspaceMemberships.workspaceId, input.workspaceId),
+          eq(workspaceMemberships.role, "organization_admin")
+        )
+      );
+    if (adminMembers.length > 0) {
+      const accountOutcome = disposition.manualAccountClose
+        ? `${matchedContributor.displayName} left the workspace and confidential-account closure was recorded.`
+        : `${matchedContributor.displayName} left the workspace without closing their confidential account. The account remains under the contributor's control.`;
+      await tx
+        .insert(workspaceNotifications)
+        .values(
+          adminMembers.map((member) => ({
+            workspaceId: input.workspaceId,
+            recipientKey: member.userId,
+            eventKey: `contributor-offboarding-completed:${input.contributorId}`,
+            category: "Recovery & Offboarding",
+            title: "Contributor departure completed",
+            body: accountOutcome,
+            destination: `/workspace/${input.workspaceId}/contributors`,
+            createdAt: now
+          }))
+        )
+        .onConflictDoNothing({
+          target: [
+            workspaceNotifications.workspaceId,
+            workspaceNotifications.eventKey,
+            workspaceNotifications.recipientKey
+          ]
+        });
+    }
     return "completed";
   });
 }
@@ -1996,6 +2088,7 @@ export async function cleanupEligibleContributorAssociations(
       const lockedContributor = await tx
         .select({
           id: contributors.id,
+          displayName: contributors.displayName,
           identityWalletAddress: contributors.identityWalletAddress,
           lifecycle: contributors.lifecycle
         })
@@ -2045,7 +2138,39 @@ export async function cleanupEligibleContributorAssociations(
       const eligibleAt = new Date(
         closedAt.getTime() + CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS
       );
+      const adminRecipients = await tx
+        .select({ userId: workspaceMemberships.userId })
+        .from(workspaceMemberships)
+        .where(
+          and(
+            eq(workspaceMemberships.workspaceId, candidate.workspaceId),
+            eq(workspaceMemberships.role, "organization_admin")
+          )
+        );
       if (openAllocations.length > 0) {
+        if (adminRecipients.length > 0) {
+          await tx
+            .insert(workspaceNotifications)
+            .values(
+              adminRecipients.map((member) => ({
+                workspaceId: candidate.workspaceId,
+                recipientKey: member.userId,
+                eventKey: `contributor-association-cleanup-deferred:${contributor.id}:${eligibleAt.getTime()}`,
+                category: "Recovery & Offboarding",
+                title: "Contributor association cleanup deferred",
+                body: `Cleanup for ${contributor.displayName}'s workspace association was deferred because qualifying compensation obligations remain. Resolve them before removing the association.`,
+                destination: `/workspace/${candidate.workspaceId}/contributors`,
+                createdAt: now
+              }))
+            )
+            .onConflictDoNothing({
+              target: [
+                workspaceNotifications.workspaceId,
+                workspaceNotifications.eventKey,
+                workspaceNotifications.recipientKey
+              ]
+            });
+        }
         await tx
           .insert(contributorOffboarding)
           .values({
@@ -2095,6 +2220,29 @@ export async function cleanupEligibleContributorAssociations(
             destination: "/",
             createdAt: now
           })
+          .onConflictDoNothing({
+            target: [
+              workspaceNotifications.workspaceId,
+              workspaceNotifications.eventKey,
+              workspaceNotifications.recipientKey
+            ]
+          });
+      }
+      if (adminRecipients.length > 0) {
+        await tx
+          .insert(workspaceNotifications)
+          .values(
+            adminRecipients.map((member) => ({
+              workspaceId: candidate.workspaceId,
+              recipientKey: member.userId,
+              eventKey: `contributor-association-cleanup:${contributor.id}`,
+              category: "Recovery & Offboarding",
+              title: "Contributor workspace association removed",
+              body: `${contributor.displayName}'s workspace application association was removed after the retention period. Their confidential account and on-chain state were not closed or deleted by Paylore.`,
+              destination: `/workspace/${candidate.workspaceId}/contributors`,
+              createdAt: now
+            }))
+          )
           .onConflictDoNothing({
             target: [
               workspaceNotifications.workspaceId,
@@ -4164,6 +4312,27 @@ export async function permanentlyDeleteEligibleWorkspace(
       return { status: "outstanding_payroll_obligations" as const };
     }
 
+    const workspaceNameRows = await tx
+      .select({ name: workspaces.name })
+      .from(workspaces)
+      .where(eq(workspaces.id, input.workspaceId))
+      .limit(1);
+    const closureRecipients = await tx
+      .select({
+        userId: workspaceMemberships.userId,
+        role: workspaceMemberships.role
+      })
+      .from(workspaceMemberships)
+      .where(
+        and(
+          eq(workspaceMemberships.workspaceId, input.workspaceId),
+          or(
+            eq(workspaceMemberships.role, "organization_admin"),
+            eq(workspaceMemberships.role, "contributor")
+          )
+        )
+      );
+
     await tx
       .delete(payrollRecoveries)
       .where(eq(payrollRecoveries.workspaceId, input.workspaceId));
@@ -4180,6 +4349,29 @@ export async function permanentlyDeleteEligibleWorkspace(
     if (!removed[0]) {
       await recordOutcome("blocked", "workspace_not_found");
       return { status: "workspace_not_found" as const };
+    }
+
+    const completionNotices = closureRecipients.map((recipient) => ({
+      workspaceId: input.workspaceId,
+      workspaceName: workspaceNameRows[0]?.name ?? "Former workspace",
+      recipientKey: recipient.userId,
+      eventKey: `workspace-deletion-completed:${input.workspaceId}`,
+      category: "Data Retention & Deletion",
+      title: "Workspace application data deleted",
+      body: "The workspace's Paylore application records were deleted after the 72-hour waiting period and final eligibility checks. Solana transactions, program accounts, token accounts, and other blockchain state remain.",
+      destination: "/notifications",
+      createdAt: now
+    }));
+    if (completionNotices.length > 0) {
+      await tx
+        .insert(userNotifications)
+        .values(completionNotices)
+        .onConflictDoNothing({
+          target: [
+            userNotifications.recipientKey,
+            userNotifications.eventKey
+          ]
+        });
     }
     await recordOutcome("deleted", null, now);
     return { status: "deleted" as const };

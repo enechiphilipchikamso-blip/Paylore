@@ -46,9 +46,10 @@ describe("automatic contributor association cleanup", () => {
   it("removes only the association and records the non-close disposition after 365 days with settled obligations", async () => {
     const now = new Date("2026-10-22T12:00:00.000Z");
     const db = fakeDatabase([
-      [{ id: "contributor-a", identityWalletAddress: "contributor-wallet", lifecycle: "active" }],
+      [{ id: "contributor-a", displayName: "Ada", identityWalletAddress: "contributor-wallet", lifecycle: "active" }],
       [{ closedAt: new Date(now.getTime() - 366 * 24 * 60 * 60 * 1000) }],
       [],
+      [{ userId: "admin-user" }],
       [{ userId: "contributor-user" }]
     ]);
 
@@ -57,11 +58,28 @@ describe("automatic contributor association cleanup", () => {
       deferred: 0
     });
 
-    const inserts = db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value as Record<string, unknown>);
-    const notification = inserts.find((value) => value.title === "Workspace association removed");
-    expect(notification).toMatchObject({
+    const inserts = db.mutations
+      .filter((entry) => entry.method === "insert")
+      .flatMap((entry) => Array.isArray(entry.value) ? entry.value : [entry.value]) as Record<string, unknown>[];
+    const notifications = inserts.filter((value) =>
+      value.eventKey === "contributor-association-cleanup:contributor-a"
+    );
+    expect(notifications).toHaveLength(2);
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      title: "Workspace association removed",
       body: "Workspace access has been removed after the retention period. Your confidential account has not been closed by Paylore."
-    });
+    }));
+    expect(notifications).toContainEqual(expect.objectContaining({
+      recipientKey: "admin-user",
+      title: "Contributor workspace association removed",
+      body: "Ada's workspace application association was removed after the retention period. Their confidential account and on-chain state were not closed or deleted by Paylore."
+    }));
+    expect(notifications.every((notice) =>
+      notice.category === "Recovery & Offboarding" &&
+      !("amountBaseUnits" in notice) &&
+      !("walletAddress" in notice)
+    )).toBe(true);
     const offboarding = inserts.find((value) => value.completedAt instanceof Date) as Record<string, unknown>;
     expect(offboarding).toMatchObject({
       manualAccountClose: false,
@@ -80,19 +98,28 @@ describe("automatic contributor association cleanup", () => {
   it("defers association cleanup while a qualifying allocation remains open", async () => {
     const now = new Date("2026-10-22T12:00:00.000Z");
     const db = fakeDatabase([
-      [{ id: "contributor-a", identityWalletAddress: "contributor-wallet", lifecycle: "active" }],
+      [{ id: "contributor-a", displayName: "Ada", identityWalletAddress: "contributor-wallet", lifecycle: "active" }],
       [{ closedAt: new Date(now.getTime() - 366 * 24 * 60 * 60 * 1000) }],
-      [{ id: "allocation-a" }]
+      [{ id: "allocation-a" }],
+      [{ userId: "admin-user" }]
     ]);
 
     await expect(cleanupEligibleContributorAssociations(db.db, now)).resolves.toEqual({
       removed: 0,
       deferred: 1
     });
-    const inserts = db.mutations.filter((entry) => entry.method === "insert").map((entry) => entry.value as Record<string, unknown>);
+    const inserts = db.mutations
+      .filter((entry) => entry.method === "insert")
+      .flatMap((entry) => Array.isArray(entry.value) ? entry.value : [entry.value]) as Record<string, unknown>[];
     expect(inserts).toContainEqual(expect.objectContaining({
       manualAccountClose: false,
       status: "deferred_obligations"
+    }));
+    expect(inserts).toContainEqual(expect.objectContaining({
+      recipientKey: "admin-user",
+      eventKey: expect.stringMatching(/^contributor-association-cleanup-deferred:contributor-a:/),
+      title: "Contributor association cleanup deferred",
+      body: "Cleanup for Ada's workspace association was deferred because qualifying compensation obligations remain. Resolve them before removing the association."
     }));
     expect(db.tx.delete).not.toHaveBeenCalled();
     expect(db.tx.update).not.toHaveBeenCalled();

@@ -1282,6 +1282,38 @@ export const workspaceNotifications =
     ]
   );
 
+// Only the minimal completion notice survives the destructive workspace cascade.
+export const userNotifications =
+  pgTable(
+    "user_notifications",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+      workspaceId: uuid("workspace_id").notNull(),
+      workspaceName: text("workspace_name").notNull(),
+      recipientKey: text("recipient_key").notNull(),
+      eventKey: text("event_key").notNull(),
+      category: text("category").notNull(),
+      title: text("title").notNull(),
+      body: text("body").notNull(),
+      destination: text("destination"),
+      readAt: timestamp("read_at", { withTimezone: true }),
+      createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow()
+    },
+    (table) => [
+      uniqueIndex("user_notifications_recipient_event_uq").on(
+        table.recipientKey,
+        table.eventKey
+      ),
+      index("user_notifications_recipient_read_idx").on(
+        table.recipientKey,
+        table.readAt,
+        table.createdAt
+      )
+    ]
+  );
+
 export const workspaceRetention =
   pgTable(
     "workspace_retention",
