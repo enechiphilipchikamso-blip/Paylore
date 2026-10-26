@@ -101,7 +101,8 @@ describe("automatic contributor association cleanup", () => {
       [{ id: "contributor-a", displayName: "Ada", identityWalletAddress: "contributor-wallet", lifecycle: "active" }],
       [{ closedAt: new Date(now.getTime() - 366 * 24 * 60 * 60 * 1000) }],
       [{ id: "allocation-a" }],
-      [{ userId: "admin-user" }]
+      [{ userId: "admin-user" }],
+      [{ userId: "contributor-user" }]
     ]);
 
     await expect(cleanupEligibleContributorAssociations(db.db, now)).resolves.toEqual({
@@ -121,6 +122,16 @@ describe("automatic contributor association cleanup", () => {
       title: "Contributor association cleanup deferred",
       body: "Cleanup for Ada's workspace association was deferred because qualifying compensation obligations remain. Resolve them before removing the association."
     }));
+    expect(inserts).toContainEqual(expect.objectContaining({
+      recipientKey: "contributor-user",
+      eventKey: expect.stringMatching(/^contributor-association-cleanup-deferred:contributor-a:/),
+      title: "Workspace association cleanup delayed",
+      body: "Your workspace association remains active while qualifying compensation obligations are unresolved. Your confidential account has not been closed or changed."
+    }));
+    expect(inserts.filter((notice) =>
+      typeof notice.eventKey === "string" &&
+      notice.eventKey.startsWith("contributor-association-cleanup-deferred:")
+    ).every((notice) => !("amountBaseUnits" in notice) && !("walletAddress" in notice))).toBe(true);
     expect(db.tx.delete).not.toHaveBeenCalled();
     expect(db.tx.update).not.toHaveBeenCalled();
   });

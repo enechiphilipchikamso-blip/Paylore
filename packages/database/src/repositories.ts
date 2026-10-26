@@ -2171,6 +2171,40 @@ export async function cleanupEligibleContributorAssociations(
               ]
             });
         }
+        const affectedRecipients = await tx
+          .select({ userId: walletIdentities.userId })
+          .from(walletIdentities)
+          .innerJoin(
+            workspaceMemberships,
+            and(
+              eq(workspaceMemberships.userId, walletIdentities.userId),
+              eq(workspaceMemberships.workspaceId, candidate.workspaceId),
+              eq(workspaceMemberships.role, "contributor")
+            )
+          )
+          .where(eq(walletIdentities.address, contributor.identityWalletAddress))
+          .limit(1);
+        if (affectedRecipients[0]) {
+          await tx
+            .insert(workspaceNotifications)
+            .values({
+              workspaceId: candidate.workspaceId,
+              recipientKey: affectedRecipients[0].userId,
+              eventKey: `contributor-association-cleanup-deferred:${contributor.id}:${eligibleAt.getTime()}`,
+              category: "Recovery & Offboarding",
+              title: "Workspace association cleanup delayed",
+              body: "Your workspace association remains active while qualifying compensation obligations are unresolved. Your confidential account has not been closed or changed.",
+              destination: "/notifications",
+              createdAt: now
+            })
+            .onConflictDoNothing({
+              target: [
+                workspaceNotifications.workspaceId,
+                workspaceNotifications.eventKey,
+                workspaceNotifications.recipientKey
+              ]
+            });
+        }
         await tx
           .insert(contributorOffboarding)
           .values({
