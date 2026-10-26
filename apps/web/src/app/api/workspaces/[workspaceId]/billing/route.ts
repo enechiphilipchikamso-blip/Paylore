@@ -76,6 +76,14 @@ export async function GET(
     return access.response;
   }
 
+  // Billing history is finance data; contributors can only access their own compensation.
+  if (access.membership.role === "contributor") {
+    return NextResponse.json(
+      { error: "workspace_access_denied" },
+      { status: 403 }
+    );
+  }
+
   const [subscription, payments] = await Promise.all([
     getWorkspaceSubscription(access.db, workspaceId),
     listSubscriptionPayments(access.db, workspaceId)
