@@ -28,7 +28,8 @@ const h = vi.hoisted(() => ({
   setupCalls: 0,
   configCalls: 0,
   attachCalls: [] as Array<{phase:string;signature:string}>,
-  clearCalls: [] as Array<{phase:string;signature:string}>
+  clearCalls: [] as Array<{phase:string;signature:string}>,
+  signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">
 }));
 
 function sha(value: string): Uint8Array {
@@ -96,7 +97,8 @@ function reset(): void {
     setupCalls: 0,
     configCalls: 0,
     attachCalls: [],
-    clearCalls: []
+    clearCalls: [],
+    signatureFinality: {}
   });
 }
 
@@ -113,7 +115,16 @@ vi.mock("@solana/kit", () => ({
   createSolanaRpc: vi.fn(() => ({
     getSignatureStatuses: (signatures: string[]) => ({
       send: async () => ({
-        value: signatures.map(() => ({ confirmationStatus: "finalized", err: null }))
+        value: signatures.map((signature) => {
+          const finality = h.signatureFinality[signature] ?? "finalized";
+          if (finality === "failed") {
+            return { confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } };
+          }
+          if (finality === "pending") {
+            return { confirmationStatus: "confirmed", err: null };
+          }
+          return { confirmationStatus: "finalized", err: null };
+        })
       })
     }),
     getLatestBlockhash: () => ({
@@ -327,6 +338,51 @@ describe("workspace confidential reserve initialization", () => {
     });
     expect(h.configCalls).toBe(0);
     expect(h.submittedSteps).toEqual([]);
+  });
+
+  it("reconciles a finalized account-setup signature before submitting only the missing program-configuration phase", async () => {
+    const result = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any,
+      "workspace-a",
+      h.authority,
+      { signature: "prior-account-setup-signature", phase: "account_setup" }
+    );
+
+    expect(result).toMatchObject({
+      status: "program_configured",
+      confidentialTransferReady: true,
+      programReserveConfigured: true
+    });
+    expect(h.submittedSteps).toEqual(["program_configure"]);
+    expect(h.setupCalls).toBe(0);
+    expect(h.configCalls).toBe(1);
+    expect(h.clearCalls[0]).toEqual({
+      phase: "account_setup",
+      signature: "prior-account-setup-signature"
+    });
+  });
+
+  it("keeps a failed stored configuration attempt retryable without silently submitting a replacement", async () => {
+    h.signatureFinality["failed-config-signature"] = "failed";
+
+    const result = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any,
+      "workspace-a",
+      h.authority,
+      { signature: "failed-config-signature", phase: "program_configure" }
+    );
+
+    expect(result).toMatchObject({
+      status: "retry_ready",
+      signature: "failed-config-signature",
+      phase: "program_configure"
+    });
+    expect(h.clearCalls).toEqual([{
+      phase: "program_configure",
+      signature: "failed-config-signature"
+    }]);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.configCalls).toBe(0);
   });
 
   it("rejects a token account owned by a different program", async () => {

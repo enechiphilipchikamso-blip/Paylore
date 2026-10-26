@@ -776,6 +776,12 @@ describe("settleContributorPayrollAllocation integration", () => {
     await expect(settleContributorPayrollAllocation({} as any, input))
       .rejects.toMatchObject({ code, statusCode: 503 });
     expect(h.ledgerCalls).toBe(0);
+    if (name === "reserve confidential-account setup" || name === "reserve program configuration") {
+      expect(h.executionOrder).not.toContain("escrow_funding");
+      expect(h.executionOrder).not.toContain("transfer");
+      expect(h.escrowFunded).toBe(false);
+      expect(h.recordFundingCalls).toBe(0);
+    }
   });
 
   it("releases a failed finalized escrow-funding transfer only when no balance moved", async () => {
