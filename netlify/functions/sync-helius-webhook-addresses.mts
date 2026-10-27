@@ -5,6 +5,7 @@ import {
 import { parseConfig, loadPayloreConfig } from "../../apps/web/src/server/config";
 import {
   reconcileHeliusWebhook,
+  getStableHeliusMonitoredAddresses,
   HeliusWebhookManagementError
 } from "../../apps/web/src/server/solana/helius-webhook-management";
 
@@ -29,13 +30,14 @@ export default async function syncHeliusWebhookAddresses() {
   const { db, client } = createDatabase(appConfig.DATABASE_URL);
   try {
     const databaseAddresses = await listHeliusMonitoredAddresses(db);
-    const stableAddresses = [
-      payloreConfig.PAYLORE_PAYROLL_PROGRAM_ID!,
-      payloreConfig.TOKEN_WRAP_PROGRAM_ID,
-      payloreConfig.PAYLORE_SUBSCRIPTION_USDC_MINT,
-      payloreConfig.PAYLORE_WRAPPED_USDC_MINT,
-      payloreConfig.PAYLORE_SUBSCRIPTION_RECIPIENT
-    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    const stableAddresses = getStableHeliusMonitoredAddresses({
+      payrollProgramId: payloreConfig.PAYLORE_PAYROLL_PROGRAM_ID,
+      tokenWrapProgramId: payloreConfig.TOKEN_WRAP_PROGRAM_ID,
+      subscriptionUsdcMint: payloreConfig.PAYLORE_SUBSCRIPTION_USDC_MINT,
+      wrappedUsdcMint: payloreConfig.PAYLORE_WRAPPED_USDC_MINT,
+      subscriptionRecipient: payloreConfig.PAYLORE_SUBSCRIPTION_RECIPIENT,
+      deploymentAddress: payloreConfig.PAYLORE_HELIUS_DEPLOYMENT_ADDRESS
+    });
     const result = await reconcileHeliusWebhook({
       managementApiKey: payloreConfig.PAYLORE_HELIUS_MANAGEMENT_API_KEY!,
       webhookId: payloreConfig.PAYLORE_HELIUS_WEBHOOK_ID!,
