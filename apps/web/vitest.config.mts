@@ -5,11 +5,9 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/**/*.test.ts",
-      "../../packages/database/src/repositories.subscription-reminders.test.ts",
-      "../../packages/database/src/retention-policy.subscription-reminders.test.ts",
-      "../../packages/database/src/repositories.canonical-reconciliation.test.ts",
-      "../../packages/database/src/repositories.ledger-outcomes.test.ts",
-      "../../packages/database/src/repositories.workspace-deletion-ledger.test.ts"
+      "src/**/*.test.tsx",
+      "../../packages/database/src/**/*.test.ts",
+      "../../netlify/functions/**/*.test.mts"
     ]
   }
 });

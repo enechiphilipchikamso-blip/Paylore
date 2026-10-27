@@ -45,6 +45,12 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Database migration consistency
+        run: pnpm db:check
+
+      - name: Payroll program unit tests
+        run: pnpm test:program-rust
+
       - name: Lint
         run: pnpm lint
 
