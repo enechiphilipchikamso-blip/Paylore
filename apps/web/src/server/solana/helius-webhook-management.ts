@@ -18,6 +18,24 @@ type HeliusWebhook = {
   active?: unknown;
 };
 
+export function getStableHeliusMonitoredAddresses(input: {
+  payrollProgramId?: string;
+  tokenWrapProgramId: string;
+  subscriptionUsdcMint?: string;
+  wrappedUsdcMint?: string;
+  subscriptionRecipient?: string;
+  deploymentAddress?: string;
+}): string[] {
+  return [
+    input.payrollProgramId,
+    input.tokenWrapProgramId,
+    input.subscriptionUsdcMint,
+    input.wrappedUsdcMint,
+    input.subscriptionRecipient,
+    input.deploymentAddress
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
 export type HeliusWebhookSyncResult = {
   updated: boolean;
   reactivated: boolean;
