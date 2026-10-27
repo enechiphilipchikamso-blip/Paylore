@@ -37,7 +37,7 @@ rustup toolchain install \
 
 rustup default 1.89.0
 
-if ! command -v solana >/dev/null 2>&1 || ! solana --version | grep -Eq '(^|[[:space:]])4\\.1\\.2([[:space:]]|$)'; then
+if ! command -v solana >/dev/null 2>&1 || ! solana --version | grep -Eq '(^|[[:space:]])4\.1\.2([[:space:]]|$)'; then
   sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.2/install)"
 fi
 
@@ -68,7 +68,7 @@ require_version() {
   local expected="$2"
   local actual="$3"
   if [[ "$actual" != "$expected" ]]; then
-    printf 'Expected %s %s, found %s.\\n' "$name" "$expected" "$actual" >&2
+    printf 'Expected %s %s, found %s.\n' "$name" "$expected" "$actual" >&2
     exit 1
   fi
 }
