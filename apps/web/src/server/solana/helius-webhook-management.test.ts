@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   HeliusWebhookManagementError,
+  getStableHeliusMonitoredAddresses,
   PAYLORE_HELIUS_WEBHOOK_URL,
   normalizeHeliusMonitoredAddresses,
   reconcileHeliusWebhook
@@ -31,6 +32,25 @@ function response(body: unknown, status = 200): Response {
 }
 
 describe("Helius webhook reconciliation", () => {
+  it("includes the public deployment address in the stable monitored set", () => {
+    const deploymentAddress = "7dmrSuBZtHzvkuiYgUW386gKYaeeE3jQs4sQsWkQQiUe";
+    expect(getStableHeliusMonitoredAddresses({
+      payrollProgramId: "11111111111111111111111111111111",
+      tokenWrapProgramId: "22222222222222222222222222222222",
+      subscriptionUsdcMint: "33333333333333333333333333333333",
+      wrappedUsdcMint: "44444444444444444444444444444444",
+      subscriptionRecipient: "55555555555555555555555555555555",
+      deploymentAddress
+    })).toEqual([
+      "11111111111111111111111111111111",
+      "22222222222222222222222222222222",
+      "33333333333333333333333333333333",
+      "44444444444444444444444444444444",
+      "55555555555555555555555555555555",
+      deploymentAddress
+    ]);
+  });
+
   it("deduplicates and sorts the authoritative monitored address set", () => {
     expect(normalizeHeliusMonitoredAddresses([reserve, program, reserve])).toEqual([
       program,
