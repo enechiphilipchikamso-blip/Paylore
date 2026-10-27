@@ -139,6 +139,18 @@ describe("parsePayloreConfig", () => {
     );
   });
 
+  it("accepts and validates the public deployment address used by webhook monitoring", () => {
+    const deploymentAddress = "7dmrSuBZtHzvkuiYgUW386gKYaeeE3jQs4sQsWkQQiUe";
+    expect(parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_DEPLOYMENT_ADDRESS: deploymentAddress
+    }).PAYLORE_HELIUS_DEPLOYMENT_ADDRESS).toBe(deploymentAddress);
+    expect(() => parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_DEPLOYMENT_ADDRESS: "not-a-solana-address"
+    })).toThrow(ConfigurationError);
+  });
+
   it("accepts server-only Helius webhook management configuration", () => {
     const config = parsePayloreConfig({
       NODE_ENV: "test",
