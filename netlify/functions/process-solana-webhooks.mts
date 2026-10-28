@@ -382,7 +382,7 @@ async function reconcileEvent(
   };
   const signatures = transactionBody.transaction?.signatures;
   const accountKeys = transactionBody.transaction?.message?.accountKeys;
-  const signerAddresses = Array.isArray(accountKeys)
+  const payrollSignerAddresses = Array.isArray(accountKeys)
     ? accountKeys.flatMap((entry) =>
         entry && typeof entry === "object" &&
         "pubkey" in entry && typeof entry.pubkey === "string" &&
@@ -420,7 +420,7 @@ async function reconcileEvent(
     const signatureMatches = Array.isArray(signatures) &&
       signatures.includes(event.transactionSignature);
     if (!signatureMatches || claimInstructions.some((claim) =>
-      !signerAddresses.includes(claim.authorityAddress)
+      !payrollSignerAddresses.includes(claim.authorityAddress)
     )) {
       await updateSolanaWebhookEventState(db, {
         id: event.id,

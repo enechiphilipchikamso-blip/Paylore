@@ -1,5 +1,7 @@
 [build]
-command = "pnpm build"
+# Turbopack's persistent cache can contain expanded server environment values;
+# it is not needed at runtime and must not be included in Netlify's scan.
+command = "pnpm build && rm -rf apps/web/.next/cache"
 
 [build.environment]
 NODE_VERSION = "24.22.1"
