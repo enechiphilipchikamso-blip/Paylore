@@ -8,15 +8,36 @@ importers:
 
   .:
     dependencies:
+      '@solana-program/system':
+        specifier: 0.15.0
+        version: 0.15.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))
+      '@solana-program/token-2022':
+        specifier: 0.19.0
+        version: 0.19.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))(@solana/sysvars@8.4.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3))(@solana/zk-sdk@0.5.4)
+      '@solana-program/token-wrap':
+        specifier: 2.7.1
+        version: 2.7.1(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))(@solana/sysvars@8.4.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3))(@solana/zk-sdk@0.5.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)
+      '@solana-program/zk-elgamal-proof':
+        specifier: 0.4.0
+        version: 0.4.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))
+      '@solana/kit':
+        specifier: 8.4.0
+        version: 8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6)
+      '@solana/wallet-standard-features':
+        specifier: 1.5.0
+        version: 1.5.0
+      '@solana/wallet-standard-util':
+        specifier: 1.1.4
+        version: 1.1.4
+      '@solana/zk-sdk':
+        specifier: 0.5.4
+        version: 0.5.4
       drizzle-orm:
         specifier: 0.45.3
         version: 0.45.3(postgres@3.4.9)
       postgres:
         specifier: 3.4.9
         version: 3.4.9
-      '@solana/kit':
-        specifier: 8.4.0
-        version: 8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6)
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -45,12 +66,12 @@ importers:
       '@solana-program/token-2022':
         specifier: 0.19.0
         version: 0.19.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))(@solana/sysvars@8.4.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3))(@solana/zk-sdk@0.5.4)
-      '@solana-program/zk-elgamal-proof':
-        specifier: 0.4.0
-        version: 0.4.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))
       '@solana-program/token-wrap':
         specifier: 2.7.1
         version: 2.7.1(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))(@solana/sysvars@8.4.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3))(@solana/zk-sdk@0.5.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)
+      '@solana-program/zk-elgamal-proof':
+        specifier: 0.4.0
+        version: 0.4.0(@solana/kit@8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6))
       '@solana/kit':
         specifier: 8.4.0
         version: 8.4.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@6.0.6)
@@ -4903,8 +4924,7 @@ snapshots:
       '@solana/wallet-standard-chains': 1.1.2
       '@solana/wallet-standard-features': 1.5.0
 
-  '@solana/zk-sdk@0.5.4':
-    resolution: {integrity: sha512-pz9zvcRDg1rrB79rv2no5Ko2jOChxZYbKAm+nsbXMAFVGuFbkbnn1H77iTdxzvlxc3szPym/xRfsvlkOhVVh1g==}
+  '@solana/zk-sdk@0.5.4': {}
 
   '@swc/helpers@0.5.23':
     dependencies:
