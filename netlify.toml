@@ -7,14 +7,15 @@ command = "pnpm build && rm -rf apps/web/.next/cache"
 NODE_VERSION = "24.22.1"
 # These are public, non-sensitive values (network names, RPC provider names, and
 # on-chain Solana addresses such as mints, the payroll program ID, and the
-# subscription recipient wallet) that legitimately appear in source code, tests,
-# and .env.example, so exclude them from secrets scanning. SOLANA_RPC_PRIMARY and
+# subscription recipient wallet, plus the deployment wallet that serves as both
+# the program upgrade authority and a Helius-monitored address) that legitimately
+# appear in source code, tests, and .env.example, so exclude them from secrets scanning. SOLANA_RPC_PRIMARY and
 # PAYLORE_RPC_PRIMARY_URL hold public, credential-free Devnet endpoints
 # (api.devnet.solana.com / devnet.helius-rpc.com); the Helius API key lives in
 # PAYLORE_RPC_PRIMARY_API_KEY. NODE_ENV is the standard runtime mode flag, whose
 # value appears throughout code and copy. Real credentials (API keys, the QuickNode endpoint
 # URL, envelope keys, webhook secrets, DATABASE_URL) stay scanned.
-SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,SOLANA_NETWORK,PAYLORE_NETWORK,PAYLORE_RPC_PRIMARY_PROVIDER,PAYLORE_RPC_SECONDARY_PROVIDER,PAYLORE_SUBSCRIPTION_RECIPIENT,PAYLORE_SUBSCRIPTION_USDC_MINT,PAYLORE_WRAPPED_USDC_MINT,PAYLORE_PAYROLL_PROGRAM_ID,SOLANA_RPC_PRIMARY,PAYLORE_RPC_PRIMARY_URL"
+SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,SOLANA_NETWORK,PAYLORE_NETWORK,PAYLORE_RPC_PRIMARY_PROVIDER,PAYLORE_RPC_SECONDARY_PROVIDER,PAYLORE_SUBSCRIPTION_RECIPIENT,PAYLORE_SUBSCRIPTION_USDC_MINT,PAYLORE_WRAPPED_USDC_MINT,PAYLORE_PAYROLL_PROGRAM_ID,PAYLORE_EXPECTED_PROGRAM_UPGRADE_AUTHORITY,PAYLORE_HELIUS_DEPLOYMENT_ADDRESS,SOLANA_RPC_PRIMARY,PAYLORE_RPC_PRIMARY_URL"
 
 [functions]
 directory = "netlify/functions"
