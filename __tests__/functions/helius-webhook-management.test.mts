@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { reconcileHeliusWebhookAddresses } from "./helius-webhook-management.mjs";
+import { reconcileHeliusWebhookAddresses } from "../../netlify/functions/helius-webhook-management.mjs";
 
 const addresses = ["A-address", "Z-address"];
 const stableProgramAddress = "PayrollProgram-address";

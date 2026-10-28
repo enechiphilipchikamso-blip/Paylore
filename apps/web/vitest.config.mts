@@ -13,7 +13,7 @@ export default defineConfig({
       "src/**/*.test.ts",
       "src/**/*.test.tsx",
       "../../packages/database/src/**/*.test.ts",
-      "../../netlify/functions/**/*.test.mts"
+      "../../__tests__/functions/**/*.test.mts"
     ]
   }
 });
