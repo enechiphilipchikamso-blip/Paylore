@@ -38,7 +38,7 @@ import {
   derivePayrollReserveTokenAccount,
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
-} from "../../apps/web/src/server/solana/payroll-program-verification";
+} from "../../apps/web/src/server/solana/payroll-program-verification-core";
 import {
   inspectCanonicalTransactionEvent,
   scanCanonicalSignaturePage,

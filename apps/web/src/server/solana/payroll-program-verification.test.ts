@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
-import { readSolanaRpc } from "./rpc";
+import { readSolanaRpc } from "./rpc-configured";
 import {
   derivePayrollReserveTokenAccount,
   getFinalizedPayrollClaimState,
@@ -9,7 +9,7 @@ import {
   verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
 
-vi.mock("./rpc", () => ({
+vi.mock("./rpc-configured", () => ({
   readSolanaRpc: vi.fn()
 }));
 vi.mock("../config", () => ({
