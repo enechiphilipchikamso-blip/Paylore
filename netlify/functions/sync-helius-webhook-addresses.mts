@@ -7,7 +7,7 @@ import {
   reconcileHeliusWebhook,
   getStableHeliusMonitoredAddresses,
   HeliusWebhookManagementError
-} from "../../apps/web/src/server/solana/helius-webhook-management";
+} from "../../apps/web/src/server/solana/helius-webhook-management-core";
 
 export const config = {
   schedule: "*/5 * * * *"
