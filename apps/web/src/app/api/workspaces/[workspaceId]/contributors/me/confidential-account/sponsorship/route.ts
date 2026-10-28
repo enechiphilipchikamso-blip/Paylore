@@ -106,7 +106,6 @@ async function currentPolicy(workspaceId: string, context: {
   };
 }
 
-export async function GET(
 function readRecentBlockhashFromTransaction(value: unknown): string | null {
   if (value === null || typeof value !== "object") return null;
   const transaction = (value as Record<string, unknown>).transaction;
@@ -218,16 +217,16 @@ async function reconcilePreparedConfidentialSetupOperations(
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const context = await contributorContext(workspaceId);
-  if ("response" in context) return context.response;
+  if ("response" in context) return context.response!;
   try {
     await reconcilePreparedConfidentialSetupOperations(
       context.db, workspaceId, context.session.walletAddress
     );
     const policy = await currentPolicy(workspaceId, context);
-    if ("response" in policy) return policy.response;
+    if ("response" in policy) return policy.response!;
     if (BigInt(policy.gasTank.balanceLamports) < MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS) {
       return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
     }
@@ -244,7 +243,7 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   let operation: { id: string; updatedAt: Date } | null = null;
   try {
     assertSameOrigin(request);
@@ -267,9 +266,9 @@ export async function POST(
 
     const { workspaceId } = await params;
     const context = await contributorContext(workspaceId);
-    if ("response" in context) return context.response;
+    if ("response" in context) return context.response!;
     const policy = await currentPolicy(workspaceId, context, true);
-    if ("response" in policy) return policy.response;
+    if ("response" in policy) return policy.response!;
     await reconcilePreparedConfidentialSetupOperations(
       context.db, workspaceId, context.session.walletAddress
     );
@@ -299,7 +298,7 @@ export async function POST(
     const existing = await getWorkspaceGasTankOperationByIdempotencyKey(
       context.db, workspaceId, idempotencyKey
     );
-    if (existing && existing.requestDigest !== digest) {
+    if (existing?.requestDigest && existing.requestDigest !== digest) {
       return NextResponse.json({ error: "confidential_setup_sponsorship_conflict" }, { status: 409 });
     }
     if (
@@ -412,9 +411,10 @@ export async function POST(
     if (inspected.feeLamports === null) {
       return NextResponse.json({ error: "sponsored_fee_unavailable" }, { status: 409 });
     }
+    const feeLamports = inspected.feeLamports;
     assertSponsoredCost({
       transactionBytes: inspected.transactionBytes,
-      feeLamports: inspected.feeLamports,
+      feeLamports,
       balanceLamports: BigInt(policy.gasTank.balanceLamports),
       dailyBookedFeesLamports: usage.feeLamports,
       dailyOperationCount: usage.operationCount
@@ -426,7 +426,7 @@ export async function POST(
       idempotencyKey,
       operationType: "confidential_account_setup",
       requestDigest: digest,
-      reservedFeeLamports: String(inspected.feeLamports),
+      reservedFeeLamports: String(feeLamports),
       availableBalanceLamports: policy.gasTank.balanceLamports,
       maxDailyFeeLamports: String(MAX_DAILY_SPONSORED_FEE_LAMPORTS),
       maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
@@ -457,7 +457,7 @@ export async function POST(
         transaction: inspected.transaction,
         gasTankAddress: policy.gasTank.address,
         gasTankPrivateKey: privateKey,
-        feeLamports: inspected.feeLamports
+        feeLamports
       })
     );
     const persisted = await updateGasTankOperationAttempt(context.db, {

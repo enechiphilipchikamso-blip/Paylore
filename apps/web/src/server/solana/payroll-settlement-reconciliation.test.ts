@@ -78,10 +78,10 @@ describe("finalized confidential payroll settlement reconciliation", () => {
         .mockResolvedValueOnce("claimed")
     });
     await expect(reconcileFinalizedSettlement(settlement, deps)).resolves.toMatchObject({ status: "claimed" });
-    expect(deps.finalizeClaimed).toHaveBeenCalledOnce();
+    expect(vi.mocked(deps.finalizeClaimed)).toHaveBeenCalledOnce();
     expect(deps.readFinalizedClaimState).toHaveBeenCalledTimes(2);
-    expect(deps.finalizeClaimed.mock.invocationCallOrder[0]).toBeGreaterThan(
-      deps.readFinalizedSourceAvailable.mock.invocationCallOrder[0]
+    expect(    vi.mocked(deps.finalizeClaimed).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(deps.readFinalizedSourceAvailable).mock.invocationCallOrder[0]
     );
   });
 

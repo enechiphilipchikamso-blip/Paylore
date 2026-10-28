@@ -60,7 +60,8 @@ function prepare(overrides: Partial<Parameters<typeof prepareSponsoredPayrollCla
     allocationCommitment,
     claims: [{
       claimId, contributorAddress: "contributor-wallet", amountCommitment: "ab".repeat(32),
-      amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+      amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
+      escrowTokenAccount: "escrow-token-account"
     }],
     dailyBookedFeesLamports: 0n,
     dailyOperationCount: 0,

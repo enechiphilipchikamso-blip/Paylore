@@ -54,7 +54,7 @@ const input = {
   signature,
   programId: "payroll-program",
   authorityAddress: "manager-wallet",
-  claims: [{ claimId, claimAddress }],
+  claims: [{ claimId, claimAddress, escrowTokenAccount: "escrow-token-account" }],
   now: new Date("2026-10-24T09:00:00.000Z")
 };
 
@@ -62,6 +62,13 @@ function selectResults(allocation: Record<string, unknown>, runStatus = "committ
   return [
     [{ id: "run-a", status: runStatus, allocationCommitment: "ab".repeat(32) }],
     [allocation],
+    [{
+      allocationId: allocation.id,
+      payrollRunId: "run-a",
+      claimId,
+      tokenAccountAddress: "escrow-token-account",
+      status: "funded"
+    }],
     [{ claimAddress }],
     [{ userId: "finance-user" }]
   ];
@@ -122,6 +129,13 @@ describe("payroll Claim-PDA submission durability", () => {
         claimAddress,
         status: "unclaimed",
         transactionSignature: "6".repeat(64)
+      }],
+      [{
+        allocationId: "allocation-a",
+        payrollRunId: "run-a",
+        claimId,
+        tokenAccountAddress: "escrow-token-account",
+        status: "funded"
       }]
     ]);
 
@@ -143,11 +157,18 @@ describe("payroll Claim-PDA submission durability", () => {
         transactionSignature: "settlement-signature"
       }],
       [{
+        allocationId: "allocation-a",
+        payrollRunId: "run-a",
+        claimId,
+        tokenAccountAddress: "escrow-token-account",
+        status: "funded"
+      }],
+      [{
         metadata: {
           programId: "payroll-program",
           authorityAddress: "manager-wallet",
           allocationCommitment: "ab".repeat(32),
-          claims: [{ claimId, claimAddress }]
+          claims: [{ claimId, claimAddress, escrowTokenAccount: "escrow-token-account" }]
         }
       }]
     ]);
@@ -172,11 +193,18 @@ describe("payroll Claim-PDA submission durability", () => {
         transactionSignature: "recovery-signature"
       }],
       [{
+        allocationId: "allocation-a",
+        payrollRunId: "run-a",
+        claimId,
+        tokenAccountAddress: "escrow-token-account",
+        status: "funded"
+      }],
+      [{
         metadata: {
           programId: "other-program",
           authorityAddress: "manager-wallet",
           allocationCommitment: "ab".repeat(32),
-          claims: [{ claimId, claimAddress }]
+          claims: [{ claimId, claimAddress, escrowTokenAccount: "escrow-token-account" }]
         }
       }]
     ]);

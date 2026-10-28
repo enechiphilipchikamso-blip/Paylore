@@ -110,7 +110,7 @@ describe("workspace reserve key custody", () => {
     expect(first.created).toBe(false);
     expect(second.created).toBe(false);
     expect(h.stored.address).toBe(row.address);
-    expect(h.createWorkspaceReserve).toHaveBeenCalledTimes(2);
+    expect(h.createWorkspaceReserve).not.toHaveBeenCalled();
   });
 
   it("restores a corrupted primary envelope and verifies the persisted recovery key", async () => {

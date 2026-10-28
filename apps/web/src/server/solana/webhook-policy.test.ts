@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
   findRecoverClaimInstruction,
   getFinalizedLedgerReconciliationDisposition,
@@ -9,6 +10,20 @@ import {
 const signature = "1".repeat(64);
 const account = "Vote111111111111111111111111111111111111111";
 const otherAccount = "11111111111111111111111111111111";
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function encodeBase58(bytes: Uint8Array): string {
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  let encoded = "";
+  while (value > 0n) {
+    encoded = BASE58_ALPHABET[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  let zeroes = 0;
+  while (zeroes < bytes.length && bytes[zeroes] === 0) zeroes += 1;
+  return "1".repeat(zeroes) + encoded;
+}
 
 describe("Helius webhook normalization", () => {
   it("keeps only reconciliation identifiers, records a deterministic account hint, and deduplicates signatures", () => {

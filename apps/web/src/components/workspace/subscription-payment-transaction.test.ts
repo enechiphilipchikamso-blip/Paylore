@@ -11,8 +11,8 @@ const CLASSIC_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const PAYMENT_MEMO = "Paylore activation attempt test | workspace workspace-test";
 const TRANSFER_CHECKED_49_USDC = [12, 0x40, 0xae, 0xeb, 0x02, 0, 0, 0, 0, 6];
 
-function contains(transaction: Uint8Array, value: Uint8Array | number[]): boolean {
-  return Buffer.from(transaction).includes(Buffer.from(value));
+function contains(transaction: Uint8Array, value: ArrayLike<number>): boolean {
+  return Buffer.from(transaction).includes(Buffer.from(Array.from(value)));
 }
 
 function expectPaymentPayload(

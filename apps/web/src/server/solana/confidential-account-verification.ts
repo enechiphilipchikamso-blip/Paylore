@@ -19,8 +19,11 @@ type ParsedInstruction = {
 };
 
 export class ConfidentialAccountVerificationError extends Error {
-  constructor(readonly code: "confidential_account_not_ready" | "confidential_account_close_mismatch") {
-    super(code);
+  constructor(
+    readonly code: "confidential_account_not_ready" | "confidential_account_close_mismatch",
+    message: string = code
+  ) {
+    super(message);
     this.name = "ConfidentialAccountVerificationError";
   }
 }
@@ -157,7 +160,8 @@ export async function verifyConfidentialAccountSetup(
     );
   });
   if (!hasSetupInstruction) {
-    throw new Error(
+    throw new ConfidentialAccountVerificationError(
+      "confidential_account_not_ready",
       "The finalized transaction does not configure this wallet's confidential Token-2022 account."
     );
   }

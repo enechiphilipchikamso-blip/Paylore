@@ -166,7 +166,7 @@ async function executePlan(
           encoding: "base64", commitment: "confirmed", sigVerify: false, replaceRecentBlockhash: true
         }).send();
         if (result.value.err !== null) throw new Error("The configured Token Wrap program failed read-only simulation. No transaction was submitted.");
-        if (simulation.only) return { signature: signature(new Uint8Array(64)) };
+        if (simulation.only) return { signature: signature("1".repeat(64)) };
       }
       if (sponsorship) {
         if (!wallet.signTransaction) {
@@ -182,7 +182,10 @@ async function executePlan(
         });
         const originalDecoded = getTransactionDecoder().decode(transaction);
         const signedDecoded = getTransactionDecoder().decode(signed.signedTransaction);
-        if (!sameBytes(originalDecoded.messageBytes, signedDecoded.messageBytes)) {
+        if (!sameBytes(
+          Uint8Array.from(originalDecoded.messageBytes),
+          Uint8Array.from(signedDecoded.messageBytes)
+        )) {
           throw new Error(
             "The wallet changed the sponsored transaction after authorization. No transaction was submitted."
           );
@@ -343,7 +346,7 @@ export async function getConfidentialBalances(
   const rpc = createSolanaRpc(DEVNET_RPC_URL);
   const { keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
-  const elgamalKeypair = ElgamalKeypair.fromSecretKey(secretKey);
+  const elgamalKeypair = ElGamalKeypair.fromSecretKey(secretKey);
   const aeKey = AeKey.fromBytes(keys.aeKey);
   try {
     const mint = address(mintAddress);
@@ -504,7 +507,7 @@ export async function withdrawConfidentialBalance(
   const mint = address(mintAddress);
   const { keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
-  const elgamalKeypair = ElgamalKeypair.fromSecretKey(secretKey);
+  const elgamalKeypair = ElGamalKeypair.fromSecretKey(secretKey);
   const aeKey = AeKey.fromBytes(keys.aeKey);
   try {
     if (amountBaseUnits <= 0n) {
@@ -618,7 +621,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   const program = await fetchEncodedAccount(rpc, programAddress);
   assertDevnetTokenWrapProgramAccount({
     programAddress: tokenWrapProgramAddress,
-    ownerProgramAddress: program.exists ? program.owner : "",
+    ownerProgramAddress: program.exists ? program.programAddress : "",
     executable: program.exists && program.executable === true
   });
 
@@ -626,7 +629,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   const unwrappedMintAccount = await fetchEncodedAccount(rpc, unwrappedMint);
   if (
     !wrappedMintAccount.exists ||
-    wrappedMintAccount.owner !== TOKEN_2022_PROGRAM_ADDRESS
+    wrappedMintAccount.programAddress !== TOKEN_2022_PROGRAM_ADDRESS
   ) {
     throw new Error(
       "The approved wrapped-USDC mint is missing or is not owned by Token-2022. No transaction was submitted."
@@ -634,7 +637,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   }
   if (
     !unwrappedMintAccount.exists ||
-    unwrappedMintAccount.owner !== TOKEN_PROGRAM_ADDRESS
+    unwrappedMintAccount.programAddress !== TOKEN_PROGRAM_ADDRESS
   ) {
     throw new Error(
       "Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
@@ -657,8 +660,8 @@ async function verifyWrappedUsdcUnwrapPlan(
     programAddress: tokenWrapProgramAddress,
     wrappedMintAddress,
     unwrappedMintAddress,
-    wrappedMintProgramAddress: wrappedMintAccount.owner,
-    unwrappedMintProgramAddress: unwrappedMintAccount.owner,
+    wrappedMintProgramAddress: wrappedMintAccount.programAddress,
+    unwrappedMintProgramAddress: unwrappedMintAccount.programAddress,
     derivedWrappedMintAddress: built.expectedWrappedMintAddress,
     wrappedMintDecimals: wrappedSupply.value.decimals,
     unwrappedMintDecimals: unwrappedSupply.value.decimals
@@ -701,7 +704,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   );
   if (
     !sourceAccountInfo.exists ||
-    sourceAccountInfo.owner !== TOKEN_2022_PROGRAM_ADDRESS
+    sourceAccountInfo.programAddress !== TOKEN_2022_PROGRAM_ADDRESS
   ) {
     throw new Error(
       "The public wrapped-USDC source account is missing or uses the wrong token program. No transaction was submitted."
@@ -727,7 +730,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     rpc,
     address(built.unwrappedEscrow)
   );
-  if (!escrowInfo.exists || escrowInfo.owner !== TOKEN_PROGRAM_ADDRESS) {
+  if (!escrowInfo.exists || escrowInfo.programAddress !== TOKEN_PROGRAM_ADDRESS) {
     throw new Error(
       "The Token Wrap escrow account is missing or uses the wrong token program. No transaction was submitted."
     );
@@ -757,7 +760,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   );
   let destinationBalanceBefore = 0n;
   if (destinationInfo.exists) {
-    if (destinationInfo.owner !== TOKEN_PROGRAM_ADDRESS) {
+    if (destinationInfo.programAddress !== TOKEN_PROGRAM_ADDRESS) {
       throw new Error(
         "The existing Circle-USDC destination is not owned by the classic SPL Token program. No transaction was submitted."
       );
@@ -769,7 +772,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     assertExpectedAssociatedTokenAccount({
       tokenAccountAddress: built.destinationTokenAccount,
       expectedTokenAccountAddress: expectedDestinationTokenAccount,
-      tokenAccountProgramAddress: destinationInfo.owner,
+      tokenAccountProgramAddress: destinationInfo.programAddress,
       expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
       tokenAccountOwnerAddress: destination.owner,
       expectedOwnerAddress: owner,
@@ -832,9 +835,9 @@ export async function unwrapWrappedUsdcToCircleUsdc(
     );
     if (
       !sourceInfo.exists ||
-      sourceInfo.owner !== TOKEN_2022_PROGRAM_ADDRESS ||
+      sourceInfo.programAddress !== TOKEN_2022_PROGRAM_ADDRESS ||
       !destinationInfo.exists ||
-      destinationInfo.owner !== TOKEN_PROGRAM_ADDRESS
+      destinationInfo.programAddress !== TOKEN_PROGRAM_ADDRESS
     ) {
       throw new Error("A finalized token account is missing or owned by the wrong token program.");
     }
@@ -846,7 +849,7 @@ export async function unwrapWrappedUsdcToCircleUsdc(
     assertExpectedAssociatedTokenAccount({
       tokenAccountAddress: preflight.destinationTokenAccount,
       expectedTokenAccountAddress: preflight.destinationTokenAccount,
-      tokenAccountProgramAddress: destinationInfo.owner,
+      tokenAccountProgramAddress: destinationInfo.programAddress,
       expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
       tokenAccountOwnerAddress: destinationAfter.data.owner,
       expectedOwnerAddress: address(wallet.account.address),

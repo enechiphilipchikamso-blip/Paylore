@@ -273,7 +273,9 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
             encodeU32(claim.amountCommitmentLeafIndex),
             encodeU32(claim.amountCommitmentProof.length),
             ...claim.amountCommitmentProof.map((sibling) => decodeHex32(sibling)),
-            getAddressEncoder().encode(address(claim.escrowTokenAccount))
+            Uint8Array.from(
+              getAddressEncoder().encode(address(claim.escrowTokenAccount))
+            )
           )
         } as const
       };
@@ -312,11 +314,14 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       workspaceAddress: workspace,
       allocationCommitment: input.allocationCommitment,
       workspaceSeed,
-      claims: derivedClaims.map(({ claimId, contributorAddress, claimAddress, escrowTokenAccount }) => ({
+      claims: derivedClaims.map(({ claimId, contributorAddress, claimAddress, escrowTokenAccount, amountCommitment, amountCommitmentProof, amountCommitmentLeafIndex }) => ({
         claimId,
         contributorAddress,
         claimAddress,
-        escrowTokenAccount
+        escrowTokenAccount,
+        amountCommitment,
+        amountCommitmentProof,
+        amountCommitmentLeafIndex
       })),
       initializeDiscriminator,
       createClaimDiscriminator,

@@ -149,7 +149,7 @@ describe("public cash-out ledger reconciliation route", () => {
     const response = await POST(request({
       kind: "confidential_withdrawal", signature, amountBaseUnits: "1000000"
     }), context);
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(409);
     expect(mocks.recordVerifiedPublicCashOutLedger).not.toHaveBeenCalled();
     expect(mocks.recordWorkspaceNonFinancialOutcome).toHaveBeenCalledWith({}, expect.objectContaining({
       category: "cash_out",

@@ -69,10 +69,10 @@ async function getContributorContext(workspaceId: string) {
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const context = await getContributorContext(workspaceId);
-  if ("response" in context) return context.response;
+  if ("response" in context) return context.response!;
   const config = loadPayloreConfig();
   const [account, hasOpenAllocations, offboarding] = await Promise.all([
     getContributorConfidentialAccount(
@@ -121,12 +121,12 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const context = await getContributorContext(workspaceId);
-    if ("response" in context) return context.response;
+    if ("response" in context) return context.response!;
 
     const config = loadPayloreConfig();
     const mint = config.PAYLORE_WRAPPED_USDC_MINT;

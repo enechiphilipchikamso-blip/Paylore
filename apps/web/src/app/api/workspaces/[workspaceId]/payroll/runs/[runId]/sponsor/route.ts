@@ -384,7 +384,13 @@ export async function POST(request: Request, { params }: RouteContext) {
         workspaceId,
         runId,
         signature,
-        claims: data.claims
+        programId: data.programId,
+        authorityAddress: data.authorityAddress,
+        claims: data.claims.map(({ claimId, claimAddress, escrowTokenAccount }) => ({
+          claimId,
+          claimAddress,
+          escrowTokenAccount
+        }))
       });
       if (recorded.status !== "committed" && recorded.status !== "submitting") return null;
       return recorded;
@@ -582,7 +588,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (selected.some((allocation) => allocation?.status !== "draft")) {
       return NextResponse.json({ error: "sponsored_claim_allocation_not_eligible" }, { status: 409 });
     }
-
     const begun = await beginGasTankOperationAttempt(db, {
       workspaceId,
       idempotencyKey,

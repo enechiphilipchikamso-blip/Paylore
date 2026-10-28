@@ -110,6 +110,7 @@ beforeEach(() => {
 vi.mock("@solana/kit", () => ({
   AccountRole: { READONLY: 0, WRITABLE: 1, READONLY_SIGNER: 2, WRITABLE_SIGNER: 3 },
   address: (value: string) => value,
+  isSome: (value: { __option?: string } | null | undefined) => value?.__option === "Some",
   blockhash: (value: string) => value,
   createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserve })),
   createSolanaRpc: vi.fn(() => ({
@@ -191,7 +192,7 @@ vi.mock("@solana/kit", () => ({
   },
   fetchEncodedAccount: async (_rpc: unknown, tokenAddress: string) => {
     if (tokenAddress === h.reserveToken && h.accountReady) {
-      return { exists: true, owner: h.accountOwner || h.tokenProgram };
+      return { exists: true, programAddress: h.accountOwner || h.tokenProgram };
     }
     return { exists: false, owner: h.tokenProgram };
   }
@@ -300,10 +301,12 @@ describe("workspace confidential reserve initialization", () => {
     expect(h.configCalls).toBe(1);
     expect(h.setupCalls).toBe(0);
     expect(h.attachCalls).toEqual([{
+      workspaceId: "workspace-a",
       phase: "program_configure",
       signature: "setup-signature-1"
     }]);
     expect(h.clearCalls).toEqual([{
+      workspaceId: "workspace-a",
       phase: "program_configure",
       signature: "setup-signature-1"
     }]);
@@ -357,6 +360,7 @@ describe("workspace confidential reserve initialization", () => {
     expect(h.setupCalls).toBe(0);
     expect(h.configCalls).toBe(1);
     expect(h.clearCalls[0]).toEqual({
+      workspaceId: "workspace-a",
       phase: "account_setup",
       signature: "prior-account-setup-signature"
     });
@@ -378,6 +382,7 @@ describe("workspace confidential reserve initialization", () => {
       phase: "program_configure"
     });
     expect(h.clearCalls).toEqual([{
+      workspaceId: "workspace-a",
       phase: "program_configure",
       signature: "failed-config-signature"
     }]);

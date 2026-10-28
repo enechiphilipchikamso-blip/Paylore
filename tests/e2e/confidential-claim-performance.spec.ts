@@ -14,6 +14,8 @@ declare global {
 
 test.describe("confidential claim performance evidence", () => {
   test("records browser responsiveness and memory without triggering a financial transaction", async ({ page }, testInfo) => {
+    await page.goto("/");
+
     const measurements = await page.evaluate(() => {
       const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
       const resources = performance.getEntriesByType("resource");

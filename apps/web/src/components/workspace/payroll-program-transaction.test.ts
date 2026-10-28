@@ -5,6 +5,7 @@ const workspaceId = "5f7bbaf7-21ab-4e62-95be-84f5d6bf6bb3";
 const programId = "4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93";
 const authorityAddress = "Vote111111111111111111111111111111111111111";
 const contributorAddress = "11111111111111111111111111111111";
+const escrowTokenAccount = "So11111111111111111111111111111111111111112";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,7 +27,8 @@ describe("payroll program transactions", () => {
             contributorAddress: "11111111111111111111111111111111",
             amountCommitment: "cd".repeat(32),
             amountCommitmentProof: ["aa".repeat(32)],
-            amountCommitmentLeafIndex: 0
+            amountCommitmentLeafIndex: 0,
+            escrowTokenAccount
           }
         ],
         programId,
@@ -62,8 +64,9 @@ describe("payroll program transactions", () => {
       claims: Array.from({ length: 5 }, (_, index) => ({
         claimId: index.toString(16).padStart(2, "0").repeat(32),
         amountCommitment: "cd".repeat(32),
-            amountCommitmentProof: ["aa".repeat(32)],
-            amountCommitmentLeafIndex: 0,
+        amountCommitmentProof: ["aa".repeat(32)],
+        amountCommitmentLeafIndex: 0,
+        escrowTokenAccount,
         contributorAddress: [
           "11111111111111111111111111111111",
           "Vote111111111111111111111111111111111111111",
@@ -117,7 +120,8 @@ describe("payroll program transactions", () => {
         ][index]!,
         amountCommitment: "cd".repeat(32),
         amountCommitmentProof: Array.from({ length: 10 }, () => "aa".repeat(32)),
-        amountCommitmentLeafIndex: index
+        amountCommitmentLeafIndex: index,
+        escrowTokenAccount
       })),
       programId,
       includeWorkspaceInitialization: false
@@ -142,6 +146,7 @@ describe("payroll program transactions", () => {
             amountCommitment: "cd".repeat(32),
             amountCommitmentProof: ["aa".repeat(32)],
             amountCommitmentLeafIndex: 0,
+            escrowTokenAccount,
             contributorAddress: "Vote111111111111111111111111111111111111111"
           },
           {
@@ -149,6 +154,7 @@ describe("payroll program transactions", () => {
             amountCommitment: "cd".repeat(32),
             amountCommitmentProof: ["aa".repeat(32)],
             amountCommitmentLeafIndex: 0,
+            escrowTokenAccount,
             contributorAddress: "11111111111111111111111111111111"
           }
         ],
@@ -174,6 +180,7 @@ describe("payroll program transactions", () => {
             amountCommitment: "cd".repeat(32),
             amountCommitmentProof: ["aa".repeat(32)],
             amountCommitmentLeafIndex: 0,
+            escrowTokenAccount,
             contributorAddress
           },
           {
@@ -181,6 +188,7 @@ describe("payroll program transactions", () => {
             amountCommitment: "cd".repeat(32),
             amountCommitmentProof: ["aa".repeat(32)],
             amountCommitmentLeafIndex: 0,
+            escrowTokenAccount,
             contributorAddress
           }
         ],

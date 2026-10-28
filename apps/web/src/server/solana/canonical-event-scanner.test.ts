@@ -67,7 +67,7 @@ function payrollInstruction(name: string, payload: Uint8Array = new Uint8Array()
   return {
     programId: PROGRAM_ID,
     accounts: [WATCHED_ACCOUNT],
-    data: instructionData("global:" + name, payload)
+    data: instructionData("global:" + name, new Uint8Array(payload))
   };
 }
 
@@ -210,7 +210,7 @@ describe("canonical event discovery and reconciliation input mapping", () => {
         ...canonical.transaction!,
         message: {
           ...canonical.transaction!.message!,
-          accountKeys: canonical.transaction!.message!.accountKeys?.map((key) =>
+          accountKeys: (canonical.transaction!.message!.accountKeys as Array<Record<string, unknown> | string> | undefined)?.map((key) =>
             key && typeof key === "object" && "pubkey" in key && key.pubkey === SIGNER
               ? { ...key, signer: false }
               : key
@@ -292,9 +292,11 @@ describe("canonical event discovery and reconciliation input mapping", () => {
     const data = instructionData("global:recover_claim", Buffer.alloc(32, 9));
     expect(findSupportedPayrollEvent({
       transaction: { message: { instructions: [{ programId: PROGRAM_ID, data }] }
+      }
     }, PROGRAM_ID)).toBe("recover_claim");
     expect(findSupportedPayrollEvent({
       transaction: { message: { instructions: [{ programId: "other-program", data }] }
+      }
     }, PROGRAM_ID)).toBeNull();
   });
 

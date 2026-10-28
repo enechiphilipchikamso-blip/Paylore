@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => ({
   getContributorConfidentialAccount: vi.fn(),
   getContributorOffboardingStatus: vi.fn(),
   hasOpenContributorPayrollAllocations: vi.fn(),
-  verifyConfidentialAccountSetup: vi.fn(), loadPayloreConfig: vi.fn()
+  verifyConfidentialAccountSetup: vi.fn(), loadPayloreConfig: vi.fn(),
+  ConfidentialAccountVerificationError: class ConfidentialAccountVerificationError extends Error {
+    constructor(readonly code: string) { super(code); }
+  }
 }));
 vi.mock("@paylore/database", () => ({
   findWorkspaceContributorByWallet: mocks.findWorkspaceContributorByWallet,
@@ -27,9 +30,7 @@ vi.mock("../../../../../../../server/security", () => ({
 }));
 vi.mock("../../../../../../../server/config", () => ({ loadPayloreConfig: mocks.loadPayloreConfig }));
 vi.mock("../../../../../../../server/solana/confidential-account-verification", () => ({
-  ConfidentialAccountVerificationError: class ConfidentialAccountVerificationError extends Error {
-    constructor(readonly code: string) { super(code); }
-  },
+  ConfidentialAccountVerificationError: mocks.ConfidentialAccountVerificationError,
   verifyConfidentialAccountSetup: mocks.verifyConfidentialAccountSetup
 }));
 import { GET, POST } from "./route";
@@ -114,7 +115,7 @@ describe("contributor confidential-account setup route", () => {
   });
   it("does not persist ready when the confidential extension is not ready", async () => {
     mocks.verifyConfidentialAccountSetup.mockRejectedValue(
-      Object.assign(new Error("not ready"), { code: "confidential_account_not_ready" })
+      new mocks.ConfidentialAccountVerificationError("confidential_account_not_ready")
     );
     const response = await POST(request({ signature }), context);
     expect(response.status).toBe(409);

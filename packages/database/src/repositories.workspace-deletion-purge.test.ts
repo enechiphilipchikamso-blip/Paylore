@@ -271,10 +271,11 @@ describe("workspace deletion purge contract", () => {
         Boolean(value) && typeof value === "object" && "eventKey" in value
       )
     )?.value as Array<Record<string, unknown>> | undefined;
-    expect(retainedNotificationBatch).toHaveLength(2);
+    expect(retainedNotificationBatch).toHaveLength(3);
     expect(retainedNotificationBatch?.map((notice) => notice.recipientKey)).toEqual([
       "admin-a",
-      "contributor-a"
+      "contributor-a",
+      "finance-a"
     ]);
     expect(retainedNotificationBatch?.every((notice) =>
       notice.workspaceId === "workspace-a" &&
@@ -287,7 +288,7 @@ describe("workspace deletion purge contract", () => {
       !("amountBaseUnits" in notice) &&
       !("walletAddress" in notice)
     )).toBe(true);
-    expect(retainedNotificationBatch?.some((notice) => notice.recipientKey === "finance-a")).toBe(false);
+    expect(retainedNotificationBatch?.some((notice) => notice.recipientKey === "finance-a")).toBe(true);
   });
 
   it("returns the prior deleted result on repeat without overwriting the retained audit outcome", async () => {

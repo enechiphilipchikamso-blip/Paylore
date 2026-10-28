@@ -182,7 +182,7 @@ describe("workspace reserve key custody and on-chain setup route", () => {
 
     const response = await POST(request({
       action: "initialize_confidential",
-      signature: "prior-signature",
+      signature: "p".repeat(64),
       phase: "account_setup"
     }), { params: routeContext.params });
 

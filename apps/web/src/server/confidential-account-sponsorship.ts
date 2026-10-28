@@ -69,17 +69,22 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   if (message.staticAccounts[0] !== input.gasTankAddress) {
     throw new GasTankSponsorshipPolicyError("confidential_setup_fee_payer_denied");
   }
-  if (transaction.signatures[input.gasTankAddress] &&
-      !transaction.signatures[input.gasTankAddress]!.every((byte) => byte === 0)) {
+  if (message.version !== 0) {
+    throw new GasTankSponsorshipPolicyError("confidential_setup_transaction_invalid");
+  }
+  const feePayerAddress = address(input.gasTankAddress);
+  const ownerAddress = address(input.ownerAddress);
+  if (transaction.signatures[feePayerAddress] &&
+      !transaction.signatures[feePayerAddress]!.every((byte) => byte === 0)) {
     throw new GasTankSponsorshipPolicyError("confidential_setup_fee_payer_already_signed");
   }
-  const contributorSignature = transaction.signatures[input.ownerAddress];
+  const contributorSignature = transaction.signatures[ownerAddress];
   if (!contributorSignature || contributorSignature.every((byte) => byte === 0)) {
     throw new GasTankSponsorshipPolicyError("confidential_setup_owner_signature_required");
   }
   const publicKey = await crypto.subtle.importKey(
     "raw",
-    getAddressEncoder().encode(address(input.ownerAddress)),
+    Uint8Array.from(getAddressEncoder().encode(ownerAddress)),
     { name: "Ed25519" },
     true,
     ["verify"]
@@ -89,7 +94,17 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   }
 
   const { reservedRentLamports } = assertAllowedConfidentialAccountSetupMessage({
-    message,
+    message: {
+      version: message.version,
+      staticAccounts: message.staticAccounts,
+      header: message.header,
+      instructions: message.instructions.map((instruction) => ({
+        programAddressIndex: instruction.programAddressIndex,
+        accountIndices: instruction.accountIndices,
+        data: instruction.data
+      })),
+      addressTableLookups: []
+    },
     feePayerAddress: input.gasTankAddress,
     ownerAddress: input.ownerAddress,
     mintAddress: input.mintAddress,
@@ -122,7 +137,7 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   return {
     transaction,
     messageBytes: new Uint8Array(transaction.messageBytes),
-    recentBlockhash: message.recentBlockhash,
+    recentBlockhash: message.lifetimeToken,
     feeLamports: fee.value === null ? null : BigInt(fee.value),
     reservedRentLamports,
     transactionBytes: wireBytes.length

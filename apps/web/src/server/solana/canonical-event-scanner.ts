@@ -112,7 +112,10 @@ export type CanonicalTransactionLike = {
   slot?: number;
   transaction?: {
     signatures?: unknown;
-    message?: { instructions?: Array<Record<string, unknown>> };
+    message?: {
+      accountKeys?: unknown;
+      instructions?: Array<Record<string, unknown>>;
+    };
   };
   meta?: { err?: unknown } | null;
 };

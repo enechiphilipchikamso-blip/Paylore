@@ -106,7 +106,7 @@ export function findAuthenticatedWallet(walletAddress: string): {
   signMessage: SolanaSignMessageMethod | null;
   signTransaction: SolanaSignTransactionMethod | null;
   disconnect: (() => Promise<void>) | null;
-}> {
+} {
   const registry = getWallets() as WalletRegistry;
   const wallet = registry.get().find((registeredWallet) =>
     matchesSupportedWallet(registeredWallet.name) &&

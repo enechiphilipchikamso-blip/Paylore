@@ -74,10 +74,10 @@ async function authorize(workspaceId: string) {
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const access = await authorize(workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
   try {
     const gasTank = await getWorkspaceGasTankSnapshot(
       access.db,
@@ -107,7 +107,7 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     if (Number(request.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) {
@@ -130,7 +130,7 @@ export async function POST(
 
     const { workspaceId } = await params;
     const access = await authorize(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
     }

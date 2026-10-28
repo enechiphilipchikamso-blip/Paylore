@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getDatabase: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   getWorkspacePayrollRun: vi.fn(),
+  getPayrollClaimEscrow: vi.fn(),
   verifyPayrollClaimTransaction: vi.fn(),
   updateGasTankOperationAttempt: vi.fn(),
   recordPayrollClaimSubmission: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@paylore/database", () => ({
   getWorkspaceForUser: mocks.getWorkspaceForUser,
   getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
+  getPayrollClaimEscrow: mocks.getPayrollClaimEscrow,
   recordPayrollClaimSubmission: mocks.recordPayrollClaimSubmission,
   updateGasTankOperationAttempt: mocks.updateGasTankOperationAttempt
 }));
@@ -70,7 +72,17 @@ describe("verified payroll claim commit", () => {
     mocks.getWorkspaceForUser.mockResolvedValue({ role: "organization_admin" });
     mocks.getWorkspacePayrollRun.mockResolvedValue({
       run: { allocationCommitment: "ab".repeat(32), status: "commit_pending" },
-      allocations: [{ claimId, contributorWalletAddress: "contributor-wallet" }]
+      allocations: [{
+        claimId,
+        contributorWalletAddress: "contributor-wallet",
+        amountCommitment: "cd".repeat(32),
+        amountCommitmentProof: ["ef".repeat(32)],
+        amountCommitmentLeafIndex: 0
+      }]
+    });
+    mocks.getPayrollClaimEscrow.mockResolvedValue({
+      status: "funded",
+      tokenAccountAddress: "escrow-token-account"
     });
     mocks.verifyPayrollClaimTransaction.mockResolvedValue(undefined);
     mocks.updateGasTankOperationAttempt.mockResolvedValue(true);
@@ -117,7 +129,11 @@ describe("verified payroll claim commit", () => {
       signature,
       programId: "payroll-program",
       authorityAddress: "manager-wallet",
-      claims: [{ claimId, claimAddress }]
+      claims: [expect.objectContaining({
+        claimId,
+        claimAddress,
+        escrowTokenAccount: "escrow-token-account"
+      })]
     });
   });
 

@@ -206,13 +206,15 @@ function rowsFromMatrix(
 
   for (const [index, values] of matrix.slice(1).entries()) {
     const record: Partial<ContributorImportRow> = {};
+    let rawRole = "";
     header.forEach((key, column) => {
-      if (key) {
+      if (key === "role") {
+        rawRole = values[column]?.trim() ?? "";
+      } else if (key) {
         record[key] = values[column]?.trim() ?? "";
       }
     });
 
-    const rawRole = record.role?.trim() ?? "";
     const normalizedRole = rawRole ? normalizeContributorRole(rawRole) : "contributor";
     const errors: string[] = [];
     if (!normalizedRole) errors.push("Role must be Contributor or Finance/Auditor.");

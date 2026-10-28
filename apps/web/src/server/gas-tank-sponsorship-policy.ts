@@ -1,6 +1,8 @@
 import {
   AccountRole,
-  getAddressDecoder
+  address,
+  getAddressDecoder,
+  getAddressEncoder
 } from "@solana/kit";
 
 export const MAX_SPONSORED_CLAIMS = 2;
@@ -125,7 +127,7 @@ export function assertSponsoredClaimIntent(input: {
     }
     claim.amountCommitmentProof.forEach((sibling) => hex32(sibling));
     try {
-      getAddressDecoder().decode(claim.escrowTokenAccount);
+      address(claim.escrowTokenAccount);
     } catch {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_escrow_address_invalid");
     }
@@ -207,7 +209,9 @@ export function assertAllowedPayrollInstructionSet(input: {
           encodeU32(claim.amountCommitmentLeafIndex),
           encodeU32(claim.amountCommitmentProof.length),
           ...claim.amountCommitmentProof.map((sibling) => hex32(sibling)),
-          getAddressDecoder().decode(claim.escrowTokenAccount)
+          Uint8Array.from(
+            getAddressEncoder().encode(address(claim.escrowTokenAccount))
+          )
         )
       ) ||
       !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
@@ -321,8 +325,8 @@ type DecodedSetupMessage = {
   };
   instructions: readonly {
     programAddressIndex: number;
-    accountIndices: readonly number[];
-    data: Uint8Array;
+    accountIndices?: readonly number[];
+    data?: ArrayLike<number>;
   }[];
   addressTableLookups?: readonly unknown[];
 };
@@ -389,16 +393,18 @@ export function assertAllowedConfidentialAccountSetupMessage(input: {
   const addressDecoder = getAddressDecoder();
 
   for (const instruction of message.instructions) {
+    const accountIndices = instruction.accountIndices;
+    const instructionData = instruction.data;
     if (!Number.isInteger(instruction.programAddressIndex) ||
         instruction.programAddressIndex < 0 ||
         instruction.programAddressIndex >= message.staticAccounts.length ||
-        !Array.isArray(instruction.accountIndices) ||
-        !(instruction.data instanceof Uint8Array)) {
+        !Array.isArray(accountIndices) ||
+        !(instructionData instanceof Uint8Array)) {
       throw new GasTankSponsorshipPolicyError("confidential_setup_instruction_invalid");
     }
     const programAddress = addressAt(instruction.programAddressIndex);
-    const accounts = instruction.accountIndices;
-    const data = instruction.data;
+    const accounts = accountIndices;
+    const data = instructionData;
 
     if (programAddress === MEMO_PROGRAM_ADDRESS) {
       if (accounts.length !== 1 ||

@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { applyVerifiedSubscriptionPayment, getSubscriptionPaymentAttempt, getWorkspaceForUser, recordSubscriptionPaymentAttemptSignature, updateSubscriptionPaymentAttemptStatus } from "@paylore/database";
-import { getDatabase } from "../../../../../server/db";
-import { assertSameOrigin, RequestSecurityError } from "../../../../../server/security";
-import { clearSessionCookie, getSessionState } from "../../../../../server/session";
-import { PaymentVerificationError, verifySubscriptionPayment } from "../../../../../server/solana/payment-verification";
-import { readSolanaRpc } from "../../../../../server/solana/rpc";
-import { assessAmbiguousPaymentAttempt, PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT } from "../../../../../server/solana/payment-attempt-reconciliation";
+import { getDatabase } from "../../../../../../server/db";
+import { assertSameOrigin, RequestSecurityError } from "../../../../../../server/security";
+import { clearSessionCookie, getSessionState } from "../../../../../../server/session";
+import { PaymentVerificationError, verifySubscriptionPayment } from "../../../../../../server/solana/payment-verification";
+import { readSolanaRpc } from "../../../../../../server/solana/rpc";
+import { assessAmbiguousPaymentAttempt, PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT } from "../../../../../../server/solana/payment-attempt-reconciliation";
 
 const schema = z.object({ attemptId: z.string().uuid(), signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/).optional() });
 export const runtime = "nodejs";
@@ -28,7 +28,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     if (!parsed.success) return NextResponse.json({ error: "invalid_payment_attempt" }, { status: 400 });
     let attempt = await getSubscriptionPaymentAttempt(db, parsed.data.attemptId);
     if (!attempt || attempt.workspaceId !== workspaceId || attempt.userId !== session.session.userId || attempt.payerWalletAddress !== session.session.walletAddress) return NextResponse.json({ error: "payment_attempt_not_found" }, { status: 404 });
-    if (parsed.data.signature) attempt = await recordSubscriptionPaymentAttemptSignature(db, { attemptId: attempt.id, signature: parsed.data.signature });
+    if (parsed.data.signature) {
+      await recordSubscriptionPaymentAttemptSignature(db, {
+        attemptId: attempt.id,
+        signature: parsed.data.signature
+      });
+      attempt = { ...attempt, signature: parsed.data.signature };
+    }
     if (attempt.status === "confirmed") return NextResponse.json({ status: "active" });
     if (!attempt.signature) {
       const [blockHeight, recentSignatures] = await Promise.all([
@@ -90,11 +96,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       }
     }
 
+    if (!attempt.signature) {
+      return NextResponse.json({ status: "reconciliation_required" }, { status: 202 });
+    }
+    const signature = attempt.signature;
     try {
-      const verified = await verifySubscriptionPayment(attempt.signature, session.session.walletAddress, attempt.memo);
+      const verified = await verifySubscriptionPayment(signature, session.session.walletAddress, attempt.memo);
       if (verified.recipient !== attempt.recipient || verified.mint !== attempt.mint || verified.amountBaseUnits !== attempt.amountBaseUnits) {
         const failed = await updateSubscriptionPaymentAttemptStatus(db, {
-          attemptId: attempt.id, status: "failed", signature: attempt.signature
+          attemptId: attempt.id, status: "failed", signature
         });
         if (!failed) {
           const current = await getSubscriptionPaymentAttempt(db, attempt.id);
@@ -104,7 +114,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
         return NextResponse.json({ error: "payment_attempt_mismatch" }, { status: 422 });
       }
       await applyVerifiedSubscriptionPayment(db, { workspaceId, userId: session.session.userId, ...verified });
-      await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "confirmed", signature: attempt.signature });
+      await updateSubscriptionPaymentAttemptStatus(db, { attemptId: attempt.id, status: "confirmed", signature });
       return NextResponse.json({ status: "active" });
     } catch (error) {
       if (error instanceof PaymentVerificationError && error.reason === "not_found") {
@@ -117,7 +127,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
         const failed = await updateSubscriptionPaymentAttemptStatus(db, {
           attemptId: attempt.id,
           status: "failed",
-          signature: attempt.signature
+          signature
         });
         if (!failed) {
           const current = await getSubscriptionPaymentAttempt(db, attempt.id);

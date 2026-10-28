@@ -4,6 +4,7 @@ import {
   findWorkspaceContributorByWallet,
   getContributorConfidentialAccount,
   getWorkspaceForUser,
+  recordWorkspaceNonFinancialOutcome,
   recordVerifiedPublicCashOutLedger
 } from "@paylore/database";
 import { getDatabase } from "../../../../../../server/db";

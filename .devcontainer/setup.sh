@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Use user-owned toolchain paths explicitly; non-interactive bash does not
-# reliably source shell profile PATH additions made by installers.
-export PATH="$HOME/.cargo/bin:$HOME/.avm/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"
-
 if ! command -v rustup >/dev/null 2>&1; then
   echo "Rustup is missing; rebuild the Codespace so the pinned devcontainer installs it." >&2
   exit 1
@@ -12,6 +8,10 @@ fi
 
 expected_node="24.22.1"
 expected_node_binary="/usr/local/share/nvm/versions/node/v${expected_node}/bin/node"
+# Use pinned toolchain paths explicitly; non-interactive bash does not
+# reliably source shell profile PATH additions made by installers.
+export PATH="$(dirname "$expected_node_binary"):$HOME/.cargo/bin:$HOME/.avm/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"
+
 actual_node="$(node --version | sed 's/^v//')"
 actual_node_command="$(command -v node)"
 actual_node_path="$(node -p 'process.execPath')"
@@ -50,6 +50,20 @@ cargo install \
 
 avm install 1.2.0
 avm use 1.2.0
+
+platform_tools_dir="$HOME/.cache/solana/v1.57/platform-tools"
+platform_tools_archive="$platform_tools_dir/platform-tools-linux-x86_64.tar.bz2"
+if ! find "$platform_tools_dir/rust/lib" -maxdepth 1 -name 'librustc_driver-*.so' -print -quit 2>/dev/null | grep -q .; then
+  if [[ ! -f "$platform_tools_archive" ]]; then
+    echo "Solana platform-tools archive is missing: ${platform_tools_archive}" >&2
+    exit 1
+  fi
+  tar -xjf "$platform_tools_archive" -C "$platform_tools_dir"
+fi
+if ! find "$platform_tools_dir/rust/lib" -maxdepth 1 -name 'librustc_driver-*.so' -print -quit 2>/dev/null | grep -q .; then
+  echo "Solana platform-tools rustc runtime is incomplete after extraction." >&2
+  exit 1
+fi
 
 solana config set --url devnet
 

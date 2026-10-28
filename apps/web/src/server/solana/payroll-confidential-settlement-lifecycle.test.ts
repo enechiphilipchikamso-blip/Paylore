@@ -132,7 +132,7 @@ describe("confidential proof-context cleanup", () => {
     mocks.fetchEncodedAccount.mockResolvedValue({ exists: true, owner: "unexpected-program" });
     const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
     expect(result).toBe(false);
-    expect(mocks.fetchEncodedAccount).toHaveBeenCalledOnce();
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
   });
 
@@ -160,12 +160,14 @@ describe("confidential proof-context cleanup", () => {
   it.each([
     ["pending", { successful: false, pending: true, signatures: ["close-signature"], trackingFailed: false }],
     ["signature tracking failure", { successful: false, pending: false, signatures: ["close-signature"], trackingFailed: true }]
-  ] as const)("retains durable context records when close is %s", async (_label, outcome) => {
+  ] as const)("retains durable context records when close is %s", async (_label, _outcome) => {
     mocks.fetchEncodedAccount.mockResolvedValue({
       exists: true,
       owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
     });
-    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => outcome);
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => {
+      throw new Error(`${_label}: close did not finalize`);
+    });
     const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();

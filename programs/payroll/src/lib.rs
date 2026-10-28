@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{
-    hash::hashv,
-    instruction::Instruction,
-    sysvar::instructions::{load_current_index_checked, load_instruction_at_checked}
+use anchor_lang::solana_program::instruction::Instruction;
+use solana_instructions_sysvar::{
+    load_current_index_checked, load_instruction_at_checked, ID as INSTRUCTIONS_SYSVAR_ID,
 };
+use solana_sha256_hasher::hashv;
 
 declare_id!("4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93");
 
@@ -259,7 +259,7 @@ fn transition_claim_to_recovered(claim: &mut ClaimState) -> Result<()> {
 fn is_settlement_pending_instruction_for_claim(instruction: &Instruction, claim: Pubkey) -> bool {
     let expected = hashv(&[b"global:mark_settlement_pending"]).to_bytes();
     instruction.program_id == crate::ID
-        && instruction.data.get(..8) == Some(&expected[..])
+        && instruction.data.get(..8) == Some(&expected[..8])
         && instruction.accounts.get(6).map(|account| account.pubkey) == Some(claim)
 }
 
@@ -339,16 +339,26 @@ fn verify_allocation_merkle_proof(
     }
     let mut current = hashv(&[
         b"paylore:allocation-leaf:v1\0",
-        &claim_id,
+        claim_id.as_ref(),
         contributor.as_ref(),
         &amount_commitment,
     ]).to_bytes();
     let mut index = leaf_index;
     for sibling in siblings {
         current = if index & 1 == 0 {
-            hashv(&[b"paylore:allocation-node:v1\0", &current, sibling]).to_bytes()
+            hashv(&[
+                b"paylore:allocation-node:v1\0",
+                current.as_ref(),
+                sibling.as_ref(),
+            ])
+            .to_bytes()
         } else {
-            hashv(&[b"paylore:allocation-node:v1\0", sibling, &current]).to_bytes()
+            hashv(&[
+                b"paylore:allocation-node:v1\0",
+                sibling.as_ref(),
+                current.as_ref(),
+            ])
+            .to_bytes()
         };
         index >>= 1;
     }
@@ -582,7 +592,7 @@ pub struct MarkSettlementPending<'info> {
     /// CHECK: The destination owner and mint are checked before transition.
     pub destination_token_account: UncheckedAccount<'info>,
     /// CHECK: The program reads the current transaction instruction list.
-    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
@@ -636,7 +646,7 @@ pub struct MarkClaimed<'info> {
     /// CHECK: The destination owner and mint are checked before transition.
     pub destination_token_account: UncheckedAccount<'info>,
     /// CHECK: The program reads the current transaction instruction list.
-    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
@@ -687,7 +697,7 @@ pub struct MarkClaimEscrowFunded<'info> {
     /// CHECK: The Claim PDA determines its only permitted escrow.
     pub escrow_token_account: UncheckedAccount<'info>,
     /// CHECK: The program reads the current transaction instruction list.
-    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
@@ -730,8 +740,8 @@ pub struct FinalizeClaimed<'info> {
         constraint = claim.status == ClaimStatus::SettlementPending
     )]
     pub claim: Account<'info, ClaimState>,
-    /// Finalization must be separate from the transfer that reserved the claim.
-    #[account(address = solana_program::sysvar::instructions::ID)]
+    /// CHECK: The program reads the instruction list to enforce separate finalization.
+    #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
@@ -779,7 +789,7 @@ pub struct RecoverClaim<'info> {
     /// CHECK: Only this Claim PDA's escrow may be restored.
     pub escrow_token_account: UncheckedAccount<'info>,
     /// CHECK: The program reads the current transaction instruction list.
-    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: Token-2022 validates the amount-bound proof context.
     pub amount_commitment_context: UncheckedAccount<'info>,
@@ -828,7 +838,7 @@ impl ClaimState {
     pub const SPACE: usize = 8 + 32 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 1;
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ClaimStatus {
     Unclaimed,
     Claimed,

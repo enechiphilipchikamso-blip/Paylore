@@ -220,7 +220,9 @@ export async function buildPayrollClaimTransactions(input: {
             leafIndex,
             encodeU32(proofSiblings.length),
             ...proofSiblings,
-            getAddressEncoder().encode(address(claim.escrowTokenAccount))
+            Uint8Array.from(
+              getAddressEncoder().encode(address(claim.escrowTokenAccount))
+            )
           )
         } as const
       };
@@ -228,7 +230,7 @@ export async function buildPayrollClaimTransactions(input: {
   );
 
   const rpc = createSolanaRpc("https://api.devnet.solana.com");
-  const claimsPerTransaction = claims.some((claim) => claim.amountCommitmentProof.length > 8)
+  const claimsPerTransaction = input.claims.some((claim) => claim.amountCommitmentProof.length > 8)
     ? 1
     : PAYROLL_CLAIMS_PER_TRANSACTION;
   const batches: typeof claimInstructions[] = [];

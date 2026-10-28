@@ -8,7 +8,7 @@ export function isExpectedConfidentialTransfer(
 ): boolean {
   const accounts = instruction.accounts ?? [];
   return instruction.programAddress === TOKEN_2022_PROGRAM_ADDRESS &&
-    instruction.data.length >= 2 && instruction.data[0] === 27 && instruction.data[1] === 7 &&
+    (instruction.data?.length ?? 0) >= 2 && instruction.data?.[0] === 27 && instruction.data?.[1] === 7 &&
     accounts.length >= 3 && accounts[0]?.address === expected.source &&
     accounts[1]?.address === expected.mint && accounts[2]?.address === expected.destination;
 }

@@ -219,7 +219,16 @@ export function sealReserveKey(
   }
 }
 
-type EncryptedReserve = SealedReserve;
+type EncryptedPrivateKey = Pick<
+  SealedReserve,
+  | "address"
+  | "encryptedPrivateKey"
+  | "privateKeyNonce"
+  | "privateKeyAuthTag"
+  | "encryptedDataKey"
+  | "dataKeyNonce"
+  | "dataKeyAuthTag"
+>;
 
 export type SealedGasTank = {
   address: string;
@@ -472,7 +481,7 @@ export function rewrapGasTankKey(
 
 export function openReserveKey(
   workspaceId: string,
-  sealed: EncryptedReserve,
+  sealed: EncryptedPrivateKey,
   encodedEnvelopeKey: string
 ): Buffer {
   const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);
@@ -510,7 +519,7 @@ export function openReserveKey(
 
 export function restoreReserveFromBackup(
   workspaceId: string,
-  sealed: EncryptedReserve,
+  sealed: SealedReserve,
   encodedEnvelopeKey: string
 ): SealedReserve {
   const envelopeKey = getEnvelopeKey(encodedEnvelopeKey);

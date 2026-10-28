@@ -40,16 +40,16 @@ vi.mock("@paylore/database", () => ({
   recordSubscriptionPaymentAttemptSignature: mocks.recordSubscriptionPaymentAttemptSignature,
   updateSubscriptionPaymentAttemptStatus: mocks.updateSubscriptionPaymentAttemptStatus
 }));
-vi.mock("../../../../../server/db", () => ({ getDatabase: mocks.getDatabase }));
-vi.mock("../../../../../server/security", () => ({
+vi.mock("../../../../../../server/db", () => ({ getDatabase: mocks.getDatabase }));
+vi.mock("../../../../../../server/security", () => ({
   assertSameOrigin: mocks.assertSameOrigin,
   RequestSecurityError: class RequestSecurityError extends Error {}
 }));
-vi.mock("../../../../../server/session", () => ({
+vi.mock("../../../../../../server/session", () => ({
   getSessionState: mocks.getSessionState,
   clearSessionCookie: mocks.clearSessionCookie
 }));
-vi.mock("../../../../../server/solana/payment-verification", () => ({
+vi.mock("../../../../../../server/solana/payment-verification", () => ({
   PaymentVerificationError: class PaymentVerificationError extends Error {
     readonly reason: string;
     constructor(reason: string) {
@@ -59,14 +59,14 @@ vi.mock("../../../../../server/solana/payment-verification", () => ({
   },
   verifySubscriptionPayment: mocks.verifySubscriptionPayment
 }));
-vi.mock("../../../../../server/solana/rpc", () => ({ readSolanaRpc: mocks.readSolanaRpc }));
-vi.mock("../../../../../server/solana/payment-attempt-reconciliation", () => ({
+vi.mock("../../../../../../server/solana/rpc", () => ({ readSolanaRpc: mocks.readSolanaRpc }));
+vi.mock("../../../../../../server/solana/payment-attempt-reconciliation", () => ({
   PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT: 1000,
   assessAmbiguousPaymentAttempt: mocks.assessAmbiguousPaymentAttempt
 }));
 
 import { POST } from "./route";
-import { PaymentVerificationError } from "../../../../../server/solana/payment-verification";
+import { PaymentVerificationError } from "../../../../../../server/solana/payment-verification";
 
 const WORKSPACE_ID = "workspace-a";
 const ATTEMPT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

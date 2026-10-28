@@ -147,7 +147,7 @@ async function executePlan(
       const signed = await partiallySignTransactionMessageWithSigners(message);
       const wire = getBase64EncodedWireTransaction(signed);
       const signature = await rpc.sendTransaction(wire, {
-        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3
+        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
       }).send();
       const signatureText = String(signature);
       signatures.push(signatureText);
@@ -458,7 +458,7 @@ async function inspectTokenAccount(input: {
   if (!encoded.exists) {
     return { status: "account_missing", tokenAccount: input.reserveTokenAddress, confidentialTransferReady: false };
   }
-  if (encoded.owner !== TOKEN_2022_PROGRAM_ADDRESS) {
+  if (encoded.programAddress !== TOKEN_2022_PROGRAM_ADDRESS) {
     throw new WorkspaceReserveInitializationError("reserve_token_account_program_mismatch", 409);
   }
   const token = (await fetchToken(input.rpc, address(input.reserveTokenAddress))).data;
@@ -533,7 +533,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
 
     const encoded = await fetchEncodedAccount(input.rpc, address(input.reserveTokenAddress));
     let accountReady = false;
-    if (encoded.exists && encoded.owner !== TOKEN_2022_PROGRAM_ADDRESS) {
+    if (encoded.exists && encoded.programAddress !== TOKEN_2022_PROGRAM_ADDRESS) {
       throw new WorkspaceReserveInitializationError("reserve_token_account_program_mismatch", 409);
     }
     if (encoded.exists) {
@@ -557,7 +557,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       const setup = await getCreateConfidentialTransferAccountInstructionPlan({
         payer: input.signer,
         owner: input.signer,
-        mint: input.mintAddress,
+        mint: address(input.mintAddress),
         token: address(input.reserveTokenAddress),
         rpc: input.rpc,
         elgamalKeypair: input.elgamal,

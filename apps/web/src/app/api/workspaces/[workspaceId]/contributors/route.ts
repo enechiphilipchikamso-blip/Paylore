@@ -51,10 +51,10 @@ async function authorize(request: Request, workspaceId: string, mutate = false) 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext): Promise<Response> {
   const { workspaceId } = await params;
   const access = await authorize(request, workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
   const contributors = await listWorkspaceContributors(access.db, workspaceId);
   return NextResponse.json({
     contributors: contributors.map((record) => ({
@@ -72,11 +72,11 @@ export async function GET(request: Request, { params }: RouteContext) {
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext): Promise<Response> {
   try {
     const { workspaceId } = await params;
     const access = await authorize(request, workspaceId, true);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
     }

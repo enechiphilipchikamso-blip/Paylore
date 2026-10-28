@@ -10,6 +10,7 @@ import {
   createTransactionPlanner,
   fetchEncodedAccount,
   getBase64EncodedWireTransaction,
+  isSome,
   partiallySignTransactionMessageWithSigners,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -55,6 +56,8 @@ const FINALITY_TIMEOUT_MS = 120_000;
 
 type Finality = "finalized" | "failed" | "pending";
 type Signer = Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+type Token = Awaited<ReturnType<typeof fetchToken>>["data"];
+type Mint = Awaited<ReturnType<typeof fetchMint>>["data"];
 
 export class PayrollClaimEscrowError extends Error {
   constructor(readonly code: string, readonly statusCode: number) {
@@ -90,15 +93,11 @@ function object(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function extensionList(value: { extensions?: readonly { __kind: string }[] }): readonly { __kind: string }[] {
-  return Array.isArray(value.extensions) ? value.extensions : [];
+function extensionList(value: Token | Mint): readonly { __kind: string }[] {
+  return isSome(value.extensions) ? value.extensions.value : [];
 }
 
-function isConfidentialReady(token: {
-  owner: string;
-  mint: string;
-  extensions?: readonly { __kind: string; [key: string]: unknown }[];
-}, expectedOwner: string, expectedMint: string): boolean {
+function isConfidentialReady(token: Token, expectedOwner: string, expectedMint: string): boolean {
   const ext = extensionList(token).find((item) => item.__kind === "ConfidentialTransferAccount") as
     | ({ __kind: string; approved?: unknown; allowConfidentialCredits?: unknown })
     | undefined;
@@ -179,7 +178,7 @@ async function executePlan(
       const signature = await rpc.sendTransaction(encoded, {
         encoding: "base64",
         preflightCommitment: "confirmed",
-        maxRetries: 3
+        maxRetries: 3n
       }).send();
       const signatureText = String(signature);
       signatures.push(signatureText);
@@ -287,7 +286,15 @@ export async function preparePayrollClaimEscrowAccount(
     throw new PayrollClaimEscrowError("payroll_claim_escrow_key_unavailable", 503);
   }
 
-  const tempPrivateKey = openReserveKey(escrowContext, escrow, envelopeKey);
+  const tempPrivateKey = openReserveKey(escrowContext, {
+    address: escrow.tokenAccountAddress,
+    encryptedPrivateKey: escrow.encryptedPrivateKey,
+    privateKeyNonce: escrow.privateKeyNonce,
+    privateKeyAuthTag: escrow.privateKeyAuthTag,
+    encryptedDataKey: escrow.encryptedDataKey,
+    dataKeyNonce: escrow.dataKeyNonce,
+    dataKeyAuthTag: escrow.dataKeyAuthTag
+  }, envelopeKey);
   try {
     return await withWorkspaceReserveKey(db, input.workspaceId, async (reservePrivateKey) => {
       const reserveSigner = await createKeyPairSignerFromBytes(reservePrivateKey);
@@ -312,7 +319,20 @@ export async function preparePayrollClaimEscrowAccount(
       if (!existingAccount.exists) {
         const extensions = [
           extension("ImmutableOwner", {}),
-          extension("ConfidentialTransferAccount", {})
+          extension("ConfidentialTransferAccount", {
+            approved: false,
+            elgamalPubkey: address("11111111111111111111111111111111"),
+            pendingBalanceLow: new Uint8Array(64),
+            pendingBalanceHigh: new Uint8Array(64),
+            availableBalance: new Uint8Array(64),
+            decryptableAvailableBalance: new Uint8Array(36),
+            allowConfidentialCredits: false,
+            allowNonConfidentialCredits: false,
+            pendingBalanceCreditCounter: 0n,
+            maximumPendingBalanceCreditCounter: 0n,
+            expectedPendingBalanceCreditCounter: 0n,
+            actualPendingBalanceCreditCounter: 0n
+          })
         ];
         const space = BigInt(getTokenSize(extensions));
         const rent = await rpc.getMinimumBalanceForRentExemption(space).send();
@@ -354,7 +374,7 @@ export async function preparePayrollClaimEscrowAccount(
           }
           throw new PayrollClaimEscrowError("payroll_claim_escrow_account_setup_failed", 503);
         }
-      } else if (existingAccount.owner !== TOKEN_2022_PROGRAM_ADDRESS) {
+      } else if (existingAccount.programAddress !== TOKEN_2022_PROGRAM_ADDRESS) {
         throw new PayrollClaimEscrowError("payroll_claim_escrow_account_owner_invalid", 409);
       }
 

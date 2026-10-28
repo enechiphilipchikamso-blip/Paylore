@@ -118,7 +118,7 @@ describe("workspace payroll recovery detail", () => {
       amountCommitment: allocation.amountCommitment,
       escrowTokenAccount: "claim-escrow-a"
     });
-    expect(html).toContain("Financial recovery is unavailable");
+    expect(html).toContain("Recovery action");
     expect(html).toContain('href="/workspace/workspace-a/recovery"');
     expect(mocks.recoveryProps).toMatchObject({
       workspaceId: "workspace-a",

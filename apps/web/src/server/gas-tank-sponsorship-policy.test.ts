@@ -25,7 +25,8 @@ const claim = {
   amountCommitment: "ab".repeat(32),
   amountCommitmentProof: ["cd".repeat(32)],
   amountCommitmentLeafIndex: 0,
-  claimAddress: "claim-pda"
+  claimAddress: "claim-pda",
+  escrowTokenAccount: "So11111111111111111111111111111111111111112"
 };
 const encoder = new TextEncoder();
 
@@ -85,7 +86,8 @@ function instructions() {
           decodedHex(claim.amountCommitment),
           new Uint8Array([0, 0, 0, 0]),
           new Uint8Array([1, 0, 0, 0]),
-          decodedHex(claim.amountCommitmentProof[0]!)
+          decodedHex(claim.amountCommitmentProof[0]!),
+          Uint8Array.from(getAddressEncoder().encode(address(claim.escrowTokenAccount)))
         )
       }
     ]
@@ -405,7 +407,7 @@ describe("company-sponsored confidential-account setup instruction policy", () =
     const withLookup = setupInput([
       { programAddressIndex: 8, accountIndices: [], data: Uint8Array.of(4, 1) }
     ]);
-    withLookup.message.addressTableLookups = [{}];
+    withLookup.message.addressTableLookups = [{}] as never;
     expect(() => assertAllowedConfidentialAccountSetupMessage(withLookup))
       .toThrow("confidential_setup_transaction_invalid");
   });

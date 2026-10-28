@@ -45,6 +45,11 @@ const encoder = new TextEncoder();
 
 type Token = Awaited<ReturnType<typeof fetchToken>>["data"];
 type Mint = Awaited<ReturnType<typeof fetchMint>>["data"];
+type RecoveryReason =
+  | "incorrect_allocation"
+  | "contributor_left_before_claim"
+  | "payroll_correction"
+  | "other";
 type RecoveryPhase = "proof_setup" | "reserve_balance_apply" | "recovery";
 
 export type PayrollConfidentialRecoveryResult = {
@@ -71,6 +76,12 @@ class FinalityFailedError extends Error {
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
+}
+function isRecoveryReason(value: string | null): value is RecoveryReason {
+  return value === "incorrect_allocation" ||
+    value === "contributor_left_before_claim" ||
+    value === "payroll_correction" ||
+    value === "other";
 }
 function discriminator(value: string): Uint8Array {
   return createHash("sha256").update(value).digest().subarray(0, 8);
@@ -142,7 +153,7 @@ async function executePlan(
       const signed = await partiallySignTransactionMessageWithSigners(message);
       const encoded = getBase64EncodedWireTransaction(signed);
       const sig = await rpc.sendTransaction(encoded, {
-        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3
+        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
       }).send();
       const text = String(sig);
       signatures.push(text);
@@ -234,7 +245,7 @@ async function cleanupRecoveryProofContexts(
     try {
       const account = await fetchEncodedAccount(rpc, address(addressText));
       if (!account.exists) continue;
-      if (account.owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) { resolved = false; continue; }
+      if (account.programAddress !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) { resolved = false; continue; }
       const close = closeContextStateProof({
         contextState: address(addressText),
         authority: signer,
@@ -278,6 +289,7 @@ export async function recoverPayrollAllocation(
   if (!runResult || !allocation || !allocation.claimAddress) {
     throw new PayrollConfidentialRecoveryError("payroll_allocation_not_found", 404);
   }
+  const claimAddress = allocation.claimAddress;
   if (!/^(0|[1-9][0-9]*)$/.test(allocation.amountBaseUnits) ||
       BigInt(allocation.amountBaseUnits) <= 0n ||
       !/^[0-9a-f]{64}$/i.test(allocation.claimId) ||
@@ -298,7 +310,8 @@ export async function recoverPayrollAllocation(
   const config = loadPayloreConfig();
   const mint = config.PAYLORE_WRAPPED_USDC_MINT;
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
-  if (!mint || !programId || !config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET) {
+  const secretHex = config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET;
+  if (!mint || !programId || !secretHex) {
     throw new PayrollConfidentialRecoveryError("payroll_recovery_not_configured", 503);
   }
   const evidence = await getPayrollClaimCreationEvidence(db, {
@@ -319,9 +332,7 @@ export async function recoverPayrollAllocation(
       throw new PayrollConfidentialRecoveryError("payroll_claim_escrow_not_found", 409);
     }
     const savedReason = escrow.recoveryReason;
-    const validReason = savedReason === "incorrect_allocation" ||
-      savedReason === "contributor_left_before_claim" ||
-      savedReason === "payroll_correction" || savedReason === "other";
+    const validReason = isRecoveryReason(savedReason);
     const effectiveInput = escrow.status === "recovery_pending" && validReason
       ? {
           ...input,
@@ -418,7 +429,7 @@ export async function recoverPayrollAllocation(
     const material = derivePayrollAmountCommitmentMaterial({
       amountBaseUnits: allocation.amountBaseUnits,
       claimId: allocation.claimId,
-      secretHex: config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET
+      secretHex
     });
     try {
       if (material.amountCommitment !== allocation.amountCommitment) {
@@ -510,10 +521,11 @@ export async function recoverPayrollAllocation(
 
         const transferIx = transferPlan.plans[1].instruction;
         const accounts = transferIx.accounts ?? [];
+        const transferData = transferIx.data;
         const amountCommitmentContext = accounts[4]?.address;
         if (typeof amountCommitmentContext !== "string" ||
             transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS ||
-            transferIx.data[0] !== 27 || transferIx.data[1] !== 7 ||
+            !transferData || transferData[0] !== 27 || transferData[1] !== 7 ||
             accounts[0]?.address !== escrow.tokenAccountAddress ||
             accounts[1]?.address !== mint ||
             accounts[2]?.address !== reserveTokenAddress) {
@@ -544,7 +556,7 @@ export async function recoverPayrollAllocation(
         const ix = recoveryInstruction({
           programId, contributor: allocation.contributorWalletAddress, workspace, reserveState,
           reserveAuthority: signer.address, reserveToken: reserveTokenAddress, mint,
-          claim: allocation.claimAddress, escrowToken: escrow.tokenAccountAddress,
+          claim: claimAddress, escrowToken: escrow.tokenAccountAddress,
           amountCommitmentContext, reasonCommitment
         });
         const atomic = nonDivisibleSequentialInstructionPlan([transferIx, ix]);

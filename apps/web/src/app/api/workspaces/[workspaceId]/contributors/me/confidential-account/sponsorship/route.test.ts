@@ -206,6 +206,7 @@ describe("contributor confidential-account sponsorship relay", () => {
             ? null
             : { value: [] }
     );
+    mocks.updateGasTankOperationAttempt.mockResolvedValueOnce(true);
 
     const response = await POST(request({ transactionBase64: "AQ==" }), context);
     expect(response.status).toBe(409);

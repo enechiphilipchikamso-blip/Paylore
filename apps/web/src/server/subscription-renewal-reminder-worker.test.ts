@@ -26,7 +26,7 @@ vi.mock("../../../../apps/web/src/server/config", () => ({
   parseConfig: mocks.parseConfig
 }));
 
-import processWorkspaceRetention, { config } from "../../../../netlify/functions/process-workspace-retention";
+import processWorkspaceRetention, { config } from "../../../../netlify/functions/process-workspace-retention.mts";
 
 describe("scheduled subscription reminder delivery", () => {
   const db = {};

@@ -24,6 +24,7 @@ vi.mock("./gas-tank-sponsorship-policy", () => ({
   GasTankSponsorshipPolicyError: class GasTankSponsorshipPolicyError extends Error {
     constructor(readonly code: string) { super(code); }
   },
+  MAX_SPONSORED_TRANSACTION_BYTES: 1_232,
   MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS: 10_000_000n,
   assertAllowedConfidentialAccountSetupMessage: mocks.assertAllowedConfidentialAccountSetupMessage,
   assertSponsoredCost: mocks.assertSponsoredCost,
@@ -41,6 +42,7 @@ const transaction = {
 };
 const message = {
   version: 0,
+  lifetimeToken: "recent-blockhash",
   staticAccounts: ["gas-tank", "contributor"],
   header: {
     numSignerAccounts: 2,

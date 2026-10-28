@@ -117,7 +117,11 @@ export function parseProgramData(programDataAccount, artifactBytes, expectedUpgr
   }
   const deployedExecutable = data.subarray(authorityOffset);
   if (deployedExecutable.length < artifactBytes.length) {
-    fail("The deployed Payroll Program executable is shorter than the local build artifact.");
+    fail(
+      "The deployed Payroll Program executable is shorter than the local build artifact " +
+      `(${deployedExecutable.length} bytes deployed, ${artifactBytes.length} bytes local). ` +
+      "Deploy the current Payroll Program before verifying Devnet."
+    );
   }
   for (let index = 0; index < artifactBytes.length; index++) {
     if (deployedExecutable[index] !== artifactBytes[index]) {

@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => ({
   loadPayloreConfig: vi.fn(),
   getWorkspaceGasTankSnapshot: vi.fn(),
   withWorkspaceGasTankKey: vi.fn(),
-  prepareSponsoredPayrollClaimTransaction: vi.fn()
+  prepareSponsoredPayrollClaimTransaction: vi.fn(),
+  preparePayrollClaimEscrowAccount: vi.fn()
 }));
 
 vi.mock("@paylore/database", () => ({
@@ -57,6 +58,9 @@ vi.mock("../../../../../../../../server/solana/payroll-program-verification", ()
 vi.mock("../../../../../../../../server/gas-tank-sponsorship", () => ({
   prepareSponsoredPayrollClaimTransaction: mocks.prepareSponsoredPayrollClaimTransaction
 }));
+vi.mock("../../../../../../../../server/solana/payroll-claim-escrow", () => ({
+  preparePayrollClaimEscrowAccount: mocks.preparePayrollClaimEscrowAccount
+}));
 
 import { POST } from "./route";
 
@@ -84,6 +88,7 @@ function preparedOperation(overrides: Record<string, unknown> = {}) {
     transactionSignature: "5".repeat(64),
     feeLamports: "5000",
     lastValidBlockHeight: "120",
+    updatedAt: new Date("2026-10-22T08:30:00.000Z"),
     operationData: {
       runId: "run-a",
       claimIds: [claimId],
@@ -92,7 +97,8 @@ function preparedOperation(overrides: Record<string, unknown> = {}) {
       allocationCommitment: commitment,
       claims: [{
         claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
-        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
+        escrowTokenAccount: "So11111111111111111111111111111111111111112"
       }],
       blockhash: "blockhash",
       transactionBase64: "AQIDBA=="
@@ -126,7 +132,10 @@ describe("payroll sponsor route", () => {
     mocks.recordPayrollClaimSubmission.mockResolvedValue({ status: "committed", submittedCount: 1, totalCount: 1 });
     mocks.readSolanaRpc.mockImplementation(async (method: string) => method === "getSignatureStatuses" ? { value: [null] } : 121);
     mocks.getWorkspaceSubscription.mockResolvedValue({ status: "active" });
-    mocks.loadPayloreConfig.mockReturnValue({ PAYLORE_PAYROLL_PROGRAM_ID: "payroll-program" });
+    mocks.loadPayloreConfig.mockReturnValue({
+      PAYLORE_PAYROLL_PROGRAM_ID: "payroll-program",
+      PAYLORE_WRAPPED_USDC_MINT: "wrapped-usdc-mint"
+    });
     mocks.getWorkspacePayrollRun.mockResolvedValue({
       run: {
         id: "run-a",
@@ -162,6 +171,10 @@ describe("payroll sponsor route", () => {
     mocks.withWorkspaceGasTankKey.mockImplementation(async (_db, _workspaceId, operation) =>
       operation(new Uint8Array(64).fill(8))
     );
+    mocks.preparePayrollClaimEscrowAccount.mockResolvedValue({
+      status: "ready",
+      tokenAccountAddress: "So11111111111111111111111111111111111111112"
+    });
     mocks.prepareSponsoredPayrollClaimTransaction.mockResolvedValue({
       transactionBase64: "AQIDBA==",
       signature: "5".repeat(64),
@@ -169,7 +182,8 @@ describe("payroll sponsor route", () => {
       gasTankAddress: "gas-tank-wallet",
       claims: [{
         claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
-        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
+        escrowTokenAccount: "So11111111111111111111111111111111111111112"
       }],
       blockhash: "blockhash",
       lastValidBlockHeight: 123
@@ -187,7 +201,8 @@ describe("payroll sponsor route", () => {
       feeLamports: "5000",
       claims: [{
         claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
-        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
+        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
+        escrowTokenAccount: "So11111111111111111111111111111111111111112"
       }]
     });
     expect(body.transactionBase64).toBe("AQIDBA==");
@@ -203,9 +218,10 @@ describe("payroll sponsor route", () => {
         runId: "run-a", claimIds: [claimId], authorityAddress: "manager-wallet",
         programId: "payroll-program", allocationCommitment: commitment,
         claims: [{
-        claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
-        amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0
-      }], blockhash: "blockhash",
+          claimId, claimAddress: "claim-pda", amountCommitment: "ab".repeat(32),
+          amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
+          escrowTokenAccount: "So11111111111111111111111111111111111111112"
+        }], blockhash: "blockhash",
         transactionBase64: "AQIDBA=="
       }
     });
@@ -331,7 +347,8 @@ describe("payroll sponsor route", () => {
       claims: [{
         claimId, claimAddress: "claim-pda", contributorAddress: "contributor-wallet",
         amountCommitment: "ab".repeat(32), amountCommitmentProof: ["cd".repeat(32)],
-        amountCommitmentLeafIndex: 0
+        amountCommitmentLeafIndex: 0,
+        escrowTokenAccount: "So11111111111111111111111111111111111111112"
       }]
     });
     expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledWith({}, expect.objectContaining({
@@ -587,7 +604,9 @@ describe("payroll sponsor route", () => {
 
   it("releases a prepared reservation only after signature absence and blockhash expiry", async () => {
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
-      id: "operation-a", operationType: "payroll_claim_commitment", status: "prepared", transactionSignature: "5".repeat(64), lastValidBlockHeight: "120"
+      id: "operation-a", operationType: "payroll_claim_commitment", status: "prepared",
+      transactionSignature: "5".repeat(64), lastValidBlockHeight: "120",
+      updatedAt: new Date("2026-10-22T08:30:00.000Z")
     });
     const response = await POST(request({ action: "cancel", operationId: "d9f834d9-8597-4dbf-9bbd-e4a2a0d1f671" }), context);
     expect(response.status).toBe(200);
@@ -605,8 +624,8 @@ describe("payroll sponsor route", () => {
   it("does not release a prepared reservation when the operation changed after expiry reconciliation", async () => {
     const updatedAt = new Date("2026-10-22T08:30:00.000Z");
     mocks.getWorkspaceGasTankOperation.mockResolvedValue({
-      id: "operation-a", status: "prepared", transactionSignature: "5".repeat(64),
-      lastValidBlockHeight: "120", updatedAt
+      id: "operation-a", operationType: "payroll_claim_commitment", status: "prepared",
+      transactionSignature: "5".repeat(64), lastValidBlockHeight: "120", updatedAt
     });
     mocks.updateGasTankOperationAttempt.mockResolvedValue(false);
     const response = await POST(request({
@@ -671,10 +690,14 @@ describe("payroll sponsor route", () => {
       address: "gas-tank-wallet", balanceLamports: "0", lowBalance: true,
       lastActivityAt: null, updatedAt: "2026-10-20T00:00:00Z"
     });
+    mocks.beginGasTankOperationAttempt.mockResolvedValue({
+      status: "gas_tank_insufficient_balance",
+      operation: null
+    });
     const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_insufficient_balance" });
-    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+    expect(mocks.beginGasTankOperationAttempt).toHaveBeenCalledOnce();
   });
 
   it("does not allow the same manager request to create a second attempt", async () => {

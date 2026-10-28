@@ -24,6 +24,7 @@ function mutation(calls: Array<{ method: string; value: unknown }>, method: stri
   });
   builder.where = vi.fn(() => Promise.resolve([]));
   builder.onConflictDoNothing = vi.fn(() => Promise.resolve([]));
+  builder.onConflictDoUpdate = vi.fn(() => Promise.resolve([]));
   return builder;
 }
 

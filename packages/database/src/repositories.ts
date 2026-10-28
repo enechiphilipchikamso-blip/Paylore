@@ -2293,6 +2293,7 @@ export async function cleanupEligibleContributorAssociations(
           workspaceId: candidate.workspaceId,
           completedAt: now,
           manualAccountClose: disposition.manualAccountClose,
+          closeTransactionSignature: null,
           automaticCleanupEligibleAt: eligibleAt,
           associationRemovedAt: now,
           status: "completed"
@@ -6668,7 +6669,6 @@ export async function listWorkspaceGasTankOperations(
     .limit(limit);
 }
 
-export async function beginGasTankOperationAttempt(
 /** Finds only prepared confidential-account sponsorships owned by this contributor. */
 export async function listPreparedGasTankConfidentialSetupOperations(
   db: Database,
@@ -6756,6 +6756,7 @@ export async function finalizeGasTankConfidentialAccountSetupForVerifiedAccount(
 }
 
 
+export async function beginGasTankOperationAttempt(
   db: Database,
   input: {
     workspaceId: string;
@@ -6960,7 +6961,7 @@ export async function updateGasTankOperationAttempt(
           (input.status === "failed" && input.failureCode === "finalized_chain_failure") ||
           (input.status === "cancelled" && input.failureCode === "recent_blockhash_expired")) &&
           input.transactionSignature !== undefined
-        ? [eq(gasTankOperations.transactionSignature, input.transactionSignature)]
+        ? [eq(gasTankOperations.transactionSignature, input.transactionSignature!)]
         : [])
     ))
     .returning({ id: gasTankOperations.id });

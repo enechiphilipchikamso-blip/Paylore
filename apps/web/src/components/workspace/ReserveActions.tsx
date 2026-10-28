@@ -75,22 +75,26 @@ export function ReserveActions({
     status: "not_checked",
     tokenAccount: null
   });
-  const [checkingOnChain, setCheckingOnChain] = useState(false);
+  const [checkingOnChain, setCheckingOnChain] = useState(true);
   const [setupSignature, setSetupSignature] = useState<string | null>(null);
   const [setupPhase, setSetupPhase] = useState<ReservePhase | null>(null);
+
+  const loadOnChainState = useCallback(async () => {
+    const response = await fetch(
+      `/api/workspaces/${workspaceId}/settings/reserve`,
+      { cache: "no-store", credentials: "same-origin" }
+    );
+    const result = await response.json() as { onChainAccount?: OnChainAccountState; error?: string };
+    if (!response.ok || !result?.onChainAccount) {
+      throw new Error(result?.error ?? "Reserve on-chain state could not be reconciled.");
+    }
+    return result.onChainAccount;
+  }, [workspaceId]);
 
   const refreshOnChainState = useCallback(async () => {
     setCheckingOnChain(true);
     try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/settings/reserve`,
-        { cache: "no-store", credentials: "same-origin" }
-      );
-      const result = await response.json() as { onChainAccount?: OnChainAccountState; error?: string };
-      if (!response.ok || !result?.onChainAccount) {
-        throw new Error(result?.error ?? "Reserve on-chain state could not be reconciled.");
-      }
-      const state = result.onChainAccount;
+      const state = await loadOnChainState();
       setOnChainAccount(state);
       if (state.status === "program_configured") {
         setSetupSignature(null);
@@ -107,11 +111,33 @@ export function ReserveActions({
     } finally {
       setCheckingOnChain(false);
     }
-  }, [workspaceId]);
+  }, [loadOnChainState]);
 
   useEffect(() => {
-    void refreshOnChainState();
-  }, [refreshOnChainState]);
+    let active = true;
+    loadOnChainState().then((state) => {
+      if (!active) return;
+      setOnChainAccount(state);
+      if (state.status === "program_configured") {
+        setSetupSignature(null);
+        setSetupPhase(null);
+      }
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setOnChainAccount({ status: "not_checked", tokenAccount: null });
+      setNotice({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "Reserve on-chain state could not be reconciled."
+      });
+    }).finally(() => {
+      if (active) setCheckingOnChain(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadOnChainState]);
 
   async function run(action: ReserveAction) {
     if (busy) return;
@@ -328,7 +354,10 @@ export function ReserveActions({
               </button>
             </section>
           ) : null}
-          <button className="button button--secondary" disabled={checkingOnChain} onClick={() => void refreshOnChainState()} type="button">
+          <button className="button button--secondary" disabled={checkingOnChain} onClick={() => {
+            setCheckingOnChain(true);
+            void refreshOnChainState();
+          }} type="button">
             Refresh on-chain check
           </button>
           {canInitialize ? (

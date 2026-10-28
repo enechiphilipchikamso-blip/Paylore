@@ -40,10 +40,10 @@ async function accessWorkspace(workspaceId: string) {
   return { db, membership, session: session.session };
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(_request: Request, { params }: RouteContext): Promise<Response> {
   const { workspaceId } = await params;
   const access = await accessWorkspace(workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
   if (access.membership.role !== "organization_admin") {
     return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
   }
@@ -52,12 +52,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const access = await accessWorkspace(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
     }

@@ -37,7 +37,8 @@ import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
-  bindAmountBoundClaimedStateToConfidentialTransfer, classifyTransactionFinality, getProofContextAddresses
+  bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality,
+  getProofContextAddresses, matchesExactConfidentialDebit
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
@@ -87,8 +88,12 @@ function object(value: unknown): Record<string, unknown> | null {
 function discriminator(value: string): Uint8Array {
   return createHash("sha256").update(value).digest().subarray(0, 8);
 }
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.length === right.length && left.every((byte, index) => byte === right[index]);
+function sameBytes(left: ArrayLike<number>, right: ArrayLike<number>): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 function decodeBase58(value: string): Uint8Array {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -165,7 +170,7 @@ async function executePlan(
       const signed = await partiallySignTransactionMessageWithSigners(message);
       const encoded = getBase64EncodedWireTransaction(signed);
       const sig = await rpc.sendTransaction(encoded, {
-        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3
+        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
       }).send();
       const text = String(sig);
       signatures.push(text);
@@ -199,7 +204,8 @@ export async function cleanupProofContexts(
     try {
       const encoded = await fetchEncodedAccount(rpc, address(addressText));
       if (!encoded.exists) continue;
-      if (encoded.owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) {
+      const owner = encoded.programAddress ?? object(encoded)?.owner;
+      if (owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) {
         allContextsResolved = false;
         continue;
       }
@@ -256,8 +262,9 @@ async function ensureReserveConfidentialAccount(input: {
   const encoded = await fetchEncodedAccount(input.rpc, address(input.tokenAddress));
   const existing = encoded.exists ? (await fetchToken(input.rpc, address(input.tokenAddress))).data : null;
   if (!existing || !confidentialExtension(existing)) {
-    const extension = extensions(input.mintAccount).find((value) => value.__kind === "ConfidentialTransferMint")
-      as unknown as { autoApproveNewAccounts?: boolean } | undefined;
+    const extension = extensions(input.mintAccount).find(
+      (value) => value.__kind === "ConfidentialTransferMint"
+    ) as unknown as { autoApproveNewAccounts?: boolean } | undefined;
     if (!extension) throw new PayrollConfidentialSettlementError("confidential_mint_unavailable", 503);
     if (extension.autoApproveNewAccounts !== true) {
       throw new PayrollConfidentialSettlementError("reserve_account_requires_mint_authority_approval", 409);
@@ -878,9 +885,10 @@ async function fundPayrollClaimEscrow(
     contexts = getProofContextAddresses(transferPlan.plans[2]!);
     const transferIx = transferPlan.plans[1].instruction;
     const amountContext = transferIx.accounts?.[4]?.address;
+    const transferData = transferIx.data;
     if (contexts.length !== 3 || typeof amountContext !== "string" ||
         transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS ||
-        transferIx.data[0] !== 27 || transferIx.data[1] !== 7 ||
+        !transferData || transferData[0] !== 27 || transferData[1] !== 7 ||
         transferIx.accounts?.[0]?.address !== input.reserveToken ||
         transferIx.accounts?.[1]?.address !== input.mint ||
         transferIx.accounts?.[2]?.address !== input.escrowTokenAccount ||
@@ -1165,6 +1173,12 @@ export async function settleContributorPayrollAllocation(
   if (!allocation.claimAddress || !allocation.transactionSignature) {
     throw new PayrollConfidentialSettlementError("payroll_claim_creation_unverified", 409);
   }
+  const claimAddress = allocation.claimAddress;
+  const claimCreationSignature = allocation.transactionSignature;
+  const amountCommitment = allocation.amountCommitment;
+  if (!amountCommitment || !/^[0-9a-f]{64}$/i.test(amountCommitment)) {
+    throw new PayrollConfidentialSettlementError("payroll_allocation_commitment_invalid", 409);
+  }
   const config = loadPayloreConfig();
   const mint = config.PAYLORE_WRAPPED_USDC_MINT;
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
@@ -1237,10 +1251,10 @@ export async function settleContributorPayrollAllocation(
         return reconcileSettlement(db, rpc, signer, secret, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
           contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
-          claim: allocation.claimAddress, claimId: allocation.claimId,
-          creationSignature: allocation.transactionSignature, settlementSignature: allocation.settlementSignature,
+          claim: claimAddress, claimId: allocation.claimId,
+          creationSignature: claimCreationSignature, settlementSignature: allocation.settlementSignature,
           amount: allocation.amountBaseUnits, mint, programId, authority: evidence.authorityAddress,
-          commitment: evidence.allocationCommitment, amountCommitment: allocation.amountCommitment!,
+          commitment: evidence.allocationCommitment, amountCommitment,
           escrowTokenAccount, workspace, reserveState, reserveToken, destination,
           sourceBefore: allocation.settlementSourceAvailableBefore ?? "0",
           proofContexts: allocation.settlementProofContextAddresses ?? []
@@ -1266,14 +1280,14 @@ export async function settleContributorPayrollAllocation(
           const transaction = finalizedInstructions(tx);
           if (transaction && isClaimSettlementTransaction({
             transaction, programId, reserveToken, escrowTokenAccount, destination, mint,
-            claim: allocation.claimAddress, contributor: input.contributorAddress,
+            claim: claimAddress, contributor: input.contributorAddress,
             workspace, reserveState, reserveAuthority: signer.address
           })) {
             const sourceBefore = allocation.settlementSourceAvailableBefore;
             if (sourceBefore === null || sourceBefore === undefined) return { status: "pending", signature };
             const attached = await attachPayrollSettlementSignature(db, {
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-              claimAddress: allocation.claimAddress, claimCreationSignature: allocation.transactionSignature,
+              claimAddress, claimCreationSignature,
               settlementSignature: signature, sourceAvailableBefore: sourceBefore
             });
             if (attached.status !== "attached" && attached.status !== "duplicate") {
@@ -1282,10 +1296,10 @@ export async function settleContributorPayrollAllocation(
             return reconcileSettlement(db, rpc, signer, secret, aesKey, {
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
               contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
-              claim: allocation.claimAddress, claimId: allocation.claimId,
-              creationSignature: allocation.transactionSignature, settlementSignature: signature,
+              claim: claimAddress, claimId: allocation.claimId,
+              creationSignature: claimCreationSignature, settlementSignature: signature,
               amount: allocation.amountBaseUnits, mint, programId, authority: evidence.authorityAddress,
-              commitment: evidence.allocationCommitment, amountCommitment: allocation.amountCommitment!,
+              commitment: evidence.allocationCommitment, amountCommitment,
               escrowTokenAccount, workspace, reserveState, reserveToken, destination,
               sourceBefore, proofContexts: contexts
             });
@@ -1293,9 +1307,9 @@ export async function settleContributorPayrollAllocation(
         }
 
         const claimState = await readFinalizedClaimState({
-          rpc, programId, workspace, contributor: input.contributorAddress, claim: allocation.claimAddress,
+          rpc, programId, workspace, contributor: input.contributorAddress, claim: claimAddress,
           claimId: allocation.claimId, allocationCommitment: evidence.allocationCommitment,
-          amountCommitment: allocation.amountCommitment!, escrowTokenAccount
+          amountCommitment, escrowTokenAccount
         }).catch(() => null);
         if (!claimState || claimState.status !== "unclaimed" ||
             (claimEscrow.status === "funded" && !claimState.escrowFunded)) {
@@ -1318,7 +1332,7 @@ export async function settleContributorPayrollAllocation(
       if (beginNewAttempt) {
         const attempt = await beginPayrollSettlementAttempt(db, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-          claimAddress: allocation.claimAddress, claimCreationSignature: allocation.transactionSignature,
+          claimAddress, claimCreationSignature,
           sourceAvailableBefore: "0"
         });
         if (attempt.status === "workspace_busy") return { status: "workspace_busy" };
@@ -1332,11 +1346,15 @@ export async function settleContributorPayrollAllocation(
       }
 
       await verifyPayrollClaimTransaction({
-        signature: evidence.transactionSignature, authorityAddress: evidence.authorityAddress,
+        signature: claimCreationSignature, authorityAddress: evidence.authorityAddress,
         workspaceId: input.workspaceId, allocationCommitment: evidence.allocationCommitment,
         claims: [{
-          claimId: allocation.claimId, claimAddress: allocation.claimAddress,
-          contributorAddress: input.contributorAddress
+          claimId: allocation.claimId, claimAddress,
+          contributorAddress: input.contributorAddress,
+          amountCommitment,
+          amountCommitmentProof: allocation.amountCommitmentProof,
+          amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
+          escrowTokenAccount
         }]
       });
 
@@ -1382,7 +1400,7 @@ export async function settleContributorPayrollAllocation(
           claimId: allocation.claimId,
           secretHex: config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET!
         });
-        if (allocation.amountCommitment !== amountCommitmentMaterial.amountCommitment) {
+        if (amountCommitment !== amountCommitmentMaterial.amountCommitment) {
           throw new PayrollConfidentialSettlementError("payroll_amount_commitment_mismatch", 409);
         }
         if (reserveBalance.confidential.availableBalance < amount) {
@@ -1421,10 +1439,10 @@ export async function settleContributorPayrollAllocation(
 
         const funding = await fundPayrollClaimEscrow(db, rpc, signer, secret, elgamal, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-          claimId: allocation.claimId, claim: allocation.claimAddress, contributor: input.contributorAddress,
+          claimId: allocation.claimId, claim: claimAddress, contributor: input.contributorAddress,
           programId, authority: evidence.authorityAddress, workspace, reserveState, reserveToken,
           escrowTokenAccount, mint, amountBaseUnits: allocation.amountBaseUnits,
-          allocationCommitment: evidence.allocationCommitment, amountCommitment: allocation.amountCommitment!,
+          allocationCommitment: evidence.allocationCommitment, amountCommitment,
           proofContexts,
           contextSignatures: allocation.settlementContextSignatures ?? []
         });
@@ -1484,10 +1502,11 @@ export async function settleContributorPayrollAllocation(
 
         const transferIx = transferPlan.plans[1].instruction;
         const accounts = transferIx.accounts ?? [];
+        const transferData = transferIx.data;
         const amountCommitmentContext = accounts[4]?.address;
         if (typeof amountCommitmentContext !== "string" ||
-            transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS || transferIx.data[0] !== 27 ||
-            transferIx.data[1] !== 7 || accounts[0]?.address !== escrowTokenAccount ||
+            transferIx.programAddress !== TOKEN_2022_PROGRAM_ADDRESS || !transferData ||
+            transferData[0] !== 27 || transferData[1] !== 7 || accounts[0]?.address !== escrowTokenAccount ||
             accounts[1]?.address !== mint || accounts[2]?.address !== destination) {
           throw new PayrollConfidentialSettlementError("confidential_transfer_instruction_invalid", 503);
         }
@@ -1515,7 +1534,7 @@ export async function settleContributorPayrollAllocation(
           transferPlan,
           markSettlementPendingInstruction({
             programId, contributor: input.contributorAddress, workspace, reserveState,
-            reserveAuthority: signer.address, reserveToken, mint, claim: allocation.claimAddress,
+            reserveAuthority: signer.address, reserveToken, mint, claim: claimAddress,
             escrowTokenAccount, destination, amountCommitmentContext
           }),
           { source: escrowTokenAccount, mint, destination }
@@ -1532,7 +1551,7 @@ export async function settleContributorPayrollAllocation(
           try {
             const tracked = await attachPayrollSettlementSignature(db, {
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
-              claimAddress: allocation.claimAddress!, claimCreationSignature: allocation.transactionSignature!,
+              claimAddress, claimCreationSignature,
               settlementSignature: signature, sourceAvailableBefore: sourceBefore
             });
             attached = tracked.status === "attached" || tracked.status === "duplicate";
@@ -1555,10 +1574,10 @@ export async function settleContributorPayrollAllocation(
         const reconciled = await reconcileSettlement(db, rpc, signer, secret, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
           contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
-          claim: allocation.claimAddress, claimId: allocation.claimId, creationSignature: allocation.transactionSignature,
+          claim: claimAddress, claimId: allocation.claimId, creationSignature: claimCreationSignature,
           settlementSignature: submittedSignature, amount: allocation.amountBaseUnits, mint, programId,
           authority: evidence.authorityAddress, commitment: evidence.allocationCommitment,
-          amountCommitment: allocation.amountCommitment!, escrowTokenAccount,
+          amountCommitment, escrowTokenAccount,
           workspace, reserveState, reserveToken, destination, sourceBefore, proofContexts, proofDurationMs
         });
         if (reconciled.status === "claimed") {

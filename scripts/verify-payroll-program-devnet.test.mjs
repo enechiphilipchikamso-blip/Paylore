@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BPF_UPGRADEABLE_LOADER_ID,
   EXPECTED_PAYLORE_PROGRAM_ID
 } from "./audit-payroll-program-idl.mjs";
 import {
+  BPF_UPGRADEABLE_LOADER_ID,
   parseProgramAccount,
   parseProgramData,
   PAYLORE_DEVNET_GENESIS_HASH,
@@ -130,6 +130,20 @@ test("rejects a deployed ELF byte mismatch", () => {
   );
 
   assert.throws(() => parseProgramData(programData, artifact, upgradeAuthority), /does not match the deployed Devnet bytecode/);
+});
+
+test("rejects a deployed executable shorter than the local artifact", () => {
+  const shorterArtifact = artifact.subarray(0, artifact.length - 1);
+  const programData = account(
+    BPF_UPGRADEABLE_LOADER_ID,
+    false,
+    programDataAccountData(shorterArtifact, authorityBytes, { padding: 0 })
+  );
+
+  assert.throws(
+    () => parseProgramData(programData, artifact, upgradeAuthority),
+    /shorter than the local build artifact \(7 bytes deployed, 8 bytes local\)/
+  );
 });
 
 test("rejects non-zero trailing executable bytes instead of hashing a matching prefix only", () => {
@@ -272,4 +286,3 @@ test("rejects stale source/IDL parity before making any network request", async 
   );
   assert.equal(requests, 0);
 });
-

@@ -161,7 +161,6 @@ async function recoveryInstruction() {
     {
       programId,
       accounts: [
-        authorityAddress,
         contributorAddress,
         claim.workspaceAddress,
         reserveState,
@@ -195,7 +194,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: reserveAuthorityAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },
@@ -216,7 +218,7 @@ describe("payroll program transaction verification", () => {
           amountCommitment,
           amountCommitmentProof,
           amountCommitmentLeafIndex,
-          escrowTokenAccount
+            escrowTokenAccount
         }]
       })
     ).resolves.toBeUndefined();
@@ -284,9 +286,9 @@ describe("payroll program transaction verification", () => {
         amountCommitment,
         amountCommitmentProof: ["ff".repeat(32)],
         amountCommitmentLeafIndex,
-      escrowTokenAccount
+        escrowTokenAccount
       }]
-    })).rejects.toThrow("does not match the expected workspace");
+    })).rejects.toThrow("does not match the approved payroll");
   });
 
   it("rejects a Claim PDA whose amount commitment differs from the allocation", async () => {
@@ -403,10 +405,9 @@ describe("payroll program transaction verification", () => {
         signatures: [transactionSignature],
         message: {
           accountKeys: [
-            { pubkey: authorityAddress, signer: true },
-            { pubkey: reserveAuthorityAddress, signer: true }
+            { pubkey: authorityAddress, signer: true }
           ],
-          instructions: instruction.instructions
+          instructions: [instruction]
         }
       },
       meta: { err: null }
@@ -563,7 +564,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: reserveAuthorityAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },
@@ -580,9 +584,14 @@ describe("payroll program transaction verification", () => {
         claimId,
         claimAddress: claim.claimAddress,
         allocationCommitment: commitment,
+        amountCommitment,
+        escrowTokenAccount,
+        reserveTokenAccount,
+        mint: mintAddress,
+        reserveAuthorityAddress,
         recoveryReasonCommitment: "ef".repeat(32)
       })
-    ).rejects.toThrow("does not perform this Claim PDA recovery");
+    ).rejects.toThrow("does not include the exact escrow-to-reserve confidential transfer");
   });
 });
 
@@ -593,4 +602,3 @@ describe("canonical recovery account derivation", () => {
     expect(account.length).toBeGreaterThanOrEqual(32);
   });
 });
-

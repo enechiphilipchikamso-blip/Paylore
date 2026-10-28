@@ -46,11 +46,11 @@ async function authorize(workspaceId: string) {
   return { db, session: session.session } as const;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(_request: Request, { params }: RouteContext): Promise<Response> {
   try {
     const { workspaceId, runId, allocationId } = await params;
     const access = await authorize(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
 
     const escrow = await getPayrollClaimEscrow(access.db, workspaceId, allocationId);
     if (!escrow || escrow.workspaceId !== workspaceId || escrow.payrollRunId !== runId) {
@@ -76,12 +76,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId, runId, allocationId } = await params;
     const access = await authorize(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
 
     let body: unknown;
     try {

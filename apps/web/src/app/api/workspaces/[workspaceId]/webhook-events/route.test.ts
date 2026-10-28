@@ -8,6 +8,10 @@ vi.mock("../../../../../server/session", () => ({
   clearSessionCookie: vi.fn(),
   getSessionState: vi.fn(async () => ({ status: "authenticated", session: { userId: "user-1" } }))
 }));
+vi.mock("../../../../../server/security", () => ({
+  assertSameOrigin: vi.fn(),
+  RequestSecurityError: class RequestSecurityError extends Error {}
+}));
 vi.mock("@paylore/database", () => ({
   getWorkspaceForUser: vi.fn(),
   listWorkspaceDeadLetterSolanaWebhookEvents: vi.fn(),

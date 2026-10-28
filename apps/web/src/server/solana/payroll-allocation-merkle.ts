@@ -45,7 +45,9 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 }
 
 export function payrollAllocationLeaf(input: PayrollAllocationLeafInput): Uint8Array {
-  const contributor = getAddressEncoder().encode(address(input.contributorAddress));
+  const contributor = Uint8Array.from(
+    getAddressEncoder().encode(address(input.contributorAddress))
+  );
   return hash(concat(
     LEAF_DOMAIN,
     decodeHex32(input.claimId, "Claim ID"),

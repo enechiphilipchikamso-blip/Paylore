@@ -294,6 +294,10 @@ export async function verifyFinalizedCashOutTransaction(input: {
   if (!expectedInstruction || expectedInstruction.kind !== "single") {
     throw new CashOutLedgerVerificationError("cash_out_token_wrap_plan_not_verified", 409);
   }
+  const expectedInstructionData = expectedInstruction.instruction.data;
+  if (!expectedInstructionData) {
+    throw new CashOutLedgerVerificationError("cash_out_token_wrap_plan_not_verified", 409);
+  }
 
   const actualMatches = instructions.filter((instruction) => {
     if (programOf(instruction, keys) !== input.tokenWrapProgramId ||
@@ -301,7 +305,10 @@ export async function verifyFinalizedCashOutTransaction(input: {
     const data = decodeBase58(instruction.data);
     const expectedAccounts = (expectedInstruction.instruction.accounts ?? []).map((entry) => entry.address);
     const actualAccounts = accountsOf(instruction, keys);
-    return data !== null && equalBytes(data, expectedInstruction.instruction.data) &&
+    return data !== null && equalBytes(
+      data,
+      Uint8Array.from(expectedInstructionData)
+    ) &&
       actualAccounts.length === expectedAccounts.length &&
       actualAccounts.every((account, index) => account === expectedAccounts[index]);
   });

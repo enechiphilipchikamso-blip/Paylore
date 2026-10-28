@@ -1601,7 +1601,7 @@ packages:
     engines: {node: '>=22'}
 
   '@solana/zk-sdk@0.5.4':
-    resolution: {integrity: sha512-vgne1g223Yw7AIgEfX5WnhBZ1gTyYjMzXu/fkXl/yimYSPOJZvn54UI4J/OrxwHGgxfsG6Rs+hUR6ovfPIX6Yg==}
+    resolution: {integrity: sha512-pz9zvcRDg1rrB79rv2no5Ko2jOChxZYbKAm+nsbXMAFVGuFbkbnn1H77iTdxzvlxc3szPym/xRfsvlkOhVVh1g==}
 
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}

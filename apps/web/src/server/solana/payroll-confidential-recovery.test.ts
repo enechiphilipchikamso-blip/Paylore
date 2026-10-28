@@ -135,6 +135,7 @@ beforeEach(() => {
 vi.mock("@solana/kit", () => ({
   AccountRole: { READONLY: 0, WRITABLE: 1, READONLY_SIGNER: 2, WRITABLE_SIGNER: 3 },
   address: (value: string) => value,
+  isSome: (value: { __option?: string } | null | undefined) => value?.__option === "Some",
   blockhash: (value: string) => value,
   createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserve })),
   createSolanaRpc: vi.fn(() => ({
@@ -196,7 +197,10 @@ vi.mock("@solana-program/token-2022", () => ({
   fetchMint: vi.fn(async () => ({
     data: {
       decimals: 6,
-      extensions: [{ __kind: "ConfidentialTransferMint", autoApproveNewAccounts: true }]
+      extensions: {
+        __option: "Some",
+        value: [{ __kind: "ConfidentialTransferMint", autoApproveNewAccounts: true }]
+      }
     }
   })),
   fetchToken: vi.fn(async (_rpc: unknown, tokenAddress: string) => ({
@@ -204,11 +208,14 @@ vi.mock("@solana-program/token-2022", () => ({
       owner: h.reserve,
       mint: h.mint,
       amount: 100_000n,
-      extensions: [{
-        __kind: "ConfidentialTransferAccount",
-        approved: true,
-        allowConfidentialCredits: true
-      }],
+      extensions: {
+        __option: "Some",
+        value: [{
+          __kind: "ConfidentialTransferAccount",
+          approved: true,
+          allowConfidentialCredits: true
+        }]
+      },
       tokenAddress
     }
   })),

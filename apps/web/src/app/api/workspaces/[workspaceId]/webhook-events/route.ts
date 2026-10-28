@@ -27,10 +27,10 @@ async function authorize(workspaceId: string) {
   return { db } as const;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(_request: Request, { params }: RouteContext): Promise<Response> {
   const { workspaceId } = await params;
   const access = await authorize(workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
   try {
     const events = await listWorkspaceDeadLetterSolanaWebhookEvents(access.db, { workspaceId, limit: 100 });
     return NextResponse.json({ events }, { headers: { "Cache-Control": "no-store" } });
@@ -39,12 +39,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const access = await authorize(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (Number(request.headers.get("content-length") ?? 0) > 2048) {
       return NextResponse.json({ error: "request_too_large" }, { status: 413 });
     }
