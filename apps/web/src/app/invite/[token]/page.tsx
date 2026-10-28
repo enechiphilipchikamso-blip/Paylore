@@ -65,6 +65,9 @@ export default async function InvitationEntryPage({
     );
   }
 
+  const roleLabel = invitation.contributorRole === "finance_auditor"
+    ? "Finance/Auditor"
+    : "Contributor";
   const sessionState =
     await getSessionState();
 
@@ -190,7 +193,7 @@ export default async function InvitationEntryPage({
     <PublicPage
       eyebrow="Invitation"
       title="Invitation wallet verified"
-      description={`The authenticated wallet matches the invitation target for ${invitation.workspaceName}.`}
+      description={`The authenticated wallet matches the invitation target for ${invitation.workspaceName}. Assigned role: ${roleLabel}.`}
     >
       <div className="invite-state">
         <div
@@ -204,7 +207,7 @@ export default async function InvitationEntryPage({
           The invitation target has been
           verified for the authenticated
           wallet. Accepting adds this wallet
-          to the workspace as a contributor.
+          to the workspace as {roleLabel}.
         </p>
 
         <p className="workspace-card__meta">

@@ -57,6 +57,7 @@ lib-cov
 
 # Rust / Solana
 target/
+docker-target/
 .anchor/
 test-ledger/
 /ledger/

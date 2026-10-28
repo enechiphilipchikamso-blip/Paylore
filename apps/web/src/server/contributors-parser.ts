@@ -7,6 +7,7 @@ export type ContributorImportRow = {
   effectivePayoutAddress: string;
   organizationLabel?: string;
   adminNote?: string;
+  role: "contributor" | "finance_auditor";
 };
 
 export type ContributorImportResult = {
@@ -36,11 +37,23 @@ const COLUMN_ALIASES: Record<string, keyof ContributorImportRow> = {
   organizationlabel: "organizationLabel",
   organization_label: "organizationLabel",
   adminnote: "adminNote",
-  admin_note: "adminNote"
+  admin_note: "adminNote",
+  role: "role",
+  workspace_role: "role",
+  workspacerole: "role",
+  contributor_role: "role",
+  contributorrole: "role"
 };
 
 function normalizeHeader(value: string): keyof ContributorImportRow | null {
   return COLUMN_ALIASES[value.trim().toLowerCase().replace(/\s+/g, "")] ?? null;
+}
+
+function normalizeContributorRole(value: string): ContributorImportRow["role"] | null {
+  const normalized = value.trim().toLowerCase().replace(/[\s/-]+/g, "_");
+  if (normalized === "contributor") return "contributor";
+  if (normalized === "finance_auditor" || normalized === "auditor") return "finance_auditor";
+  return null;
 }
 
 function parseCsv(
@@ -51,6 +64,18 @@ function parseCsv(
   let row: string[] = [];
   let field = "";
   let quoted = false;
+  let quoteClosed = false;
+
+  const finishRow = () => {
+    row.push(field.trim());
+    field = "";
+    quoteClosed = false;
+    if (row.some((cell) => cell.length > 0)) {
+      rows.push(row);
+      if (rows.length > MAX_IMPORT_ROWS + 1) throw new Error(rowLimitMessage);
+    }
+    row = [];
+  };
 
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
@@ -60,48 +85,43 @@ function parseCsv(
         index += 1;
       } else if (character === '"') {
         quoted = false;
+        quoteClosed = true;
       } else {
         field += character;
       }
       continue;
     }
 
-    if (character === '"' && field.length === 0) {
+    if (quoteClosed && (character === " " || character === "\t")) continue;
+    if (character === '"') {
+      if (field.length > 0 || quoteClosed) {
+        throw new Error("The CSV file has an invalid quoted field.");
+      }
       quoted = true;
-    } else if (character === ",") {
+      continue;
+    }
+    if (quoteClosed && character !== "," && character !== "\n" && character !== "\r") {
+      throw new Error("The CSV file has an invalid quoted field.");
+    }
+
+    if (character === ",") {
       row.push(field.trim());
       field = "";
+      quoteClosed = false;
     } else if (character === "\n" || character === "\r") {
-      if (character === "\r" && text[index + 1] === "\n") {
-        index += 1;
-      }
-      row.push(field.trim());
-      field = "";
-      if (row.some((cell) => cell.length > 0)) {
-        rows.push(row);
-        if (rows.length > MAX_IMPORT_ROWS + 1) {
-          throw new Error(rowLimitMessage);
-        }
-      }
-      row = [];
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      finishRow();
     } else {
       field += character;
     }
   }
 
-  if (quoted) {
-    throw new Error("The CSV file has an unterminated quoted field.");
-  }
+  if (quoted) throw new Error("The CSV file has an unterminated quoted field.");
   row.push(field.trim());
-  if (row.some((cell) => cell.length > 0)) {
-    rows.push(row);
-  }
-  if (rows.length > MAX_IMPORT_ROWS + 1) {
-    throw new Error(rowLimitMessage);
-  }
+  if (row.some((cell) => cell.length > 0)) rows.push(row);
+  if (rows.length > MAX_IMPORT_ROWS + 1) throw new Error(rowLimitMessage);
   return rows;
 }
-
 function readCell(value: ExcelJS.CellValue): string {
   if (
     value === null ||
@@ -186,20 +206,26 @@ function rowsFromMatrix(
 
   for (const [index, values] of matrix.slice(1).entries()) {
     const record: Partial<ContributorImportRow> = {};
+    let rawRole = "";
     header.forEach((key, column) => {
-      if (key) {
+      if (key === "role") {
+        rawRole = values[column]?.trim() ?? "";
+      } else if (key) {
         record[key] = values[column]?.trim() ?? "";
       }
     });
 
+    const normalizedRole = rawRole ? normalizeContributorRole(rawRole) : "contributor";
+    const errors: string[] = [];
+    if (!normalizedRole) errors.push("Role must be Contributor or Finance/Auditor.");
     const value: ContributorImportRow = {
       displayName: record.displayName ?? "",
       identityWalletAddress: record.identityWalletAddress ?? "",
       effectivePayoutAddress: record.effectivePayoutAddress ?? "",
+      role: normalizedRole ?? "contributor",
       ...(record.organizationLabel ? { organizationLabel: record.organizationLabel } : {}),
       ...(record.adminNote ? { adminNote: record.adminNote } : {})
     };
-    const errors: string[] = [];
 
     if (!value.displayName) errors.push("Missing display name.");
     if (!value.identityWalletAddress) errors.push("Missing identity wallet.");

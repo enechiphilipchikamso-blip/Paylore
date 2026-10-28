@@ -85,7 +85,13 @@ export async function POST(request: Request) {
     const stored = await persistSolanaWebhookEvents(
       getDatabase(),
       events.map((event) => ({
-        ...event,
+        provider: event.provider,
+        providerEventId: event.providerEventId,
+        transactionSignature: event.transactionSignature,
+        transactionSlot: event.transactionSlot,
+        accountAddress: event.accountAddress,
+        eventType: event.eventType,
+        payload: event.payload,
         status: "received"
       }))
     );

@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
-import { getWorkspaceForUser } from "@paylore/database";
+import { createSubscriptionPaymentAttempt, getWorkspaceForUser } from "@paylore/database";
 import { getDatabase } from "../../../../../../server/db";
 import { loadPayloreConfig } from "../../../../../../server/config";
 import {
@@ -92,8 +93,21 @@ export async function POST(
       );
     }
 
+    const attemptId = randomUUID();
+    const memo = `Paylore activation attempt ${attemptId} | workspace ${workspaceId}`;
+    const expiresAt = new Date(Date.now() + 90_000);
+    await createSubscriptionPaymentAttempt(getDatabase(), {
+      id: attemptId, workspaceId, userId: session.session.userId,
+      payerWalletAddress: session.session.walletAddress,
+      recipient: config.PAYLORE_SUBSCRIPTION_RECIPIENT,
+      mint: mintAddress, amountBaseUnits: "49000000", memo,
+      blockhash: latest.value.blockhash,
+      lastValidBlockHeight: latest.value.lastValidBlockHeight,
+      expiresAt
+    });
     return NextResponse.json(
       {
+        attemptId, memo, expiresAt: expiresAt.toISOString(),
         payer: session.session.walletAddress,
         recipient: config.PAYLORE_SUBSCRIPTION_RECIPIENT,
         mint: mintAddress,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  getAutomaticContributorCleanupDisposition,
+  getContributorDepartureDisposition,
+  getDueSubscriptionRenewalReminderDays,
   hasReachedInactivityThreshold,
   CONTRIBUTOR_ASSOCIATION_CLEANUP_DELAY_MS,
   isContributorAssociationCleanupEligible,
@@ -8,6 +11,26 @@ import {
   scheduleWorkspaceDeletion,
   WORKSPACE_RETENTION_NOTICE_DAYS
 } from "@paylore/database";
+
+describe("manual subscription renewal reminders", () => {
+  const now = new Date("2026-10-24T08:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+
+  it("surfaces the seven-day reminder throughout its due window", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 7 * day), now)).toEqual([7]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 3 * day), now)).toEqual([7]);
+  });
+
+  it("uses the one-day reminder in the final 24 hours", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + day), now)).toEqual([1]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + day + 1), now)).toEqual([7]);
+  });
+
+  it("does not remind after expiry or outside the seven-day window", () => {
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() - 1), now)).toEqual([]);
+    expect(getDueSubscriptionRenewalReminderDays(new Date(now.getTime() + 8 * day), now)).toEqual([]);
+  });
+});
 
 describe("workspace retention policy", () => {
   it("schedules manual deletion no sooner than 72 hours", () => {
@@ -72,6 +95,24 @@ describe("workspace retention policy", () => {
         outstandingObligations: true
       })
     ).toBe(false);
+  });
+
+  it("records manual closure, leave-without-close, and automatic cleanup as distinct dispositions", () => {
+    expect(getContributorDepartureDisposition(true)).toEqual({
+      manualAccountClose: true,
+      departureMode: "manual_close_and_leave",
+      notificationBody: "Workspace access has been removed. Your wallet closed the confidential account; any eligible account rent was returned to your wallet."
+    });
+    expect(getContributorDepartureDisposition(false)).toEqual({
+      manualAccountClose: false,
+      departureMode: "leave_without_account_close",
+      notificationBody: "Workspace access has been removed. Your confidential account remains under your control and was not closed by Paylore."
+    });
+    expect(getAutomaticContributorCleanupDisposition()).toEqual({
+      manualAccountClose: false,
+      departureMode: "automatic_association_cleanup",
+      notificationBody: "Workspace access has been removed after the retention period. Your confidential account has not been closed by Paylore."
+    });
   });
 
   it("waits 365 days after workspace closure and while compensation is unresolved", () => {

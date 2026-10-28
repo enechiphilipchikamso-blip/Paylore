@@ -4,10 +4,12 @@ import { notFound } from "next/navigation";
 import { getWorkspacePayrollRun } from "@paylore/database";
 import { PayrollRunActions } from "../../../../../components/workspace/PayrollRunActions";
 import { PayrollClaimCommitAction } from "../../../../../components/workspace/PayrollClaimCommitAction";
+import { PayrollRecoveryAction } from "../../../../../components/workspace/PayrollRecoveryAction";
 import {
   WorkspaceLegalFooter,
   WorkspaceNavigation
 } from "../../../../../components/workspace/WorkspaceNavigation";
+import { assessPayrollRecoveryEligibility } from "../../../../../server/payroll-recovery-queue-policy";
 import { getWorkspacePageContext } from "../../../../../server/workspace-page-context";
 import { loadPayloreConfig } from "../../../../../server/config";
 
@@ -101,7 +103,10 @@ export default async function PayrollRunDetailPage({
           allocationCommitment={payrollRun.run.allocationCommitment}
           claims={payrollRun.allocations.map((allocation) => ({
             claimId: allocation.claimId,
-            contributorAddress: allocation.contributorWalletAddress
+            contributorAddress: allocation.contributorWalletAddress,
+            amountCommitment: allocation.amountCommitment ?? "",
+            amountCommitmentProof: allocation.amountCommitmentProof ?? [],
+            amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1
           }))}
           canCommit={canCommit}
         />
@@ -134,18 +139,46 @@ export default async function PayrollRunDetailPage({
                   <th scope="col">Claim PDA</th>
                   <th scope="col">Status</th>
                   <th scope="col">Transaction</th>
+                  {context.workspace.role === "organization_admin" ? (
+                    <th scope="col">Recovery</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
-                {payrollRun.allocations.map((allocation) => (
-                  <tr key={allocation.id}>
-                    <td>{allocation.contributorId}</td>
-                    <td>{formatUsdc(allocation.amountBaseUnits)}</td>
-                    <td>{allocation.claimAddress ?? "Not created"}</td>
-                    <td>{allocation.status}</td>
-                    <td>{allocation.transactionSignature ?? "Not submitted"}</td>
-                  </tr>
-                ))}
+                {payrollRun.allocations.map((allocation) => {
+                  const eligibility = assessPayrollRecoveryEligibility({
+                    claimState: allocation.status,
+                    claimAddress: allocation.claimAddress,
+                    escrowStatus: allocation.escrowStatus
+                  });
+                  const canRecover = eligibility.state === "eligible" || eligibility.state === "reconcile";
+                  return (
+                    <tr id={`allocation-${allocation.id}`} key={allocation.id}>
+                      <td>{allocation.contributorId}</td>
+                      <td>{formatUsdc(allocation.amountBaseUnits)}</td>
+                      <td>{allocation.claimAddress ?? "Not created"}</td>
+                      <td>{allocation.status}</td>
+                      <td>{allocation.transactionSignature ?? "Not submitted"}</td>
+                      {context.workspace.role === "organization_admin" ? (
+                        <td>
+                          {canRecover ? (
+                            <PayrollRecoveryAction
+                              workspaceId={workspaceId}
+                              runId={payrollRun.run.id}
+                              allocationId={allocation.id}
+                              claimId={allocation.claimId}
+                              claimAddress={allocation.claimAddress ?? ""}
+                              contributorAddress={allocation.contributorWalletAddress}
+                              walletAddress={context.session.walletAddress}
+                              programId={payrollProgramId}
+                              canRecover={canRecover}
+                            />
+                          ) : eligibility.label}
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

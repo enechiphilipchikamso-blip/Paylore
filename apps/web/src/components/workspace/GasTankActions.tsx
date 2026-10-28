@@ -38,7 +38,8 @@ export function GasTankActions({
   walletAddress,
   gasTank,
   canManage,
-  latestFunding
+  latestFunding,
+  operations
 }: {
   workspaceId: string;
   walletAddress: string;
@@ -56,6 +57,15 @@ export function GasTankActions({
     amountLamports: string | null;
     createdAt: string;
   } | null;
+  operations: Array<{
+    id: string;
+    operationType: string;
+    status: string;
+    transactionSignature: string | null;
+    feeLamports: string | null;
+    failureCode: string | null;
+    createdAt: string;
+  }>;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -296,7 +306,7 @@ export function GasTankActions({
                 </button>
               ) : null}
             </div>
-            <a href="#funding-transaction">View operations</a>
+            <a href="#gas-tank-operations">View operations</a>
           </section>
           {gasTank.lowBalance ? (
             <div className="state-callout" data-state="partial" role="status">
@@ -387,10 +397,64 @@ export function GasTankActions({
           <p>No finalized funding transaction has been recorded.</p>
         )}
       </section>
-      <p className="notice">
-        Sponsored transactions remain unavailable until an approved operation policy
-        is configured. No arbitrary transaction bytes are signed.
-      </p>
+      <section className="reserve-summary" id="gas-tank-operations" aria-labelledby="gas-tank-operations-heading">
+        <h3 id="gas-tank-operations-heading">Gas Tank operations</h3>
+        {operations.length > 0 ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Operation</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Network fee</th>
+                  <th scope="col">Transaction</th>
+                  <th scope="col">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operations.map((operation) => {
+                  const statusLabel = operation.status === "finalized"
+                    ? "Finalized"
+                    : operation.status === "prepared"
+                      ? "Prepared — awaiting wallet approval"
+                      : operation.status === "preparing"
+                        ? "Preparing…"
+                        : operation.status === "cancelled"
+                          ? "Cancelled"
+                          : operation.status === "failed"
+                            ? operation.failureCode === "finalized_chain_failure"
+                              ? "Finalized with an on-chain failure"
+                              : "Failed"
+                            : operation.status;
+                  return (
+                    <tr key={operation.id}>
+                      <td>{operation.operationType === "payroll_claim_commitment"
+                        ? "Payroll Claim PDA creation"
+                        : "Approved network operation"}</td>
+                      <td>{statusLabel}</td>
+                      <td>{operation.feeLamports && /^(0|[1-9][0-9]*)$/.test(operation.feeLamports)
+                        ? `${formatSol(operation.feeLamports)} SOL`
+                        : "Pending"}</td>
+                      <td>{operation.transactionSignature ? (
+                        <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.transactionSignature)}?cluster=devnet`} target="_blank" rel="noreferrer">
+                          View transaction
+                        </a>
+                      ) : "Not submitted"}</td>
+                      <td>{new Date(operation.createdAt).toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p>No sponsored operations have been recorded.</p>
+        )}
+        <p className="notice">
+          Only approved workspace-scoped payroll Claim PDA creation is eligible for sponsorship.
+          Other operations are not eligible for sponsored network fees.
+        </p>
+      </section>
     </div>
   );
 }

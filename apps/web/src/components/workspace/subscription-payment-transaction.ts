@@ -33,6 +33,7 @@ export type SubscriptionPaymentTransactionInput = {
   workspaceId: string;
   blockhash: string;
   lastValidBlockHeight: number;
+  memo: string;
 };
 
 async function deriveAssociatedTokenAddress(
@@ -57,9 +58,9 @@ export async function createSubscriptionPaymentTransaction({
   recipient: recipientText,
   mint: mintText,
   tokenProgram: tokenProgramText,
-  workspaceId,
   blockhash: blockhashText,
-  lastValidBlockHeight
+  lastValidBlockHeight,
+  memo
 }: SubscriptionPaymentTransactionInput): Promise<Uint8Array> {
   const payer = address(payerText);
   const recipient = address(recipientText);
@@ -106,16 +107,14 @@ export async function createSubscriptionPaymentTransaction({
     data: transferData
   } as const;
 
-  const memo = {
+  const memoInstruction = {
     programAddress: MEMO_PROGRAM_ADDRESS,
     accounts: [],
-    data: new TextEncoder().encode(
-      `Paylore workspace activation | 49 USDC | recipient ${recipient.toString()} | workspace ${workspaceId}`
-    )
+    data: new TextEncoder().encode(memo)
   } as const;
 
   const message = appendTransactionMessageInstructions(
-    [createDestinationAccount, transfer, memo],
+    [createDestinationAccount, transfer, memoInstruction],
     setTransactionMessageLifetimeUsingBlockhash(
       {
         blockhash: recentBlockhash,

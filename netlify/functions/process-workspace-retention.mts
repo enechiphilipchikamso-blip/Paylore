@@ -1,6 +1,7 @@
 import {
   archiveExpiredWorkspaceSubscriptions,
   cleanupEligibleContributorAssociations,
+  createDueSubscriptionRenewalReminders,
   createDatabase,
   createWorkspaceRetentionNotice,
   hasReachedInactivityThreshold,
@@ -49,6 +50,7 @@ export default async function processWorkspaceRetention() {
       db,
       now
     );
+    const renewalReminders = await createDueSubscriptionRenewalReminders(db, now, 500);
     const workspaces = await listDueWorkspaceRetentionNotifications(db, 500);
     let notificationsCreated = 0;
     let workspacesProcessed = 0;
@@ -84,6 +86,9 @@ export default async function processWorkspaceRetention() {
       archivedSubscriptions: archived,
       contributorAssociationsRemoved: contributorCleanup.removed,
       contributorAssociationsDeferred: contributorCleanup.deferred,
+      subscriptionRemindersCreated: renewalReminders.notificationsCreated,
+      subscriptionReminderLedgerEntriesCreated: renewalReminders.ledgerEntriesCreated,
+      subscriptionsWithDueReminders: renewalReminders.subscriptionsProcessed,
       workspacesProcessed,
       notificationsCreated
     }));

@@ -74,10 +74,10 @@ async function authorize(workspaceId: string) {
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const access = await authorize(workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
   try {
     const gasTank = await getWorkspaceGasTankSnapshot(
       access.db,
@@ -86,9 +86,12 @@ export async function GET(
     return NextResponse.json({
       gasTank: gasTank
         ? {
-            ...gasTank,
+            address: gasTank.address,
+            balanceLamports: gasTank.balanceLamports,
             lowBalance:
-              BigInt(gasTank.balanceLamports) < LOW_BALANCE_LAMPORTS
+              BigInt(gasTank.balanceLamports) < LOW_BALANCE_LAMPORTS,
+            lastActivityAt: gasTank.lastActivityAt,
+            updatedAt: gasTank.updatedAt
           }
         : null
     });
@@ -104,7 +107,7 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     if (Number(request.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) {
@@ -127,7 +130,7 @@ export async function POST(
 
     const { workspaceId } = await params;
     const access = await authorize(workspaceId);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
     }
@@ -162,14 +165,22 @@ export async function POST(
 
     if (parsed.data.action === "initialize") {
       const result = await initializeWorkspaceGasTank(access.db, workspaceId);
-      return NextResponse.json({ status: "ready", ...result });
+      return NextResponse.json({
+        status: "ready",
+        address: result.address,
+        created: result.created
+      });
     }
     if (parsed.data.action === "restore") {
       const result = await verifyAndRestoreWorkspaceGasTank(
         access.db,
         workspaceId
       );
-      return NextResponse.json({ status: "ready", ...result });
+      return NextResponse.json({
+        status: "ready",
+        address: result.address,
+        restoredAt: result.restoredAt
+      });
     }
     if (parsed.data.action === "prepare_funding") {
       const gasTank = await getWorkspaceGasTankSnapshot(

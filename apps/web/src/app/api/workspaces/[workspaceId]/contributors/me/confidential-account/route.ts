@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   findWorkspaceContributorByWallet,
+  finalizeGasTankConfidentialAccountSetupForVerifiedAccount,
   getContributorConfidentialAccount,
   getContributorOffboardingStatus,
   getWorkspaceForUser,
@@ -13,6 +14,7 @@ import { clearSessionCookie, getSessionState } from "../../../../../../../server
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
 import { loadPayloreConfig } from "../../../../../../../server/config";
 import {
+  ConfidentialAccountVerificationError,
   verifyConfidentialAccountSetup
 } from "../../../../../../../server/solana/confidential-account-verification";
 
@@ -67,10 +69,10 @@ async function getContributorContext(workspaceId: string) {
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const context = await getContributorContext(workspaceId);
-  if ("response" in context) return context.response;
+  if ("response" in context) return context.response!;
   const config = loadPayloreConfig();
   const [account, hasOpenAllocations, offboarding] = await Promise.all([
     getContributorConfidentialAccount(
@@ -89,6 +91,20 @@ export async function GET(
       context.contributor.id
     )
   ]);
+
+  // The owner-readiness endpoint is the canonical reconciliation point after
+  // wallet signing, so a prepared sponsor reservation cannot remain stranded
+  // merely because the client retries verification through this route.
+  if (account?.status === "ready" && account.setupTransactionSignature && config.PAYLORE_WRAPPED_USDC_MINT) {
+    await finalizeGasTankConfidentialAccountSetupForVerifiedAccount(context.db, {
+      workspaceId,
+      transactionSignature: account.setupTransactionSignature,
+      ownerAddress: context.session.walletAddress,
+      mintAddress: config.PAYLORE_WRAPPED_USDC_MINT,
+      tokenAccountAddress: account.tokenAccountAddress
+    });
+  }
+
   return NextResponse.json(
     {
       account,
@@ -105,12 +121,12 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const context = await getContributorContext(workspaceId);
-    if ("response" in context) return context.response;
+    if ("response" in context) return context.response!;
 
     const config = loadPayloreConfig();
     const mint = config.PAYLORE_WRAPPED_USDC_MINT;
@@ -142,11 +158,21 @@ export async function POST(
         transactionSignature: parsed.data.signature
       }
     );
+    await finalizeGasTankConfidentialAccountSetupForVerifiedAccount(context.db, {
+      workspaceId,
+      transactionSignature: parsed.data.signature,
+      ownerAddress: context.session.walletAddress,
+      mintAddress: mint,
+      tokenAccountAddress
+    });
     return NextResponse.json(
       { account },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
+    if (error instanceof ConfidentialAccountVerificationError) {
+      return NextResponse.json({ error: error.code }, { status: 409 });
+    }
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }

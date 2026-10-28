@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   applyVerifiedSubscriptionPayment,
-  createWorkspaceNotificationForFinanceMembers,
   getWorkspaceForUser,
   getWorkspaceSubscription,
   keepSubscriptionActive,
@@ -70,11 +69,19 @@ export const dynamic = "force-dynamic";
 export async function GET(
   _request: Request,
   { params }: RouteContext
-) {
+): Promise<Response> {
   const { workspaceId } = await params;
   const access = await getAuthorizedWorkspace(workspaceId);
   if ("response" in access) {
-    return access.response;
+    return access.response!;
+  }
+
+  // Billing history is finance data; contributors can only access their own compensation.
+  if (access.membership.role === "contributor") {
+    return NextResponse.json(
+      { error: "workspace_access_denied" },
+      { status: 403 }
+    );
   }
 
   const [subscription, payments] = await Promise.all([
@@ -92,13 +99,13 @@ export async function GET(
 export async function POST(
   request: Request,
   { params }: RouteContext
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const access = await getAuthorizedWorkspace(workspaceId);
     if ("response" in access) {
-      return access.response;
+      return access.response!;
     }
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
@@ -121,15 +128,6 @@ export async function POST(
         ...verified
       }
     );
-    await createWorkspaceNotificationForFinanceMembers(access.db, {
-      workspaceId,
-      eventKey: `subscription-payment:${parsed.data.signature}`,
-      category: "workspace_billing",
-      title: "Subscription payment confirmed",
-      body: "A verified USDC payment activated or renewed this workspace subscription.",
-      destination: `/workspace/${workspaceId}/billing`
-    });
-
     return NextResponse.json({
       status: "active",
       duplicate: result.duplicate,
@@ -161,13 +159,13 @@ export async function POST(
 export async function PATCH(
   request: Request,
   { params }: RouteContext
-) {
+): Promise<Response> {
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
     const access = await getAuthorizedWorkspace(workspaceId);
     if ("response" in access) {
-      return access.response;
+      return access.response!;
     }
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });

@@ -76,6 +76,21 @@ describe("parsePayloreConfig", () => {
     );
   });
 
+  it("accepts a dedicated 32-byte payroll amount commitment secret", () => {
+    const secret = "42".repeat(32);
+    expect(parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: secret
+    }).PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET).toBe(secret);
+  });
+
+  it("rejects a malformed payroll amount commitment secret", () => {
+    expect(() => parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: "not-a-key"
+    })).toThrow(ConfigurationError);
+  });
+
   it("rejects reuse of the reserve envelope key for the Gas Tank", () => {
     expect(() =>
       parsePayloreConfig({
@@ -124,9 +139,49 @@ describe("parsePayloreConfig", () => {
     );
   });
 
-  it("keeps custom Token Wrap unwrap disabled until explicitly verified", () => {
+  it("accepts and validates the public deployment address used by webhook monitoring", () => {
+    const deploymentAddress = "7dmrSuBZtHzvkuiYgUW386gKYaeeE3jQs4sQsWkQQiUe";
+    expect(parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_DEPLOYMENT_ADDRESS: deploymentAddress
+    }).PAYLORE_HELIUS_DEPLOYMENT_ADDRESS).toBe(deploymentAddress);
+    expect(() => parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_DEPLOYMENT_ADDRESS: "not-a-solana-address"
+    })).toThrow(ConfigurationError);
+  });
+
+  it("accepts server-only Helius webhook management configuration", () => {
+    const config = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_MANAGEMENT_API_KEY: "helius-management-key",
+      PAYLORE_HELIUS_WEBHOOK_ID: "existing-webhook-id"
+    });
+
+    expect(config.PAYLORE_HELIUS_MANAGEMENT_API_KEY).toBe("helius-management-key");
+    expect(config.PAYLORE_HELIUS_WEBHOOK_ID).toBe("existing-webhook-id");
+  });
+
+  it("treats blank Helius management settings as unconfigured", () => {
+    const config = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_HELIUS_MANAGEMENT_API_KEY: " ",
+      PAYLORE_HELIUS_WEBHOOK_ID: ""
+    });
+
+    expect(config.PAYLORE_HELIUS_MANAGEMENT_API_KEY).toBeUndefined();
+    expect(config.PAYLORE_HELIUS_WEBHOOK_ID).toBeUndefined();
+  });
+
+  it("enables the Devnet unwrap path by default while preserving an explicit opt-out", () => {
     expect(
       parsePayloreConfig({ NODE_ENV: "test" }).TOKEN_WRAP_UNWRAP_ENABLED
+    ).toBe(true);
+    expect(
+      parsePayloreConfig({
+        NODE_ENV: "test",
+        PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: "false"
+      }).TOKEN_WRAP_UNWRAP_ENABLED
     ).toBe(false);
     expect(
       parsePayloreConfig({

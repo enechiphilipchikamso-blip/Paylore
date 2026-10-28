@@ -15,12 +15,16 @@ import {
 } from "@solana/kit";
 
 const SYSTEM_PROGRAM_ADDRESS = address("11111111111111111111111111111111");
-export const PAYROLL_CLAIMS_PER_TRANSACTION = 4;
+export const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
 const encoder = new TextEncoder();
 
 export type PayrollClaimInput = {
   claimId: string;
   contributorAddress: string;
+  amountCommitment: string;
+  amountCommitmentProof: string[];
+  amountCommitmentLeafIndex: number;
+  escrowTokenAccount: string;
 };
 
 export type PayrollClaimTransaction = {
@@ -61,6 +65,15 @@ function concatenate(...parts: Uint8Array[]): Uint8Array {
     offset += part.length;
   }
   return result;
+}
+
+function encodeU32(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new Error("Allocation proof index must be an unsigned 32-bit integer.");
+  }
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return bytes;
 }
 
 function encodeAnchorString(value: string): Uint8Array {
@@ -172,6 +185,14 @@ export async function buildPayrollClaimTransactions(input: {
   const claimInstructions = await Promise.all(
     input.claims.map(async (claim) => {
       const claimId = decodeHex32(claim.claimId, "Claim identifier");
+      const amountCommitment = decodeHex32(claim.amountCommitment, "Amount commitment");
+      if (!Array.isArray(claim.amountCommitmentProof) || claim.amountCommitmentProof.length > 16) {
+        throw new Error("Allocation Merkle proof depth is invalid.");
+      }
+      const proofSiblings = claim.amountCommitmentProof.map((sibling) =>
+        decodeHex32(sibling, "Allocation Merkle proof sibling")
+      );
+      const leafIndex = encodeU32(claim.amountCommitmentLeafIndex);
       const contributor = address(claim.contributorAddress);
       const claimAddress = await deriveClaimAddress(
         workspace,
@@ -194,7 +215,14 @@ export async function buildPayrollClaimTransactions(input: {
           data: concatenate(
             createClaimDiscriminator,
             claimId,
-            allocationCommitment
+            allocationCommitment,
+            amountCommitment,
+            leafIndex,
+            encodeU32(proofSiblings.length),
+            ...proofSiblings,
+            Uint8Array.from(
+              getAddressEncoder().encode(address(claim.escrowTokenAccount))
+            )
           )
         } as const
       };
@@ -202,14 +230,17 @@ export async function buildPayrollClaimTransactions(input: {
   );
 
   const rpc = createSolanaRpc("https://api.devnet.solana.com");
+  const claimsPerTransaction = input.claims.some((claim) => claim.amountCommitmentProof.length > 8)
+    ? 1
+    : PAYROLL_CLAIMS_PER_TRANSACTION;
   const batches: typeof claimInstructions[] = [];
   for (
     let index = 0;
     index < claimInstructions.length;
-    index += PAYROLL_CLAIMS_PER_TRANSACTION
+    index += claimsPerTransaction
   ) {
     batches.push(
-      claimInstructions.slice(index, index + PAYROLL_CLAIMS_PER_TRANSACTION)
+      claimInstructions.slice(index, index + claimsPerTransaction)
     );
   }
 

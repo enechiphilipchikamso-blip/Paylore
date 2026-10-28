@@ -187,7 +187,7 @@ export function WorkspaceDeletionActions({
       data.blockers.confidentialAccounts ||
       data.blockers.gasTank !== "not_configured")
   );
-  const canFinalize = periodElapsed && !hasBlockers;
+  const canFinalize = periodElapsed && !hasBlockers && Boolean(data?.retention.retentionEligible);
 
   return (
     <section className="surface-card" aria-labelledby="workspace-deletion-title">
@@ -209,11 +209,15 @@ export function WorkspaceDeletionActions({
                 {canFinalize
                   ? "Eligible for final confirmation"
                   : periodElapsed
-                    ? data.blockers.outstandingPayroll
-                      ? "Deletion blocked by outstanding obligations."
-                      : data.blockers.confidentialAccounts
-                        ? "Contributor confidential accounts must be closed by their owners before deletion."
-                        : "Gas Tank or confidential Reserve requires attention before deletion."
+                    ? data.retention.inactiveDays < 365
+                      ? "Deletion is blocked until 365 days of inactivity have elapsed."
+                      : data.blockers.outstandingPayroll
+                        ? "Deletion blocked by outstanding obligations."
+                        : data.blockers.confidentialAccounts
+                          ? "Contributor confidential accounts must be closed by their owners before deletion."
+                          : data.retention.paidOrActive
+                            ? "Deletion is blocked while the subscription is active or scheduled."
+                            : "Gas Tank or confidential Reserve requires attention before deletion."
                     : `Time remaining: ${formatRemaining(scheduledAt, now)}`}
               </p>
             </>

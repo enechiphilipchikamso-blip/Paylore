@@ -2,7 +2,8 @@ export const LEDGER_CATEGORIES = [
   "billing",
   "payroll",
   "recovery",
-  "gas_operations"
+  "gas_operations",
+  "cash_out"
 ] as const;
 
 export const LEDGER_CATEGORY_LABELS: Record<
@@ -12,7 +13,8 @@ export const LEDGER_CATEGORY_LABELS: Record<
   billing: "Workspace & Billing",
   payroll: "Payroll & Claims",
   recovery: "Recovery & Offboarding",
-  gas_operations: "Gas Tank & Network Operations"
+  gas_operations: "Gas Tank & Network Operations",
+  cash_out: "Cash Out & Withdrawals"
 };
 
 export const LEDGER_STATUSES = [

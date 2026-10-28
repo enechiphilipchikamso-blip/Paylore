@@ -24,3 +24,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [dependencies]
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
+solana-instructions-sysvar.workspace = true
+solana-sha256-hasher.workspace = true

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.34.5",
   "engines": {
-    "node": "24.21.0",
+    "node": "24.22.1",
     "pnpm": "10.34.5"
   },
   "scripts": {
@@ -14,12 +14,26 @@
     "test": "pnpm --filter @paylore/web test",
     "test:e2e": "playwright test",
     "build": "pnpm --filter @paylore/web build",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e",
+    "check": "pnpm audit:node-runtime && pnpm db:check && pnpm test:program-rust && pnpm anchor:build && pnpm test:program-idl && pnpm test:devnet-program-verify && pnpm lint && pnpm typecheck && pnpm test && pnpm test:client-secrets && pnpm test:reserve-restore && pnpm test:subscription-reminders && pnpm build && pnpm audit:client-secrets && pnpm test:e2e",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "keys:rotate": "node scripts/rotate-envelope-keys.mjs",
-    "anchor:build": "anchor build"
+    "anchor:build": "anchor build",
+    "audit:client-secrets": "node scripts/audit-client-secret-exposure.mjs apps/web/.next/static",
+    "audit:node-runtime": "node scripts/audit-node-runtime-pins.mjs",
+    "test:client-secrets": "node --test scripts/audit-client-secret-exposure.test.mjs",
+    "test:reserve-restore": "node --test scripts/verify-reserve-backup-restore.test.mjs",
+    "reserve:verify-restore": "node scripts/verify-reserve-backup-restore.mjs",
+    "test:subscription-reminders": "node --test scripts/verify-subscription-reminder-acceptance.test.mjs",
+    "subscription-reminders:verify": "node scripts/verify-subscription-reminder-acceptance.mjs",
+    "anchor:verify-idl": "node scripts/audit-payroll-program-idl.mjs",
+    "test:program-idl": "node --test scripts/audit-payroll-program-idl.test.mjs",
+    "anchor:verify-deployed": "node scripts/verify-payroll-program-devnet.mjs",
+    "anchor:verify-release": "pnpm anchor:build:verifiable && pnpm anchor:verify-idl && pnpm anchor:verify-deployed",
+    "anchor:build:verifiable": "anchor build --verifiable",
+    "test:devnet-program-verify": "node --test scripts/verify-payroll-program-devnet.test.mjs",
+    "test:program-rust": "cargo test --locked --manifest-path programs/payroll/Cargo.toml"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -28,6 +42,7 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
+    "@solana/kit": "8.4.0",
     "drizzle-orm": "0.45.3",
     "postgres": "3.4.9",
     "zod": "4.6.5"

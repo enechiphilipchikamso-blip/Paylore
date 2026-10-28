@@ -2,7 +2,7 @@
 command = "pnpm build"
 
 [build.environment]
-NODE_VERSION = "24.21.0"
+NODE_VERSION = "24.22.1"
 # These are public, non-sensitive values (network names, RPC provider names, and
 # on-chain Solana addresses such as mints, the payroll program ID, and the
 # subscription recipient wallet) that legitimately appear in source code, tests,
@@ -17,4 +17,4 @@ SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,SOLANA_NETWORK,PAYLORE_NETWORK,PAYLORE_RPC_PR
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
-external_node_modules = ["drizzle-orm", "postgres", "zod"]
+external_node_modules = ["drizzle-orm", "postgres"]

@@ -1,0 +1,210 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
+
+const mocks = vi.hoisted(() => ({
+  fetchEncodedAccount: vi.fn(),
+  createTransactionPlanner: vi.fn(),
+  createTransactionPlanExecutorWithConcurrentLeaves: vi.fn(),
+  clearPayrollSettlementProofContexts: vi.fn()
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@paylore/database", () => ({
+  appendPayrollSettlementContextSignature: vi.fn(),
+  attachPayrollSettlementSignature: vi.fn(),
+  beginPayrollSettlementAttempt: vi.fn(),
+  clearPayrollSettlementProofContexts: mocks.clearPayrollSettlementProofContexts,
+  getContributorConfidentialAccount: vi.fn(),
+  getPayrollClaimCreationEvidence: vi.fn(),
+  getWorkspacePayrollRun: vi.fn(),
+  getWorkspaceReserve: vi.fn(),
+  recordVerifiedPayrollClaimSettlement: vi.fn(),
+  releaseFailedPayrollSettlementAttempt: vi.fn(),
+  releaseUnsubmittedPayrollSettlementAttempt: vi.fn(),
+  setPayrollSettlementProofContexts: vi.fn(),
+  updatePendingPayrollSettlementBalanceSnapshot: vi.fn()
+}));
+vi.mock("@solana/kit", async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchEncodedAccount: mocks.fetchEncodedAccount,
+  createTransactionPlanner: mocks.createTransactionPlanner,
+  createTransactionPlanExecutorWithConcurrentLeaves: mocks.createTransactionPlanExecutorWithConcurrentLeaves
+}));
+
+import { cleanupProofContexts, proofSetupFinality } from "./payroll-confidential-settlement";
+
+type Status = { confirmationStatus?: string | null; err?: unknown } | null;
+function rpcWithStatuses(statuses: Status[]) {
+  const queue = [...statuses];
+  const getSignatureStatuses = vi.fn(() => ({
+    send: vi.fn().mockResolvedValue({ value: [queue.shift() ?? null] })
+  }));
+  return { getSignatureStatuses };
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.createTransactionPlanner.mockImplementation(() => async (plan: unknown) => plan);
+  mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => {
+    throw new Error("proof context close failed");
+  });
+});
+
+describe("confidential proof setup finality", () => {
+  it("accepts setup only when every proof-context transaction is finalized successfully", async () => {
+    const rpc = rpcWithStatuses([
+      { confirmationStatus: "finalized", err: null },
+      { confirmationStatus: "finalized", err: null },
+      { confirmationStatus: "finalized", err: null }
+    ]);
+    await expect(proofSetupFinality(rpc as never, ["setup-a", "setup-b", "setup-c"])).resolves.toBe("finalized");
+    expect(rpc.getSignatureStatuses).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["missing status", null],
+    ["processed status", { confirmationStatus: "processed", err: null }],
+    ["confirmed status", { confirmationStatus: "confirmed", err: null }]
+  ])("keeps proof setup pending for %s", async (_label, status) => {
+    const rpc = rpcWithStatuses([status as Status]);
+    await expect(proofSetupFinality(rpc as never, ["setup-a"])).resolves.toBe("pending");
+  });
+
+  it("reports a finalized proof setup failure instead of treating it as ready", async () => {
+    const rpc = rpcWithStatuses([
+      { confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } }
+    ]);
+    await expect(proofSetupFinality(rpc as never, ["setup-a"])).resolves.toBe("failed");
+  });
+
+  it("does not discard earlier successful proof setup when a later context is pending", async () => {
+    const rpc = rpcWithStatuses([
+      { confirmationStatus: "finalized", err: null },
+      { confirmationStatus: "confirmed", err: null }
+    ]);
+    await expect(proofSetupFinality(rpc as never, ["setup-a", "setup-b"])).resolves.toBe("pending");
+    expect(rpc.getSignatureStatuses).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves an earlier finalized setup signature when a later setup transaction failed", async () => {
+    const rpc = rpcWithStatuses([
+      { confirmationStatus: "finalized", err: null },
+      { confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } }
+    ]);
+    await expect(proofSetupFinality(rpc as never, ["setup-a", "setup-b"])).resolves.toBe("failed");
+    expect(rpc.getSignatureStatuses).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps proof setup pending when RPC status lookup fails", async () => {
+    const rpc = {
+      getSignatureStatuses: vi.fn(() => ({
+        send: vi.fn().mockRejectedValue(new Error("RPC unavailable"))
+      }))
+    };
+    await expect(proofSetupFinality(rpc as never, ["setup-a"])).resolves.toBe("pending");
+  });
+
+  it("does not treat an empty signature set as finalized", async () => {
+    const rpc = rpcWithStatuses([]);
+    await expect(proofSetupFinality(rpc as never, [])).resolves.toBe("pending");
+    expect(rpc.getSignatureStatuses).not.toHaveBeenCalled();
+  });
+});
+
+describe("confidential proof-context cleanup", () => {
+  const cleanupInput = {
+    workspaceId: "workspace-a",
+    runId: "run-a",
+    allocationId: "allocation-a",
+    addresses: ["ComputeBudget111111111111111111111111111111", "ComputeBudget111111111111111111111111111111", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"]
+  };
+
+  it("clears durable context tracking only after every context is already absent", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: false });
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    expect(result).toBe(true);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
+  });
+
+  it("retains durable tracking when a context is owned by an unexpected program", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: true, owner: "unexpected-program" });
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+
+
+  it("closes every owned context before clearing durable tracking", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
+    });
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => ({
+      successful: true,
+      pending: false,
+      signatures: ["close-signature"],
+      trackingFailed: false
+    }));
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(true);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.createTransactionPlanExecutorWithConcurrentLeaves).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
+  });
+
+
+  it.each([
+    ["pending", { successful: false, pending: true, signatures: ["close-signature"], trackingFailed: false }],
+    ["signature tracking failure", { successful: false, pending: false, signatures: ["close-signature"], trackingFailed: true }]
+  ] as const)("retains durable context records when close is %s", async (_label, _outcome) => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
+    });
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => {
+      throw new Error(`${_label}: close did not finalize`);
+    });
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+
+  it("retains tracked contexts when the durable clear operation cannot be committed", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: false });
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(false);
+    await expect(cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput))
+      .resolves.toBe(false);
+    expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
+  });
+
+  it("continues checking remaining contexts after one owned-context close fails", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
+    });
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves
+      .mockImplementationOnce(() => async () => { throw new Error("first close failed"); })
+      .mockImplementationOnce(() => async () => ({
+        successful: true, pending: false, signatures: ["second-close"], trackingFailed: false
+      }));
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.createTransactionPlanExecutorWithConcurrentLeaves).toHaveBeenCalledTimes(2);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+
+  it("keeps durable tracking when closing an owned proof context fails", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({
+      exists: true,
+      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
+    });
+    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    expect(result).toBe(false);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+});

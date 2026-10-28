@@ -28,6 +28,9 @@ export async function buildWrappedUsdcUnwrapPlan(input: {
   plan: InstructionPlan;
   sourceTokenAccount: string;
   destinationTokenAccount: string;
+  wrappedMintAuthority: string;
+  unwrappedEscrow: string;
+  expectedWrappedMintAddress: string;
 }> {
   if (input.amount <= 0n || input.amount > U64_MAX) {
     throw new Error("The unwrap amount must be a positive u64 value.");
@@ -95,12 +98,40 @@ export async function buildWrappedUsdcUnwrapPlan(input: {
     { programAddress: tokenWrapProgram }
   );
 
+  // The fork is allowed only when the maintained SDK emits the complete expected unwrap account set.
+  const requiredAccounts = [
+    unwrappedEscrow,
+    destinationTokenAccount,
+    wrappedMintAuthority,
+    unwrappedMint,
+    TOKEN_2022_PROGRAM_ADDRESS,
+    TOKEN_PROGRAM_ADDRESS,
+    sourceTokenAccount,
+    wrappedMint,
+    owner
+  ];
+  const emittedAccounts = new Set(
+    (unwrap.accounts ?? []).map((account) => account.address)
+  );
+  if (
+    unwrap.programAddress !== tokenWrapProgram ||
+    unwrap.data.byteLength === 0 ||
+    requiredAccounts.some((requiredAccount) => !emittedAccounts.has(requiredAccount))
+  ) {
+    throw new Error(
+      "The generated Token Wrap unwrap instruction does not match the expected SDK ABI. No transaction was submitted."
+    );
+  }
+
   return {
     plan: nonDivisibleSequentialInstructionPlan([
       createDestinationAccount,
       unwrap
     ]),
     sourceTokenAccount,
-    destinationTokenAccount
+    destinationTokenAccount,
+    wrappedMintAuthority,
+    unwrappedEscrow,
+    expectedWrappedMintAddress: expectedWrappedMint
   };
 }

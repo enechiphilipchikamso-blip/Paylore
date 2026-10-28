@@ -4,6 +4,14 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": false
+    }
+  },
+  "runArgs": [
+    "--privileged"
+  ],
   "remoteUser": "node",
   "forwardPorts": [3000, 54112],
   "portsAttributes": {

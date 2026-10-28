@@ -82,6 +82,7 @@ export default async function ContributorCompensationPage({
         tokenWrapProgramId={config.TOKEN_WRAP_PROGRAM_ID}
         tokenWrapUnwrapEnabled={config.TOKEN_WRAP_UNWRAP_ENABLED}
         account={account ? {
+          ownerWalletAddress: account.ownerWalletAddress,
           tokenAccountAddress: account.tokenAccountAddress,
           status: account.status,
           setupTransactionSignature: account.setupTransactionSignature,
@@ -96,7 +97,8 @@ export default async function ContributorCompensationPage({
           claimAddress: allocation.claimAddress,
           transactionSignature: allocation.transactionSignature,
           claimedAt: allocation.claimedAt?.toISOString() ?? null,
-          recoveredAt: allocation.recoveredAt?.toISOString() ?? null
+          recoveredAt: allocation.recoveredAt?.toISOString() ?? null,
+          settlementSignature: allocation.settlementSignature
         }))}
         hasOpenAllocations={hasOpenAllocations}
         offboardingRequested={offboarding?.status === "requested"}

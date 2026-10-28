@@ -55,6 +55,7 @@ describe("Helius webhook intake", () => {
         providerEventId: "1".repeat(64),
         transactionSignature: "1".repeat(64),
         transactionSlot: "12",
+        accountAddress: null,
         eventType: null,
         payload: {
           signature: "1".repeat(64),
@@ -78,4 +79,16 @@ describe("Helius webhook intake", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "invalid_payload" });
   });
+  it("acknowledges a replayed event without counting it as a new insert", async () => {
+    vi.stubEnv("PAYLORE_HELIUS_WEBHOOK_SECRET", "webhook-test-secret");
+    vi.mocked(persistSolanaWebhookEvents).mockResolvedValue({ inserted: 0, duplicates: 1 });
+    const event = { signature: "2".repeat(64), slot: 13 };
+    const response = await POST(new Request("https://paylore.example/api/webhooks/helius", {
+      method: "POST", headers: { authorization: "Bearer webhook-test-secret" }, body: JSON.stringify([event])
+    }));
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ status: "received", events: 1, inserted: 0, duplicates: 1 });
+    expect(persistSolanaWebhookEvents).toHaveBeenCalledOnce();
+  });
+
 });

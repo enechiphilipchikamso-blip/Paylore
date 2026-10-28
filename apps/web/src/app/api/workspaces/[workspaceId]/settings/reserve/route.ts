@@ -13,18 +13,24 @@ import {
   initializeWorkspaceReserve,
   verifyAndRestoreWorkspaceReserve
 } from "../../../../../../server/reserve";
-import { reconcileWorkspaceReserveAccount } from "../../../../../../server/reserve-reconciliation";
+import {
+  getWorkspaceConfidentialReserveSnapshot,
+  initializeWorkspaceConfidentialReserveAccount,
+  WorkspaceReserveInitializationError
+} from "../../../../../../server/solana/workspace-reserve";
 
 const reserveActionSchema = z.object({
-  action: z.enum(["initialize", "restore"]).default("initialize")
-});
+  action: z.enum(["initialize", "restore", "initialize_confidential"]).default("initialize"),
+  signature: z.string().min(32).max(128).nullable().optional(),
+  phase: z.enum(["account_setup", "program_configure"]).nullable().optional()
+}).strict();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type WorkspaceAccess =
   | { status: "denied"; response: NextResponse }
-  | { status: "authorized"; db: Database };
+  | { status: "authorized"; db: Database; walletAddress: string };
 
 async function authorized(workspaceId: string): Promise<WorkspaceAccess> {
   const session = await getSessionState();
@@ -49,7 +55,11 @@ async function authorized(workspaceId: string): Promise<WorkspaceAccess> {
       )
     };
   }
-  return { status: "authorized", db };
+  return {
+    status: "authorized",
+    db,
+    walletAddress: session.session.walletAddress
+  };
 }
 
 export async function GET(
@@ -61,8 +71,8 @@ export async function GET(
   if (access.status === "denied") return access.response;
   try {
     const reserve = await getWorkspaceReserve(access.db, workspaceId);
-    const onChainAccount = await reconcileWorkspaceReserveAccount(
-      reserve?.address ?? null
+    const onChainAccount = await getWorkspaceConfidentialReserveSnapshot(
+      access.db, workspaceId, access.walletAddress
     );
     return NextResponse.json(
       {
@@ -77,7 +87,12 @@ export async function GET(
       },
       { headers: { "Cache-Control": "no-store" } }
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceReserveInitializationError) {
+      return NextResponse.json({ error: error.code }, {
+        status: error.statusCode, headers: { "Cache-Control": "no-store" }
+      });
+    }
     console.error(JSON.stringify({ event: "workspace_reserve_reconciliation_failed" }));
     return NextResponse.json(
       { error: "reserve_reconciliation_unavailable" },
@@ -99,6 +114,7 @@ export async function POST(
     if (subscription?.status !== "active" && subscription?.status !== "cancel_scheduled") {
       return NextResponse.json({ error: "workspace_read_only" }, { status: 409 });
     }
+
     let body: unknown;
     try {
       body = await request.json();
@@ -109,19 +125,41 @@ export async function POST(
     if (!parsed.success) {
       return NextResponse.json({ error: "invalid_reserve_action" }, { status: 400 });
     }
-    const reserve =
-      parsed.data.action === "restore"
-        ? await verifyAndRestoreWorkspaceReserve(access.db, workspaceId)
-        : await initializeWorkspaceReserve(access.db, workspaceId);
+
+    if (parsed.data.action === "initialize_confidential") {
+      const result = await initializeWorkspaceConfidentialReserveAccount(
+        access.db,
+        workspaceId,
+        access.walletAddress,
+        { signature: parsed.data.signature ?? null, phase: parsed.data.phase ?? null }
+      );
+      return NextResponse.json(result, {
+        status: result.status === "pending" ? 202 : 200,
+        headers: { "Cache-Control": "no-store" }
+      });
+    }
+
+    const reserve = parsed.data.action === "restore"
+      ? await verifyAndRestoreWorkspaceReserve(access.db, workspaceId)
+      : await initializeWorkspaceReserve(access.db, workspaceId);
     return NextResponse.json({
       status: "key_custody_configured",
       address: reserve.address,
       created: "created" in reserve ? reserve.created : false,
       restoredAt: "restoredAt" in reserve ? reserve.restoredAt : null
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
+    }
+    if (error instanceof WorkspaceReserveInitializationError) {
+      return NextResponse.json({
+        error: error.code,
+        retryable: error.statusCode === 503
+      }, {
+        status: error.statusCode,
+        headers: { "Cache-Control": "no-store" }
+      });
     }
     if (
       error instanceof Error &&

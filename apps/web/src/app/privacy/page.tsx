@@ -1,8 +1,8 @@
 import { PublicPage } from "../../components/public/PublicPage";
 import { createPublicMetadata } from "../site";
 import {
-  getPolicyLastUpdatedDate,
-  POLICY_EFFECTIVE_DATE
+  POLICY_EFFECTIVE_DATE,
+  POLICY_LAST_UPDATED_DATE
 } from "../legal-policy";
 
 const sections = [
@@ -63,8 +63,6 @@ export const metadata = createPublicMetadata({
 export const dynamic = "force-dynamic";
 
 export default function PrivacyPage() {
-  const lastUpdatedDate = getPolicyLastUpdatedDate();
-
   return (
     <PublicPage
       eyebrow="PRIVACY"
@@ -74,7 +72,7 @@ export default function PrivacyPage() {
       <article className="surface-card prose legal-copy">
         <p className="legal-copy__effective">
           Effective Date: {POLICY_EFFECTIVE_DATE} | Last Updated:{" "}
-          {lastUpdatedDate}
+          {POLICY_LAST_UPDATED_DATE}
         </p>
         <p>
           The Paylore Privacy Policy is effective as of {POLICY_EFFECTIVE_DATE}.

@@ -331,11 +331,11 @@ test("site menu marks the current page with a blended accent line", async ({
   ).not.toHaveAttribute("aria-current", "page");
 });
 
-test("legal pages show the approved effective date and automatic last-updated date", async ({
+test("legal pages show their approved effective and last-updated dates", async ({
   page
 }) => {
   const dateLine =
-    /^Effective Date: October 12, 2026 \| Last Updated: [A-Z][a-z]+ \d{1,2}, \d{4}$/;
+    "Effective Date: October 12, 2026 | Last Updated: October 12, 2026";
 
   await page.goto("/terms");
   await expect(

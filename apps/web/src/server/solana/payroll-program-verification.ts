@@ -6,6 +6,7 @@ import {
   getAddressEncoder,
   getProgramDerivedAddress
 } from "@solana/kit";
+import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { loadPayloreConfig } from "../config";
 import { readSolanaRpc } from "./rpc";
 
@@ -35,6 +36,10 @@ export type ExpectedPayrollClaim = {
   claimId: string;
   claimAddress: string;
   contributorAddress: string;
+  amountCommitment: string;
+  amountCommitmentProof: string[];
+  amountCommitmentLeafIndex: number;
+  escrowTokenAccount: string;
 };
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -71,8 +76,12 @@ function decodeHex32(value: string): Uint8Array {
   );
 }
 
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.length === right.length && left.every((byte, index) => byte === right[index]);
+function sameBytes(left: ArrayLike<number>, right: ArrayLike<number>): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 async function deriveWorkspaceAddress(
@@ -231,7 +240,7 @@ export async function verifyPayrollClaimTransaction(input: {
       data.length >= 8 &&
       sameBytes(data.subarray(0, 8), createClaimDiscriminator)
     ) {
-      if (data.length !== 72 || instruction.accounts.length !== 5) {
+      if (data.length < 144 || instruction.accounts.length !== 5) {
         throw new Error("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
@@ -243,7 +252,21 @@ export async function verifyPayrollClaimTransaction(input: {
         accounts[1] !== expected.contributorAddress ||
         accounts[2] !== workspace ||
         accounts[3] !== expected.derivedClaim ||
-        !sameBytes(data.subarray(40, 72), commitment)
+        !sameBytes(data.subarray(40, 72), commitment) ||
+        !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment)) ||
+        !Number.isSafeInteger(expected.amountCommitmentLeafIndex) ||
+        expected.amountCommitmentLeafIndex < 0 ||
+        expected.amountCommitmentProof.length > 16 ||
+        new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(104, true) !== expected.amountCommitmentLeafIndex ||
+        new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(108, true) !== expected.amountCommitmentProof.length ||
+        data.length !== 144 + expected.amountCommitmentProof.length * 32 ||
+        expected.amountCommitmentProof.some((sibling, index) =>
+          !sameBytes(data.subarray(112 + index * 32, 144 + index * 32), decodeHex32(sibling))
+        ) ||
+        !sameBytes(
+          data.subarray(112 + expected.amountCommitmentProof.length * 32, 144 + expected.amountCommitmentProof.length * 32),
+          getAddressEncoder().encode(address(expected.escrowTokenAccount))
+        )
       ) {
         throw new Error("The on-chain claim instruction does not match the approved payroll.");
       }
@@ -281,14 +304,17 @@ export async function verifyPayrollClaimTransaction(input: {
       account.owner !== programId ||
       account.executable ||
       !data ||
-      data.length !== 138 ||
+      data.length !== 203 ||
       !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
       !sameBytes(data.subarray(8, 40), workspaceBytes) ||
       !sameBytes(data.subarray(40, 72), contributorBytes) ||
       !sameBytes(data.subarray(72, 104), expected.claimId) ||
       !sameBytes(data.subarray(104, 136), commitment) ||
-      data[136] !== 0 ||
-      data[137] !== expected.claimBump
+      !sameBytes(data.subarray(136, 168), decodeHex32(expected.amountCommitment)) ||
+      !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(expected.escrowTokenAccount))) ||
+      data[200] !== 0 ||
+      data[201] !== 0 ||
+      data[202] !== expected.claimBump
     ) {
       throw new Error(
         "The finalized Claim PDA account does not match the expected workspace, contributor, allocation, commitment, and unclaimed state."
@@ -297,13 +323,100 @@ export async function verifyPayrollClaimTransaction(input: {
   }
 }
 
-export async function verifyPayrollRecoveryTransaction(input: {
-  signature: string;
+export type FinalizedPayrollClaimState = "unclaimed" | "claimed" | "recovered" | "settlement_pending";
+
+/** Reads the canonical Claim PDA at finalized commitment before any recovery affordance is offered. */
+export async function getFinalizedPayrollClaimState(input: {
   authorityAddress: string;
   workspaceId: string;
   contributorAddress: string;
   claimId: string;
   claimAddress: string;
+  allocationCommitment: string;
+  amountCommitment: string;
+  escrowTokenAccount: string;
+}): Promise<FinalizedPayrollClaimState> {
+  const config = loadPayloreConfig();
+  const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
+  if (!programId) throw new Error("The Devnet Payroll Program is not configured.");
+
+  const claimId = decodeHex32(input.claimId);
+  const allocationCommitment = decodeHex32(input.allocationCommitment);
+  const amountCommitment = decodeHex32(input.amountCommitment);
+  const { workspace } = await deriveWorkspaceAddress(
+    input.authorityAddress, input.workspaceId, programId
+  );
+  const claim = await deriveClaimAddress(
+    workspace, input.contributorAddress, claimId, programId
+  );
+  if (claim.address !== input.claimAddress) {
+    throw new Error("The Claim PDA does not match this allocation.");
+  }
+
+  const response = await readSolanaRpc<{
+    value: { owner: string; executable: boolean; data: unknown } | null;
+  }>("getAccountInfo", [
+    claim.address,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  const account = object(response)?.value;
+  const accountRecord = object(account);
+  const data = decodeBase64AccountData(accountRecord?.data);
+  if (
+    !accountRecord ||
+    accountRecord.owner !== programId ||
+    accountRecord.executable !== false ||
+    !data ||
+    data.length !== 203 ||
+    !sameBytes(data.subarray(0, 8), await instructionDiscriminator("account:ClaimState")) ||
+    !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(workspace)) ||
+    !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributorAddress))) ||
+    !sameBytes(data.subarray(72, 104), claimId) ||
+    !sameBytes(data.subarray(104, 136), allocationCommitment) ||
+    !sameBytes(data.subarray(136, 168), amountCommitment) ||
+    !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
+    data[200] !== 1 ||
+    data[202] !== claim.bump ||
+    data[201] > 3
+  ) {
+    throw new Error("The finalized Claim PDA does not match the expected allocation.");
+  }
+
+  switch (data[201]) {
+    case 0: return "unclaimed";
+    case 1: return "claimed";
+    case 2: return "recovered";
+    case 3: return "settlement_pending";
+    default: throw new Error("The finalized Claim PDA status is invalid.");
+  }
+}
+
+/** Derives the reserve token account from the verified authority and configured mint. */
+export async function derivePayrollReserveTokenAccount(
+  reserveAuthorityAddress: string,
+  mint: string
+): Promise<string> {
+  const [tokenAddress] = await findAssociatedTokenPda({
+    owner: address(reserveAuthorityAddress),
+    mint: address(mint),
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+  });
+  return tokenAddress;
+}
+
+export async function verifyPayrollRecoveryTransaction(input: {
+  signature: string;
+  authorityAddress: string;
+  reserveAuthorityAddress: string;
+  workspaceId: string;
+  contributorAddress: string;
+  claimId: string;
+  claimAddress: string;
+  allocationCommitment: string;
+  amountCommitment: string;
+  escrowTokenAccount: string;
+  reserveTokenAccount: string;
+  mint: string;
   recoveryReasonCommitment: string;
 }): Promise<void> {
   const config = loadPayloreConfig();
@@ -312,12 +425,15 @@ export async function verifyPayrollRecoveryTransaction(input: {
     throw new Error("The Devnet Payroll Program is not configured.");
   }
   const claimId = decodeHex32(input.claimId);
+  const allocationCommitment = decodeHex32(input.allocationCommitment);
+  const amountCommitment = decodeHex32(input.amountCommitment);
   const reasonCommitment = decodeHex32(input.recoveryReasonCommitment);
-  const { workspace } = await deriveWorkspaceAddress(
+  const workspaceResult = await deriveWorkspaceAddress(
     input.authorityAddress,
     input.workspaceId,
     programId
   );
+  const workspace = workspaceResult.workspace;
   const claim = await deriveClaimAddress(
     workspace,
     input.contributorAddress,
@@ -327,6 +443,13 @@ export async function verifyPayrollRecoveryTransaction(input: {
   if (claim.address !== input.claimAddress) {
     throw new Error("The recovery Claim PDA does not match the allocation.");
   }
+  const [reserveState] = await getProgramDerivedAddress({
+    programAddress: address(programId),
+    seeds: [
+      textEncoder.encode("reserve"),
+      getAddressEncoder().encode(address(workspace))
+    ]
+  });
 
   const transaction = await readSolanaRpc<ParsedTransaction>(
     "getTransaction",
@@ -353,37 +476,104 @@ export async function verifyPayrollRecoveryTransaction(input: {
     typeof tx.slot !== "number" ||
     !Array.isArray(signatures) ||
     !signatures.includes(input.signature) ||
-    !signedBy(accountKeys, input.authorityAddress) ||
+    !signedBy(accountKeys, input.reserveAuthorityAddress) ||
     !Array.isArray(instructions)
   ) {
-    throw new Error("The recovery transaction is not finalized successfully.");
+    throw new Error("The recovery transaction is not finalized successfully with the reserve authority signature.");
   }
 
-  const discriminator = await instructionDiscriminator("global:recover_claim");
-  const matched = instructions.some((rawInstruction) => {
+  const recoverDiscriminator = await instructionDiscriminator("global:recover_claim");
+  const instructionsSysvar = "Sysvar1nstructions1111111111111111111111111";
+  let transferIndex = -1;
+  let recoveryIndex = -1;
+  let transferContext = "";
+  let matchedTransfers = 0;
+  let matchedRecoveries = 0;
+  for (const [index, rawInstruction] of instructions.entries()) {
     const instruction = object(rawInstruction) as ProgramInstruction | null;
     if (
-      instruction?.programId !== programId ||
+      !instruction ||
+      typeof instruction.programId !== "string" ||
       typeof instruction.data !== "string" ||
       !Array.isArray(instruction.accounts) ||
       !instruction.accounts.every((account) => typeof account === "string")
-    ) {
-      return false;
-    }
-    const data = decodeBase58(instruction.data);
+    ) continue;
     const accounts = instruction.accounts as string[];
-    return (
+    const data = decodeBase58(instruction.data);
+    if (
+      instruction.programId === TOKEN_2022_PROGRAM_ADDRESS &&
+      data.length >= 2 &&
+      data[0] === 27 &&
+      data[1] === 7 &&
+      accounts.length >= 5 &&
+      accounts[0] === input.escrowTokenAccount &&
+      accounts[1] === input.mint &&
+      accounts[2] === input.reserveTokenAccount
+    ) {
+      transferIndex = index;
+      transferContext = accounts[4] ?? "";
+      matchedTransfers++;
+    }
+    if (
+      instruction.programId === programId &&
       data.length === 40 &&
-      sameBytes(data.subarray(0, 8), discriminator) &&
+      sameBytes(data.subarray(0, 8), recoverDiscriminator) &&
       sameBytes(data.subarray(8), reasonCommitment) &&
-      accounts.length === 4 &&
-      accounts[0] === input.authorityAddress &&
-      accounts[1] === input.contributorAddress &&
-      accounts[2] === workspace &&
-      accounts[3] === claim.address
+      accounts.length === 10 &&
+      accounts[0] === input.contributorAddress &&
+      accounts[1] === workspace &&
+      accounts[2] === reserveState &&
+      accounts[3] === input.reserveAuthorityAddress &&
+      accounts[4] === input.reserveTokenAccount &&
+      accounts[5] === input.mint &&
+      accounts[6] === claim.address &&
+      accounts[7] === input.escrowTokenAccount &&
+      accounts[8] === instructionsSysvar &&
+      accounts[9] === transferContext
+    ) {
+      recoveryIndex = index;
+      matchedRecoveries++;
+    }
+  }
+
+  if (
+    matchedTransfers !== 1 ||
+    matchedRecoveries !== 1 ||
+    recoveryIndex !== transferIndex + 1 ||
+    !transferContext
+  ) {
+    throw new Error("The finalized recovery transaction does not include the exact escrow-to-reserve confidential transfer atomically bound to this Claim PDA.");
+  }
+
+  const claimStateDiscriminator = await instructionDiscriminator("account:ClaimState");
+  const accountInfo = await readSolanaRpc<{
+    value: { owner: string; executable: boolean; data: unknown } | null;
+  }>("getAccountInfo", [
+    claim.address,
+    { commitment: "finalized", encoding: "base64" }
+  ]);
+  const account = object(accountInfo)?.value;
+  const accountRecord = object(account);
+  const data = decodeBase64AccountData(accountRecord?.data);
+  if (
+    !accountRecord ||
+    accountRecord.owner !== programId ||
+    accountRecord.executable !== false ||
+    !data ||
+    data.length !== 203 ||
+    !sameBytes(data.subarray(0, 8), claimStateDiscriminator) ||
+    !sameBytes(data.subarray(8, 40), getAddressEncoder().encode(address(workspace))) ||
+    !sameBytes(data.subarray(40, 72), getAddressEncoder().encode(address(input.contributorAddress))) ||
+    !sameBytes(data.subarray(72, 104), claimId) ||
+    !sameBytes(data.subarray(104, 136), allocationCommitment) ||
+    !sameBytes(data.subarray(136, 168), amountCommitment) ||
+    !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
+    data[200] !== 1 ||
+    data[201] !== 2 ||
+    data[202] !== claim.bump
+  ) {
+    throw new Error(
+      "The finalized Claim PDA is not in the expected RECOVERED state for this allocation."
     );
-  });
-  if (!matched) {
-    throw new Error("The finalized transaction does not perform this Claim PDA recovery.");
   }
 }

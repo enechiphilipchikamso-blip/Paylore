@@ -1,17 +1,55 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
 
+type ReservePhase = "account_setup" | "program_configure";
+type ReserveAction = "initialize" | "restore" | "initialize_confidential";
 type OnChainAccountState = {
   status:
     | "not_checked"
     | "no_reserve"
     | "not_configured"
     | "account_missing"
-    | "account_verified";
-  tokenAccount: string | null;
+    | "confidential_account_ready"
+    | "workspace_program_not_initialized"
+    | "program_configured";
+  reserveAddress?: string;
+  tokenAccount?: string | null;
+  confidentialTransferReady?: boolean;
+  publicBalanceBaseUnits?: string;
+  availableBalanceBaseUnits?: string;
+  pendingBalanceBaseUnits?: string;
+  fundingState?: "unfunded" | "public_funds_available" | "pending_confidential_balance" | "confidential_funds_available";
+  programReserveConfigured?: boolean;
+  signature?: string;
+  phase?: ReservePhase;
 };
+
+function fundingStateLabel(state: OnChainAccountState["fundingState"]): string {
+  switch (state) {
+    case "confidential_funds_available": return "Confidential funds available";
+    case "pending_confidential_balance": return "Confidential funds pending";
+    case "public_funds_available": return "Public wrapped-USDC available";
+    case "unfunded": return "No funds detected";
+    default: return "Unavailable";
+  }
+}
+
+function fundingStateDescription(state: OnChainAccountState["fundingState"]): string {
+  switch (state) {
+    case "confidential_funds_available":
+      return "A finalized confidential available balance is present. Each payroll claim still checks the exact amount required before transfer.";
+    case "pending_confidential_balance":
+      return "Funds are in the confidential pending balance and cannot be transferred until applied. Paylore applies pending reserve funds during settlement.";
+    case "public_funds_available":
+      return "Public wrapped-USDC is present. Settlement deposits the required amount into the confidential balance before transferring, after checking the exact allocation.";
+    case "unfunded":
+      return "No public, pending, or available wrapped-USDC funds were found in finalized state. Fund this reserve before expecting a payroll claim to settle.";
+    default:
+      return "Funding state is unavailable. Refresh the finalized on-chain check before relying on reserve readiness.";
+  }
+}
 
 export function ReserveActions({
   workspaceId,
@@ -28,29 +66,40 @@ export function ReserveActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [activeAction, setActiveAction] = useState<
-    "initialize" | "restore" | null
-  >(null);
+  const [activeAction, setActiveAction] = useState<ReserveAction | null>(null);
   const [notice, setNotice] = useState<{
     state: "success" | "error" | "partial";
     text: string;
   } | null>(null);
-  const [onChainAccount, setOnChainAccount] =
-    useState<OnChainAccountState>({ status: "not_checked", tokenAccount: null });
-  const [checkingOnChain, setCheckingOnChain] = useState(false);
+  const [onChainAccount, setOnChainAccount] = useState<OnChainAccountState>({
+    status: "not_checked",
+    tokenAccount: null
+  });
+  const [checkingOnChain, setCheckingOnChain] = useState(true);
+  const [setupSignature, setSetupSignature] = useState<string | null>(null);
+  const [setupPhase, setSetupPhase] = useState<ReservePhase | null>(null);
+
+  const loadOnChainState = useCallback(async () => {
+    const response = await fetch(
+      `/api/workspaces/${workspaceId}/settings/reserve`,
+      { cache: "no-store", credentials: "same-origin" }
+    );
+    const result = await response.json() as { onChainAccount?: OnChainAccountState; error?: string };
+    if (!response.ok || !result?.onChainAccount) {
+      throw new Error(result?.error ?? "Reserve on-chain state could not be reconciled.");
+    }
+    return result.onChainAccount;
+  }, [workspaceId]);
 
   const refreshOnChainState = useCallback(async () => {
     setCheckingOnChain(true);
     try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/settings/reserve`,
-        { cache: "no-store", credentials: "same-origin" }
-      );
-      const result = await response.json();
-      if (!response.ok || !result?.onChainAccount) {
-        throw new Error("Reserve on-chain state could not be reconciled.");
+      const state = await loadOnChainState();
+      setOnChainAccount(state);
+      if (state.status === "program_configured") {
+        setSetupSignature(null);
+        setSetupPhase(null);
       }
-      setOnChainAccount(result.onChainAccount as OnChainAccountState);
     } catch (error) {
       setOnChainAccount({ status: "not_checked", tokenAccount: null });
       setNotice({
@@ -62,9 +111,36 @@ export function ReserveActions({
     } finally {
       setCheckingOnChain(false);
     }
-  }, [workspaceId]);
+  }, [loadOnChainState]);
 
-  async function run(action: "initialize" | "restore") {
+  useEffect(() => {
+    let active = true;
+    loadOnChainState().then((state) => {
+      if (!active) return;
+      setOnChainAccount(state);
+      if (state.status === "program_configured") {
+        setSetupSignature(null);
+        setSetupPhase(null);
+      }
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setOnChainAccount({ status: "not_checked", tokenAccount: null });
+      setNotice({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "Reserve on-chain state could not be reconciled."
+      });
+    }).finally(() => {
+      if (active) setCheckingOnChain(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadOnChainState]);
+
+  async function run(action: ReserveAction) {
+    if (busy) return;
     setBusy(true);
     setActiveAction(action);
     setNotice(null);
@@ -75,29 +151,119 @@ export function ReserveActions({
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ action })
+          body: JSON.stringify({
+            action,
+            ...(action === "initialize_confidential"
+              ? { signature: setupSignature, phase: setupPhase }
+              : {})
+          })
         }
       );
+      const result = await response.json().catch(() => null) as {
+        status?: string;
+        error?: string;
+        signature?: string | null;
+        phase?: ReservePhase | null;
+        tokenAccount?: string | null;
+        confidentialTransferReady?: boolean;
+        publicBalanceBaseUnits?: string;
+        availableBalanceBaseUnits?: string;
+        pendingBalanceBaseUnits?: string;
+        fundingState?: "unfunded" | "public_funds_available" | "pending_confidential_balance" | "confidential_funds_available";
+        programReserveConfigured?: boolean;
+        created?: boolean;
+        restoredAt?: string | null;
+      } | null;
+
       if (!response.ok) {
         setNotice({
           state: "error",
-          text: action === "initialize"
-            ? "Reserve signing-key custody could not be configured. Please try again."
-            : "The encrypted reserve signing-key backup could not be verified. Please try again."
+          text: result?.error === "reserve_mint_authority_approval_required"
+            ? "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready."
+            : result?.error === "workspace_program_not_initialized"
+              ? "The confidential token account is ready, but the Paylore Program workspace state is not initialized. No program reserve was configured."
+              : result?.error === "reserve_devnet_rpc_required"
+                ? "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted."
+                : result?.error === "reserve_confidential_account_not_ready"
+                  ? "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed."
+                  : action === "initialize"
+                    ? "Reserve signing-key custody could not be configured. Please try again."
+                    : action === "restore"
+                      ? "The encrypted reserve signing-key backup could not be verified. Please try again."
+                      : "The confidential reserve operation could not be verified. Check the current on-chain state before retrying."
         });
         return;
       }
+
+      if (action === "initialize_confidential") {
+        if (result?.status === "pending") {
+          setSetupSignature(result.signature ?? setupSignature);
+          setSetupPhase(result.phase ?? setupPhase);
+          setNotice({
+            state: "partial",
+            text: result.phase === "account_setup"
+              ? "The reserve confidential-account setup transaction is awaiting finality. Check this same attempt before starting another."
+              : "The Payroll Program reserve configuration is awaiting finality. Check this same attempt before starting another."
+          });
+          await refreshOnChainState();
+          return;
+        }
+        if (result?.status === "retry_ready") {
+          setSetupSignature(null);
+          setSetupPhase(null);
+          setNotice({
+            state: "partial",
+            text: "The previous reserve setup transaction finalized unsuccessfully. Recheck the account state before starting a new attempt."
+          });
+          await refreshOnChainState();
+          return;
+        }
+        if (result?.status === "workspace_program_not_initialized") {
+          setSetupSignature(null);
+          setSetupPhase(null);
+          setNotice({
+            state: "partial",
+            text: "The reserve-owned confidential account is ready, but its Paylore Program workspace state has not been initialized. The program reserve remains unconfigured."
+          });
+          setOnChainAccount(result as OnChainAccountState);
+          return;
+        }
+        if (result?.status === "program_configured" && result.programReserveConfigured === true &&
+            result.confidentialTransferReady === true && typeof result.tokenAccount === "string") {
+          setSetupSignature(null);
+          setSetupPhase(null);
+          setOnChainAccount(result as OnChainAccountState);
+          setNotice({
+            state: "success",
+            text: "The reserve confidential account and Paylore Program reserve state were verified. This does not mean the reserve has been funded."
+          });
+          router.refresh();
+          return;
+        }
+        setSetupSignature(null);
+        setSetupPhase(null);
+        await refreshOnChainState();
+        setNotice({
+          state: "partial",
+          text: "The reserve setup did not establish a verified configured reserve. Review the on-chain state before retrying."
+        });
+        return;
+      }
+
       setNotice({
         state: "success",
         text: action === "initialize"
           ? "Reserve signing-key custody configured. This does not create or fund an on-chain confidential reserve."
-          : "The encrypted reserve signing-key backup was verified and restored. The on-chain confidential reserve is still not initialized or funded."
+          : "The encrypted reserve signing-key backup was verified and restored. On-chain reserve readiness is checked separately."
       });
       router.refresh();
+      await refreshOnChainState();
     } catch {
       setNotice({
-        state: "error",
-        text: "Reserve unavailable — try again. No private-key material is shown here."
+        state: "partial",
+        text: action === "initialize_confidential"
+          ? "The reserve response was interrupted. Check the existing on-chain setup state before starting another attempt."
+          : "Reserve unavailable — try again. No private-key material is shown here."
       });
     } finally {
       setBusy(false);
@@ -118,7 +284,11 @@ export function ReserveActions({
           <span className="loading-indicator__icon" aria-hidden="true" />
           {activeAction === "restore"
             ? "Verifying reserve signing-key backup…"
-            : "Configuring reserve signing-key custody…"}
+            : activeAction === "initialize_confidential"
+              ? setupPhase === "program_configure"
+                ? "Verifying the Paylore Program reserve…"
+                : "Configuring the reserve confidential account…"
+              : "Configuring reserve signing-key custody…"}
         </p>
       ) : null}
       {reserve ? (
@@ -130,87 +300,90 @@ export function ReserveActions({
             <div><dt>Key custody configured</dt><dd>{new Date(reserve.createdAt).toLocaleString()}</dd></div>
             <div><dt>Key custody last updated</dt><dd>{new Date(reserve.updatedAt).toLocaleString()}</dd></div>
           </dl>
-          <p className="notice">
-            This address is not yet an initialized or funded Token-2022
-            confidential reserve. Payroll settlement is unavailable until the
-            on-chain reserve flow is implemented and verified.
-          </p>
-          <h3>On-chain Token-2022 account check</h3>
+          <h3>Confidential reserve readiness</h3>
           {checkingOnChain ? (
-            <p role="status">Checking finalized Devnet account state…</p>
-          ) : onChainAccount?.status === "account_missing" ? (
-            <p role="status">
-              The expected wrapped-USDC Token-2022 associated account is not
-              initialized. No reserve funding or confidential settlement is
-              available.
-            </p>
-          ) : onChainAccount?.status === "account_verified" ? (
+            <p role="status">Checking finalized Devnet account and program state…</p>
+          ) : onChainAccount.status === "account_missing" ? (
+            <p role="status">The expected reserve-owned wrapped-USDC Token-2022 account does not exist. Confidential settlement is unavailable.</p>
+          ) : onChainAccount.status === "workspace_program_not_initialized" ? (
+            <p role="status">The reserve confidential token account is ready, but the Paylore Program workspace account has not been initialized. The reserve program state is not configured.</p>
+          ) : onChainAccount.status === "confidential_account_ready" ? (
+            <p role="status">The reserve confidential token account is configured, but the Paylore Program reserve state is not yet verified.</p>
+          ) : onChainAccount.status === "program_configured" ? (
             <>
-              <p role="status">
-                The finalized account owner and mint match the configured
-                reserve. This identity check does not verify confidential
-                transfer initialization, confidential balance, or funding.
-              </p>
-              <p>Associated token account: <code>{onChainAccount.tokenAccount}</code></p>
+              <p role="status">The finalized reserve token account and Paylore Program reserve state match. The state check does not by itself mean the reserve is funded.</p>
+
+              <dl className="billing-period">
+                <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
+                <div><dt>Funding readiness</dt><dd>{fundingStateLabel(onChainAccount.fundingState)}</dd></div>
+                <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
+                <div><dt>Available confidential balance</dt><dd>{onChainAccount.availableBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
+                <div><dt>Pending confidential balance</dt><dd>{onChainAccount.pendingBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
+              </dl>
+              <p role="status">{fundingStateDescription(onChainAccount.fundingState)}</p>
             </>
-          ) : onChainAccount?.status === "not_configured" ? (
-            <p role="status">
-              The wrapped-USDC mint is not configured; on-chain Reserve
-              reconciliation is unavailable.
-            </p>
-          ) : onChainAccount?.status === "no_reserve" ? (
+          ) : onChainAccount.status === "not_configured" ? (
+            <p role="status">The wrapped-USDC mint or Payroll Program is not configured. On-chain reserve setup is unavailable.</p>
+          ) : onChainAccount.status === "no_reserve" ? (
             <p role="status">No reserve signing address exists to reconcile.</p>
-          ) : onChainAccount?.status === "not_checked" ? (
-            <p role="status">
-              On-chain Reserve state has not been checked in this session.
-            </p>
+          ) : onChainAccount.status === "not_checked" ? (
+            <p role="status">The on-chain reserve state could not be checked in this session.</p>
           ) : (
-            <p role="alert">
-              On-chain Reserve state could not be verified. Do not fund or use
-              this address for payroll.
-            </p>
+            <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
           )}
-          <button
-            className="button button--secondary"
-            disabled={checkingOnChain}
-            onClick={() => void refreshOnChainState()}
-            type="button"
-          >
+          {onChainAccount.tokenAccount && onChainAccount.confidentialTransferReady ? (
+            <section className="reserve-summary" aria-label="Manual reserve funding">
+              <h3>Manual reserve funding</h3>
+              <p>Reserve Token-2022 account: <code>{onChainAccount.tokenAccount}</code></p>
+              <p>Public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
+              <p>To fund the reserve, send only the configured wrapped-USDC mint on Devnet to this token account. Plain USDC or another mint is not interchangeable. Paylore does not sweep or automatically refill the reserve.</p>
+              <button
+                className="button button--secondary"
+                onClick={() => {
+                  const tokenAccount = onChainAccount.tokenAccount;
+                  if (!tokenAccount) return;
+                  void navigator.clipboard.writeText(tokenAccount).then(() => {
+                    setNotice({ state: "success", text: "Reserve token-account address copied." });
+                  }).catch(() => {
+                    setNotice({ state: "error", text: "Could not copy the reserve token-account address. Select and copy the address shown above." });
+                  });
+                }}
+                type="button"
+              >
+                Copy reserve token-account address
+              </button>
+            </section>
+          ) : null}
+          <button className="button button--secondary" disabled={checkingOnChain} onClick={() => {
+            setCheckingOnChain(true);
+            void refreshOnChainState();
+          }} type="button">
             Refresh on-chain check
           </button>
           {canInitialize ? (
-            <button
-              className="button button--secondary"
-              disabled={busy}
-              onClick={() => void run("restore")}
-              type="button"
-            >
-              Verify encrypted backup
-            </button>
+            <>
+              <button className="button button--secondary" disabled={busy} onClick={() => void run("restore")} type="button">
+                Verify encrypted backup
+              </button>
+              <button className="button" disabled={busy} onClick={() => void run("initialize_confidential")} type="button">
+                {setupSignature ? "Check reserve initialization status" : "Initialize confidential reserve"}
+              </button>
+            </>
           ) : null}
         </section>
       ) : (
         <section className="reserve-summary">
           <h2>Reserve key custody not configured</h2>
-          <p>
-            Configure encrypted custody for the reserve signing key. This
-            action does not create or fund an on-chain confidential reserve.
-          </p>
+          <p>Configure encrypted custody for the reserve signing key. This action does not create or fund an on-chain confidential reserve.</p>
           {canInitialize ? (
-            <button
-              className="button"
-              disabled={busy}
-              onClick={() => void run("initialize")}
-              type="button"
-            >
+            <button className="button" disabled={busy} onClick={() => void run("initialize")} type="button">
               Configure reserve key custody
             </button>
           ) : null}
         </section>
       )}
       <p className="notice">
-        Paylore does not display reserve private keys, envelope secrets,
-        provider API keys, database credentials, or session tokens.
+        Paylore does not display reserve private keys, envelope secrets, provider API keys, database credentials, or session tokens.
       </p>
     </div>
   );

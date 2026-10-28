@@ -1,0 +1,145 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({
+  assertSameOrigin: vi.fn(), clearSessionCookie: vi.fn(), getDatabase: vi.fn(), getSessionState: vi.fn(),
+  getWorkspaceForUser: vi.fn(), findWorkspaceContributorByWallet: vi.fn(), getWorkspacePayrollRun: vi.fn(),
+  settleContributorPayrollAllocation: vi.fn(), recordWorkspaceNonFinancialOutcome: vi.fn(),
+  PayrollError: class PayrollError extends Error {
+    constructor(readonly code: string, readonly statusCode: number) { super(code); }
+  }
+}));
+vi.mock("@paylore/database", () => ({
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+  findWorkspaceContributorByWallet: mocks.findWorkspaceContributorByWallet,
+  getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
+  recordWorkspaceNonFinancialOutcome: mocks.recordWorkspaceNonFinancialOutcome
+}));
+vi.mock("../../../../../../../../../../server/db", () => ({ getDatabase: mocks.getDatabase }));
+vi.mock("../../../../../../../../../../server/session", () => ({
+  clearSessionCookie: mocks.clearSessionCookie, getSessionState: mocks.getSessionState
+}));
+vi.mock("../../../../../../../../../../server/security", () => ({
+  assertSameOrigin: mocks.assertSameOrigin, RequestSecurityError: class RequestSecurityError extends Error {}
+}));
+vi.mock("../../../../../../../../../../server/solana/payroll-confidential-settlement", () => ({
+  PayrollConfidentialSettlementError: mocks.PayrollError,
+  settleContributorPayrollAllocation: mocks.settleContributorPayrollAllocation
+}));
+import { POST } from "./route";
+const context = { params: Promise.resolve({ workspaceId: "workspace-a", runId: "run-a", allocationId: "allocation-a" }) };
+const allocation = { id: "allocation-a", contributorId: "contributor-a", contributorWalletAddress: "contributor-wallet" };
+const request = () => new Request("https://paylore.test/api/claim", { method: "POST", headers: { origin: "https://paylore.test" } });
+describe("confidential payroll claim route", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.assertSameOrigin.mockImplementation(() => undefined);
+    mocks.getDatabase.mockReturnValue({});
+    mocks.getSessionState.mockResolvedValue({ status: "authenticated", session: { userId: "user-a", walletAddress: "contributor-wallet" } });
+    mocks.getWorkspaceForUser.mockResolvedValue({ role: "contributor" });
+    mocks.findWorkspaceContributorByWallet.mockResolvedValue({ id: "contributor-a", lifecycle: "active" });
+    mocks.getWorkspacePayrollRun.mockResolvedValue({ allocations: [allocation] });
+    mocks.settleContributorPayrollAllocation.mockResolvedValue({ status: "claimed", signature: "settlement-signature", amountBaseUnits: "1000000", proofDurationMs: 17.2 });
+    mocks.recordWorkspaceNonFinancialOutcome.mockResolvedValue({ status: "recorded" });
+  });
+  it("scopes by session wallet and returns non-sensitive proof timing", async () => {
+    const response = await POST(request(), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ status: "claimed", amountBaseUnits: "1000000" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("server-timing")).toContain("confidential-proof;dur=17.20");
+    expect(mocks.settleContributorPayrollAllocation).toHaveBeenCalledWith({}, {
+      workspaceId: "workspace-a", runId: "run-a", allocationId: "allocation-a",
+      contributorId: "contributor-a", contributorAddress: "contributor-wallet", contributorUserId: "user-a"
+    });
+  });
+  it("rejects an allocation belonging to another wallet", async () => {
+    mocks.getWorkspacePayrollRun.mockResolvedValue({ allocations: [{ ...allocation, contributorWalletAddress: "different-wallet" }] });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(404);
+    expect(mocks.settleContributorPayrollAllocation).not.toHaveBeenCalled();
+  });
+  it("rejects non-contributor roles", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue({ role: "organization_admin" });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(403);
+    expect(mocks.settleContributorPayrollAllocation).not.toHaveBeenCalled();
+  });
+  it("returns a non-success Claim PDA conflict without describing payment as complete", async () => {
+    mocks.settleContributorPayrollAllocation.mockResolvedValue({
+      status: "state_conflict", signature: "settlement-signature"
+    });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      status: "state_conflict", signature: "settlement-signature"
+    });
+  });
+  it("records pending reconciliation as a non-financial ledger outcome", async () => {
+    mocks.settleContributorPayrollAllocation.mockResolvedValue({
+      status: "pending", signature: "pending-settlement-signature"
+    });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      status: "pending", signature: "pending-settlement-signature"
+    });
+    expect(mocks.recordWorkspaceNonFinancialOutcome).toHaveBeenCalledWith({}, expect.objectContaining({
+      workspaceId: "workspace-a",
+      category: "payroll",
+      entryType: "claim_settlement_pending",
+      status: "pending"
+    }));
+    const ledgerInput = mocks.recordWorkspaceNonFinancialOutcome.mock.calls[0]?.[1];
+    expect(ledgerInput).not.toHaveProperty("amountBaseUnits");
+    expect(ledgerInput.metadata).toMatchObject({ outcome: "pending" });
+  });
+
+  it("records a failed settlement precondition without a financial amount", async () => {
+    mocks.settleContributorPayrollAllocation.mockRejectedValue(
+      new mocks.PayrollError("reserve_confidential_balance_insufficient", 409)
+    );
+    const response = await POST(request(), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "reserve_confidential_balance_insufficient"
+    });
+    expect(mocks.recordWorkspaceNonFinancialOutcome).toHaveBeenCalledWith({}, expect.objectContaining({
+      category: "payroll",
+      entryType: "claim_settlement_failed",
+      status: "failed",
+      metadata: {
+        runId: "run-a",
+        outcome: "failed",
+        errorCode: "reserve_confidential_balance_insufficient"
+      }
+    }));
+    expect(mocks.recordWorkspaceNonFinancialOutcome.mock.calls[0]?.[1]).not.toHaveProperty("amountBaseUnits");
+  });
+
+  it("does not return an operational outcome as if it were logged when idempotency conflicts", async () => {
+    mocks.settleContributorPayrollAllocation.mockResolvedValue({
+      status: "state_conflict", signature: "settlement-signature"
+    });
+    mocks.recordWorkspaceNonFinancialOutcome.mockResolvedValue({ status: "conflict" });
+    const response = await POST(request(), context);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "payroll_settlement_outcome_ledger_conflict" });
+  });
+
+  it("handles anonymous sessions and missing wallet identity", async () => {
+    mocks.getSessionState.mockResolvedValue({ status: "anonymous" });
+    expect((await POST(request(), context)).status).toBe(401);
+    expect(mocks.clearSessionCookie).toHaveBeenCalledOnce();
+    mocks.getSessionState.mockResolvedValue({ status: "authenticated", session: { userId: "user-a", walletAddress: null } });
+    expect((await POST(request(), context)).status).toBe(403);
+  });
+  it("denies access when the route workspace has no matching membership", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const foreignContext = { params: Promise.resolve({ workspaceId: "workspace-b", runId: "run-a", allocationId: "allocation-a" }) };
+    const response = await POST(request(), foreignContext);
+    expect(response.status).toBe(403);
+    expect(mocks.getWorkspaceForUser).toHaveBeenCalledWith({}, "user-a", "workspace-b");
+    expect(mocks.getWorkspacePayrollRun).not.toHaveBeenCalled();
+    expect(mocks.settleContributorPayrollAllocation).not.toHaveBeenCalled();
+  });
+
+});

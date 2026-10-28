@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import {
   getWorkspaceForUser,
   getWorkspacePayrollRun,
-  recordPayrollClaimSubmission
+  getPayrollClaimEscrow,
+  recordPayrollClaimSubmission,
+  updateGasTankOperationAttempt
 } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../server/db";
+import { loadPayloreConfig } from "../../../../../../../../server/config";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../server/security";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
 
@@ -80,7 +83,10 @@ export async function POST(request: Request, { params }: RouteContext) {
           claim.claimAddress.length > 64
       ) ||
       new Set(submittedClaims.map((claim) => claim.claimId)).size !==
-        submittedClaims.length
+        submittedClaims.length ||
+      ("sponsorOperationId" in body &&
+        (typeof body.sponsorOperationId !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.sponsorOperationId)))
     ) {
       return NextResponse.json(
         { error: "invalid_claim_submission" },
@@ -95,19 +101,27 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 404 }
       );
     }
-    const expectedClaims = submittedClaims.map((submitted) => {
+    const expectedClaims = await Promise.all(submittedClaims.map(async (submitted) => {
       const allocation = payrollRun.allocations.find(
         (candidate) => candidate.claimId === submitted.claimId
       );
       if (!allocation) {
         throw new Error("Submitted allocation does not belong to this run.");
       }
+      const escrow = await getPayrollClaimEscrow(db, workspaceId, allocation.id);
+      if (!escrow || !["ready", "funding", "funded"].includes(escrow.status)) {
+        throw new Error("The allocation's confidential claim escrow is not ready.");
+      }
       return {
         claimId: allocation.claimId,
         claimAddress: submitted.claimAddress,
-        contributorAddress: allocation.contributorWalletAddress
+        contributorAddress: allocation.contributorWalletAddress,
+        amountCommitment: allocation.amountCommitment ?? "",
+        amountCommitmentProof: allocation.amountCommitmentProof ?? [],
+        amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex ?? -1,
+        escrowTokenAccount: escrow.tokenAccountAddress
       };
-    });
+    }));
     if (!payrollRun.run.allocationCommitment) {
       return NextResponse.json(
         { error: "payroll_run_not_committed" },
@@ -115,6 +129,13 @@ export async function POST(request: Request, { params }: RouteContext) {
       );
     }
 
+    const programId = loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID;
+    if (!programId) {
+      return NextResponse.json(
+        { error: "payroll_program_not_configured" },
+        { status: 503 }
+      );
+    }
     try {
       await verifyPayrollClaimTransaction({
         signature: body.signature,
@@ -139,19 +160,47 @@ export async function POST(request: Request, { params }: RouteContext) {
       );
     }
 
+    if ("sponsorOperationId" in body) {
+      const sponsorUpdated = await updateGasTankOperationAttempt(db, {
+        workspaceId,
+        operationId: body.sponsorOperationId as string,
+        status: "finalized",
+        transactionSignature: body.signature
+      });
+      if (!sponsorUpdated) {
+        return NextResponse.json(
+          { error: "sponsorship_operation_signature_mismatch" },
+          { status: 409 }
+        );
+      }
+    }
+
     const result = await recordPayrollClaimSubmission(db, {
       workspaceId,
       runId,
       signature: body.signature,
-      claims: submittedClaims
+      programId,
+      authorityAddress: session.session.walletAddress,
+      claims: expectedClaims.map((claim) => ({
+        claimId: claim.claimId,
+        claimAddress: claim.claimAddress,
+        escrowTokenAccount: claim.escrowTokenAccount
+      }))
     });
+    if (result.status === "escrow_not_ready" || result.status === "escrow_identity_conflict") {
+      return NextResponse.json({ error: "payroll_claim_escrow_not_ready" }, { status: 409 });
+    }
     if (result.status === "not_found") {
       return NextResponse.json(
         { error: "payroll_run_not_found" },
         { status: 404 }
       );
     }
-    if (result.status !== "committed" && result.status !== "submitting") {
+    if (
+      result.status !== "committed" &&
+      result.status !== "submitting" &&
+      result.status !== "duplicate"
+    ) {
       return NextResponse.json(
         { error: "payroll_claim_state_conflict" },
         { status: 409 }

@@ -142,13 +142,14 @@ export function ContributorImportForm({
           <div className="table-scroll">
             <table>
               <thead>
-                <tr><th scope="col">Row</th><th scope="col">Name</th><th scope="col">Identity wallet</th><th scope="col">Result</th></tr>
+                <tr><th scope="col">Row</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Identity wallet</th><th scope="col">Result</th></tr>
               </thead>
               <tbody>
                 {preview.rows.map((row) => (
                   <tr key={row.rowNumber}>
                     <td>{row.rowNumber}</td>
                     <td>{row.value?.displayName ?? "—"}</td>
+                    <td>{row.value?.role === "finance_auditor" ? "Finance/Auditor" : row.value ? "Contributor" : "—"}</td>
                     <td>{row.value?.identityWalletAddress ?? "—"}</td>
                     <td>{row.errors.length ? row.errors.join(" ") : "Ready"}</td>
                   </tr>
@@ -157,7 +158,7 @@ export function ContributorImportForm({
             </table>
           </div>
           <p className="notice">
-            The effective payout address must match the verified identity wallet. Uploaded spreadsheet files are not retained by default.
+            The effective payout address must match the verified identity wallet. Finance/Auditor is read-only. Uploaded spreadsheet files are not retained by default.
           </p>
           <button className="button" disabled={preview.validCount === 0 || busy} onClick={() => void commit()} type="button">
             Commit contributors

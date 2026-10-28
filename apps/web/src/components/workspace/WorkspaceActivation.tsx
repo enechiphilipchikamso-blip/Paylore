@@ -72,8 +72,9 @@ export function WorkspaceActivation({
             {role === "organization_admin" ? (
               <>
                 <SubscriptionPaymentAction
-                  actionLabel="Get started"
+                  actionLabel="Get Started"
                   configured={paymentConfigured}
+                  prepareOnLoad={true}
                   refreshOnSuccess={false}
                   onSuccess={() => {
                     setPaid(true);
@@ -104,14 +105,14 @@ export function WorkspaceActivation({
           <>
             <div className="state-callout" data-state="success" role="status">
               <span className="state-callout__signal" aria-hidden="true" />
-              <p>Payment verified. Your workspace is active.</p>
+              <p>Workspace active</p>
             </div>
             <h1 id="workspace-lock-heading">
               {paid ? "Workspace activated" : "Workspace active"}
             </h1>
             <p>The payment is verified and this workspace is ready to enter.</p>
             <Link className="button" href={`/workspace/${workspaceId}?activated=1`}>
-              Enter the Activated Workspace — {workspaceName}
+              Enter workspace
             </Link>
           </>
         )}

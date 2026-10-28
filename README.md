@@ -1,5 +1,3 @@
----
-
 # Paylore
 
 Paylore is a private on-chain payroll platform for crypto-native organizations. It is designed to keep compensation amounts confidential within the confidential payroll system while preserving clear organization controls, contributor ownership, and organization-scoped records.
@@ -31,7 +29,7 @@ The repository is a pnpm workspace with:
 
 ## Local development
 
-Use Node.js 24.21.0 and pnpm 10.34.5.
+Use Node.js 24.22.1 and pnpm 10.34.5.
 
 Install dependencies:
 

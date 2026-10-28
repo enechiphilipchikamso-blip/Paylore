@@ -8,7 +8,7 @@ export const SUBSCRIPTION_PRICE_BASE_UNITS = "49000000";
 
 type ParsedInstruction = {
   program?: string;
-  parsed?: {
+  parsed?: string | {
     type?: string;
     info?: {
       source?: string;
@@ -16,10 +16,7 @@ type ParsedInstruction = {
       mint?: string;
       authority?: string;
       amount?: string;
-      tokenAmount?: {
-        amount?: string;
-        decimals?: number;
-      };
+      tokenAmount?: { amount?: string; decimals?: number };
     };
   };
 };
@@ -36,6 +33,7 @@ type TokenBalance = {
 
 type ParsedTransaction = {
   transaction?: {
+    signatures?: string[];
     message?: {
       accountKeys?: Array<
         | string
@@ -90,7 +88,8 @@ function isTransaction(value: unknown): value is ParsedTransaction {
 
 export async function verifySubscriptionPayment(
   signature: string,
-  payerAddress: string
+  payerAddress: string,
+  expectedMemo?: string
 ) {
   const config = loadPayloreConfig();
   const recipient = config.PAYLORE_SUBSCRIPTION_RECIPIENT;
@@ -125,13 +124,24 @@ export async function verifySubscriptionPayment(
   const transaction = transactionValue;
   const meta = transaction.meta;
   const message = transaction.transaction?.message;
+  const signatures = transaction.transaction?.signatures;
   if (
     !meta ||
-    meta.err ||
+    meta.err !== null ||
     !message ||
-    !Array.isArray(message.instructions)
+    !Array.isArray(message.instructions) ||
+    !Array.isArray(signatures) ||
+    !signatures.includes(signature)
   ) {
     throw new PaymentVerificationError("failed");
+  }
+
+  if (expectedMemo !== undefined) {
+    const memos = message.instructions.filter((instruction) => instruction.program === "spl-memo");
+    const memoValue = memos[0]?.parsed;
+    if (memos.length !== 1 || typeof memoValue !== "string" || memoValue !== expectedMemo) {
+      throw new PaymentVerificationError("wrong_payment");
+    }
   }
 
   const accountKeys = addressesFromTransaction(transaction);
@@ -149,9 +159,14 @@ export async function verifySubscriptionPayment(
 
   let verifiedAmount = 0n;
   for (const instruction of instructions) {
-    const info = instruction.parsed?.info;
+    const parsedInstruction =
+      instruction.parsed !== null &&
+      typeof instruction.parsed === "object"
+        ? instruction.parsed
+        : null;
+    const info = parsedInstruction?.info;
     if (
-      instruction.parsed?.type !== "transferChecked" ||
+      parsedInstruction?.type !== "transferChecked" ||
       !info?.source ||
       !info.destination ||
       info.mint !== mint

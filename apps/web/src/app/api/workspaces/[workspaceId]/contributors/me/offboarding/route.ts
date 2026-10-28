@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   completeContributorOffboarding,
+  getCompletedContributorOffboardingByWallet,
   findWorkspaceContributorByWallet,
   getContributorConfidentialAccount,
   getWorkspaceForUser,
@@ -12,13 +13,15 @@ import { clearSessionCookie, getSessionState } from "../../../../../../../server
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
 import { loadPayloreConfig } from "../../../../../../../server/config";
 import {
+  ConfidentialAccountVerificationError,
   verifyConfidentialAccountClose
 } from "../../../../../../../server/solana/confidential-account-verification";
 
+const preflightSchema = z.object({ action: z.literal("preflight") }).strict();
 const leaveSchema = z.object({
   acknowledgement: z.literal("Acknowledge & Leave Workspace"),
   closeTransactionSignature: z.string().min(80).max(90).nullable()
-});
+}).strict();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +32,24 @@ export async function POST(
 ) {
   try {
     assertSameOrigin(request);
+    if (Number(request.headers.get("content-length") ?? 0) > 2048) {
+      return NextResponse.json({ error: "request_too_large" }, { status: 413 });
+    }
+    const rawBody = await request.text();
+    if (rawBody.length > 2048) {
+      return NextResponse.json({ error: "request_too_large" }, { status: 413 });
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: "offboarding_confirmation_required" }, { status: 400 });
+    }
+    const preflight = preflightSchema.safeParse(raw);
+    const parsed = leaveSchema.safeParse(raw);
+    if (!preflight.success && !parsed.success) {
+      return NextResponse.json({ error: "offboarding_confirmation_required" }, { status: 400 });
+    }
     const { workspaceId } = await params;
     const session = await getSessionState();
     if (session.status !== "authenticated") {
@@ -40,6 +61,20 @@ export async function POST(
     }
 
     const db = getDatabase();
+    if (parsed.success) {
+      const completed = await getCompletedContributorOffboardingByWallet(db, {
+        workspaceId,
+        userId: session.session.userId,
+        walletAddress: session.session.walletAddress
+      });
+      if (completed) {
+        return NextResponse.json({
+          status: "left_workspace",
+          replayed: true,
+          manualAccountClose: completed.manualAccountClose === true
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
+    }
     const membership = await getWorkspaceForUser(
       db,
       session.session.userId,
@@ -62,12 +97,22 @@ export async function POST(
         { status: 404 }
       );
     }
-    const parsed = leaveSchema.safeParse(await request.json());
+    if (preflight.success) {
+      const hasOpenAllocations = await hasOpenContributorPayrollAllocations(db, workspaceId, contributor.id);
+      if (hasOpenAllocations) {
+        return NextResponse.json({ error: "outstanding_compensation_obligation" }, { status: 409 });
+      }
+      const account = await getContributorConfidentialAccount(db, workspaceId, contributor.id);
+      if (account?.status === "ready" && account.ownerWalletAddress !== session.session.walletAddress) {
+        return NextResponse.json({ error: "confidential_account_owner_mismatch" }, { status: 409 });
+      }
+      return NextResponse.json({
+        status: "eligible_to_leave",
+        requiresConfidentialAccountClose: account?.status === "ready"
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "offboarding_confirmation_required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "offboarding_confirmation_required" }, { status: 400 });
     }
     if (
       await hasOpenContributorPayrollAllocations(
@@ -134,6 +179,18 @@ export async function POST(
         { status: 409 }
       );
     }
+    if (outcome === "already_completed") {
+      const completed = await getCompletedContributorOffboardingByWallet(db, {
+        workspaceId,
+        userId: session.session.userId,
+        walletAddress: session.session.walletAddress
+      });
+      return NextResponse.json({
+        status: "left_workspace",
+        replayed: true,
+        manualAccountClose: completed?.manualAccountClose === true
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (outcome !== "completed") {
       return NextResponse.json(
         { error: "contributor_offboarding_unavailable" },
@@ -141,10 +198,17 @@ export async function POST(
       );
     }
     return NextResponse.json(
-      { status: "left_workspace" },
+      {
+        status: "left_workspace",
+        replayed: false,
+        manualAccountClose: Boolean(closeTransactionSignature)
+      },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
+    if (error instanceof ConfidentialAccountVerificationError) {
+      return NextResponse.json({ error: error.code }, { status: 409 });
+    }
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }

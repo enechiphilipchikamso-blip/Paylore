@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 
-type ContributorOption = { id: string; displayName: string };
+type ContributorOption = { id: string; displayName: string; role: "organization_admin" | "finance_auditor" | "contributor" };
 type InvitationView = {
   id: string;
   contributorName: string;
+  contributorRole: "organization_admin" | "finance_auditor" | "contributor";
   acceptedAt: string | null;
   expiresAt: string;
 };
@@ -110,7 +111,7 @@ export function InvitationManager({
                 >
                   {contributors.map((contributor) => (
                     <option key={contributor.id} value={contributor.id}>
-                      {contributor.displayName}
+                      {contributor.displayName} — {contributor.role === "finance_auditor" ? "Finance/Auditor" : contributor.role === "organization_admin" ? "Organization Administrator" : "Contributor"}
                     </option>
                   ))}
                 </select>
@@ -158,6 +159,7 @@ export function InvitationManager({
             {invitations.map((invitation) => (
               <li key={invitation.id}>
                 <strong>{invitation.contributorName}</strong>
+                <span>{invitation.contributorRole === "finance_auditor" ? "Finance/Auditor" : invitation.contributorRole === "organization_admin" ? "Organization Administrator" : "Contributor"}</span>
                 <span>{invitation.acceptedAt ? "Accepted" : "Pending"}</span>
                 <time dateTime={invitation.expiresAt}>
                   Expires {new Date(invitation.expiresAt).toLocaleDateString()}

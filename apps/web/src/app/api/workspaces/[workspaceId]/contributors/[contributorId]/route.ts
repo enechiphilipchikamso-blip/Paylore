@@ -3,15 +3,19 @@ import { z } from "zod";
 import {
   getWorkspaceForUser,
   getWorkspaceSubscription,
-  updateContributorLifecycle
+  updateContributorAdministrativeMetadata
 } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../server/security";
 import { getDatabase } from "../../../../../../server/db";
 
-const lifecycleSchema = z.object({
-  lifecycle: z.enum(["invited", "active"])
-});
+const metadataSchema = z.object({
+  organizationLabel: z.string().trim().max(120).nullable().optional(),
+  adminNote: z.string().trim().max(2000).nullable().optional()
+}).strict().refine(
+  (value) => value.organizationLabel !== undefined || value.adminNote !== undefined
+);
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,14 +45,19 @@ export async function PATCH(
     if (subscription?.status !== "active" && subscription?.status !== "cancel_scheduled") {
       return NextResponse.json({ error: "workspace_read_only" }, { status: 409 });
     }
-    const parsed = lifecycleSchema.safeParse(await request.json());
+    const parsed = metadataSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "invalid_contributor_update" }, { status: 400 });
     }
-    const contributor = await updateContributorLifecycle(db, {
+    const contributor = await updateContributorAdministrativeMetadata(db, {
       workspaceId,
       contributorId,
-      lifecycle: parsed.data.lifecycle
+      ...(parsed.data.organizationLabel !== undefined
+        ? { organizationLabel: parsed.data.organizationLabel || null }
+        : {}),
+      ...(parsed.data.adminNote !== undefined
+        ? { adminNote: parsed.data.adminNote || null }
+        : {})
     });
     if (!contributor) {
       return NextResponse.json({ error: "contributor_not_found" }, { status: 404 });

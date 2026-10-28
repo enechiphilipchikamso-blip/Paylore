@@ -1,3 +1,4 @@
+import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { previewContributorFile } from "./contributors-parser";
 
@@ -67,6 +68,68 @@ describe("contributor import preview", () => {
         new Set()
       )
     ).rejects.toThrow("unterminated quoted field");
+  });
+
+  it("reads XLSX workbooks and preserves workspace-safe role defaults", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Contributors");
+    sheet.addRow(["display_name", "identity_wallet_address", "effective_payout_address", "role"]);
+    sheet.addRow(["Ada", identityWallet, identityWallet, "Finance/Auditor"]);
+    const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const result = await previewContributorFile("contributors.xlsx", bytes, new Set());
+    expect(result.validCount).toBe(1);
+    expect(result.rows[0]?.value?.role).toBe("finance_auditor");
+  });
+
+  it("defaults missing roles to Contributor and blocks elevated or unknown roles", async () => {
+    const defaultRole = await previewContributorFile(
+      "contributors.csv",
+      csv([`Grace,${identityWallet},${identityWallet}`]),
+      new Set()
+    );
+    expect(defaultRole.rows[0]?.value?.role).toBe("contributor");
+
+    const elevated = await previewContributorFile(
+      "contributors.csv",
+      Buffer.from([
+        "display_name,identity_wallet_address,effective_payout_address,role",
+        `Eve,${identityWallet},${identityWallet},organization_admin`
+      ].join("\n")),
+      new Set()
+    );
+    expect(elevated.validCount).toBe(0);
+    expect(elevated.rows[0]?.errors).toContain("Role must be Contributor or Finance/Auditor.");
+  });
+
+  it("rejects invalid quote placement after a closed CSV field", async () => {
+    await expect(
+      previewContributorFile(
+        "contributors.csv",
+        Buffer.from('display_name,identity_wallet_address,effective_payout_address\n"Ada"x,11111111111111111111111111111111,11111111111111111111111111111111'),
+        new Set()
+      )
+    ).rejects.toThrow("invalid quoted field");
+  });
+
+  it("blocks malformed Solana public keys and a payout wallet that differs from identity", async () => {
+    const malformed = await previewContributorFile(
+      "contributors.csv",
+      csv(["Ada,not-a-solana-public-key,not-a-solana-public-key"]),
+      new Set()
+    );
+    expect(malformed.validCount).toBe(0);
+    expect(malformed.rows[0]?.errors).toContain("Invalid Solana public key.");
+
+    const mismatch = await previewContributorFile(
+      "contributors.csv",
+      csv([`Grace,${identityWallet},TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`]),
+      new Set()
+    );
+    expect(mismatch.validCount).toBe(0);
+    expect(mismatch.rows[0]?.errors).toContain(
+      "The effective payout address must match the identity wallet."
+    );
   });
 
   it("enforces the import row limit", async () => {

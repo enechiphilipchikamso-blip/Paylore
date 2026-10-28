@@ -36,6 +36,69 @@
       "when": 1791865518166,
       "tag": "0004_workspace_deletion_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792540800000,
+      "tag": "0005_subscription_payment_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792540800001,
+      "tag": "0006_gas_tank_sponsorship_replay",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792840980000,
+      "tag": "0007_payroll_settlement_signature",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792840980002,
+      "tag": "0008_payroll_settlement_proof_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792840980003,
+      "tag": "0009_payroll_amount_commitment",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792840980004,
+      "tag": "0010_payroll_claim_escrows",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792860000000,
+      "tag": "0011_payroll_recovery_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792941600000,
+      "tag": "0012_solana_reconciliation_cursors",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792941600001,
+      "tag": "0013_user_notifications",
+      "breakpoints": true
     }
   ]
 }

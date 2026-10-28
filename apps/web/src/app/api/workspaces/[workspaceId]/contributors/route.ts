@@ -15,12 +15,19 @@ const contributorSchema = z.object({
   identityWalletAddress: z.string().trim().min(1).max(64),
   effectivePayoutAddress: z.string().trim().min(1).max(64),
   organizationLabel: z.string().trim().max(120).optional(),
-  adminNote: z.string().trim().max(2000).optional()
-});
+  adminNote: z.string().trim().max(2000).optional(),
+  role: z.enum(["contributor", "finance_auditor"]).optional()
+}).strict();
 
 const createSchema = z.object({
   contributors: z.array(contributorSchema).min(1).max(500)
-});
+}).strict();
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return value.code === "23505" || value.cause?.code === "23505";
+}
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
@@ -44,20 +51,32 @@ async function authorize(request: Request, workspaceId: string, mutate = false) 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext): Promise<Response> {
   const { workspaceId } = await params;
   const access = await authorize(request, workspaceId);
-  if ("response" in access) return access.response;
+  if ("response" in access) return access.response!;
+  const contributors = await listWorkspaceContributors(access.db, workspaceId);
   return NextResponse.json({
-    contributors: await listWorkspaceContributors(access.db, workspaceId)
-  });
+    contributors: contributors.map((record) => ({
+      id: record.id,
+      displayName: record.displayName,
+      identityWalletAddress: record.identityWalletAddress,
+      effectivePayoutAddress: record.effectivePayoutAddress,
+      role: record.role,
+      lifecycle: record.lifecycle,
+      onboardingStatus: record.onboardingStatus,
+      ...(access.membership.role === "organization_admin"
+        ? { organizationLabel: record.organizationLabel, adminNote: record.adminNote }
+        : {})
+    }))
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext): Promise<Response> {
   try {
     const { workspaceId } = await params;
     const access = await authorize(request, workspaceId, true);
-    if ("response" in access) return access.response;
+    if ("response" in access) return access.response!;
     if (access.membership.role !== "organization_admin") {
       return NextResponse.json({ error: "workspace_access_denied" }, { status: 403 });
     }
@@ -94,6 +113,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     const created = await insertWorkspaceContributors(access.db, workspaceId, contributors);
     return NextResponse.json({ contributors: created }, { status: 201 });
   } catch (error) {
+    if (isUniqueConstraintViolation(error)) {
+      return NextResponse.json({ error: "duplicate_contributor_wallet" }, { status: 409 });
+    }
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }

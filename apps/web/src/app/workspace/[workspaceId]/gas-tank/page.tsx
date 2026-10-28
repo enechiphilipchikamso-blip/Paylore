@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import {
   getWorkspaceGasTank,
+  listWorkspaceGasTankOperations,
   listWorkspaceLedgerEntries
 } from "@paylore/database";
 import {
@@ -69,6 +70,17 @@ export default async function WorkspaceGasTankPage({
     }
   }
 
+  const operations = await listWorkspaceGasTankOperations(context.db, workspaceId, 20);
+  const operationsForDisplay = operations.map((operation) => ({
+    id: operation.id,
+    operationType: operation.operationType,
+    status: operation.status,
+    transactionSignature: operation.transactionSignature,
+    feeLamports: operation.feeLamports,
+    failureCode: operation.failureCode,
+    createdAt: operation.createdAt.toISOString()
+  }));
+
   const entries = await listWorkspaceLedgerEntries(context.db, {
     workspaceId,
     category: "gas_operations",
@@ -115,6 +127,7 @@ export default async function WorkspaceGasTankPage({
                 createdAt: latestFunding.createdAt.toISOString()
               }
             : null}
+          operations={operationsForDisplay}
         />
       </section>
       <WorkspaceLegalFooter />

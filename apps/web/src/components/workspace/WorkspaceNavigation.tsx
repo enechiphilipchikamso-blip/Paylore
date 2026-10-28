@@ -36,6 +36,7 @@ export function WorkspaceNavigation({
             <Link href={`${base}/contributors`}>Contributors</Link>
             <Link href={`${base}/contributors/invitations`}>Invitations</Link>
             <Link href={`${base}/payroll`}>Payroll</Link>
+            {role === "organization_admin" ? <Link href={`${base}/recovery`}>Recovery</Link> : null}
             <Link href={`${base}/ledger`}>Ledger</Link>
             <Link href={`${base}/notifications`}>Notifications</Link>
             <Link href={`${base}/gas-tank`}>Gas Tank</Link>

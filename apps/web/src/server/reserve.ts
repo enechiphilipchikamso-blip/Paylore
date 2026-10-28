@@ -66,7 +66,14 @@ export async function initializeWorkspaceReserve(
       result.reserve,
       envelopeKey
     );
-    verifiedKey.fill(0);
+    try {
+      if (result.created &&
+          (result.reserve.address !== keypair.address || !verifiedKey.equals(keypair.privateKey))) {
+        throw new Error("The newly created reserve key does not match the persisted signing identity.");
+      }
+    } finally {
+      verifiedKey.fill(0);
+    }
     return {
       address: result.reserve.address,
       created: result.created
@@ -92,27 +99,28 @@ export async function verifyAndRestoreWorkspaceReserve(
     existing,
     envelopeKey
   );
-  const privateKey = openReserveKey(
-    workspaceId,
-    restored,
-    envelopeKey
-  );
-  privateKey.fill(0);
-
-  const result = await restoreWorkspaceReserve(
-    db,
-    workspaceId,
-    restored
-  );
-  if (!result) {
-    throw new Error(
-      "The verified reserve backup could not be restored."
-    );
+  const expectedPrivateKey = openReserveKey(workspaceId, restored, envelopeKey);
+  try {
+    const result = await restoreWorkspaceReserve(db, workspaceId, restored);
+    if (!result || result.address !== restored.address || result.address !== existing.address) {
+      throw new Error("The verified reserve backup could not be restored.");
+    }
+    const persisted = await getWorkspaceReserve(db, workspaceId);
+    if (!persisted || persisted.address !== restored.address) {
+      throw new Error("The restored reserve identity could not be read back from durable storage.");
+    }
+    const persistedPrivateKey = openReserveKey(workspaceId, persisted, envelopeKey);
+    try {
+      if (!persistedPrivateKey.equals(expectedPrivateKey)) {
+        throw new Error("The persisted reserve key does not match its verified recovery backup.");
+      }
+    } finally {
+      persistedPrivateKey.fill(0);
+    }
+  } finally {
+    expectedPrivateKey.fill(0);
   }
-  return {
-    address: result.address,
-    restoredAt: new Date()
-  };
+  return { address: restored.address, restoredAt: new Date() };
 }
 
 export async function withWorkspaceReserveKey<T>(

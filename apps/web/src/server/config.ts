@@ -76,9 +76,13 @@ const payloreConfigSchema = z.object({
   PAYLORE_SUBSCRIPTION_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_WRAPPED_USDC_MINT: optionalSolanaAddressSchema,
   PAYLORE_PAYROLL_PROGRAM_ID: optionalSolanaAddressSchema,
+  PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, "Must be a 32-byte hexadecimal secret.")
+    .optional(),
   PAYLORE_TOKEN_WRAP_UNWRAP_ENABLED: z
     .enum(["true", "false"])
-    .default("false"),
+    .default("true"),
   PAYLORE_RESERVE_ENVELOPE_KEY: z
     .string()
     .optional(),
@@ -89,7 +93,16 @@ const payloreConfigSchema = z.object({
     ),
   PAYLORE_HELIUS_WEBHOOK_SECRET: z
     .string()
-    .optional()
+    .optional(),
+  PAYLORE_HELIUS_DEPLOYMENT_ADDRESS: optionalSolanaAddressSchema,
+  PAYLORE_HELIUS_MANAGEMENT_API_KEY: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(1).optional()
+  ),
+  PAYLORE_HELIUS_WEBHOOK_ID: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(1).optional()
+  )
 }).superRefine((config, context) => {
   if (
     config.PAYLORE_RESERVE_ENVELOPE_KEY &&
@@ -160,7 +173,7 @@ export function parseConfig(
 
 export function loadConfig(): AppConfig {
   return parseConfig(process.env);
-} 
+}
 
 export function parsePayloreConfig(
   env: NodeJS.ProcessEnv
