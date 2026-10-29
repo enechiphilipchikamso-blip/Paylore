@@ -81,6 +81,24 @@ describe("workspace setup progress", () => {
       });
   });
 
+  it("does not mark an invalid lamport balance as ready", async () => {
+    mocks.gasTankSnapshot.mockResolvedValue({
+      address: "gas-tank-address",
+      balanceLamports: "not-a-number",
+      lowBalance: false
+    });
+
+    await expect(getWorkspaceSetupProgress({} as never, "workspace-a", "wallet-a"))
+      .resolves.toMatchObject({
+        gasTank: {
+          status: "balance_unavailable",
+          address: "gas-tank-address",
+          balanceSol: null
+        },
+        complete: false
+      });
+  });
+
   it("distinguishes an absent Payroll workspace account from a reserve needing setup", async () => {
     mocks.reserveSnapshot.mockResolvedValue({
       status: "workspace_program_not_initialized",
