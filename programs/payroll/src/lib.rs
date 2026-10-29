@@ -526,16 +526,18 @@ pub struct ConfigureWorkspaceReserve<'info> {
         bump = workspace.bump
     )]
     pub workspace: Account<'info, WorkspaceState>,
+    /// The workspace Gas Tank signer pays network fees and reserve-state rent.
+    #[account(mut)]
+    pub payer: Signer<'info>,
     #[account(
         init_if_needed,
-        payer = reserve_authority,
+        payer = payer,
         space = WorkspaceReserveState::SPACE,
         seeds = [b"reserve", workspace.key().as_ref()],
         bump
     )]
     pub reserve_state: Account<'info, WorkspaceReserveState>,
-    /// The reserve signer authorizes custody and pays reserve-state rent.
-    #[account(mut)]
+    /// The reserve signer remains the authority for reserve custody.
     pub reserve_authority: Signer<'info>,
     /// CHECK: The identity and token-account header are checked before storing.
     pub reserve_token_account: UncheckedAccount<'info>,
