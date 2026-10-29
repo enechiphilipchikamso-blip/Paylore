@@ -217,4 +217,51 @@ describe("workspace reserve key custody and on-chain setup route", () => {
       retryable: false
     });
   });
+
+  it("logs Gas Tank reserve initialization failures with the correct event and safe code", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.initializeWorkspaceConfidentialReserveAccount.mockRejectedValue(
+      new mocks.MockWorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409)
+    );
+
+    try {
+      const response = await POST(request({ action: "initialize_confidential" }), {
+        params: routeContext.params
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "reserve_gas_tank_insufficient_funds",
+        retryable: false
+      });
+      expect(log).toHaveBeenCalledWith(JSON.stringify({
+        event: "workspace_confidential_reserve_initialization_failed",
+        code: "reserve_gas_tank_insufficient_funds",
+        status: 409
+      }));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("uses an operation-specific error when an unexpected Reserve setup failure occurs", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.initializeWorkspaceConfidentialReserveAccount.mockRejectedValue(new Error("provider internals"));
+    try {
+      const response = await POST(request({ action: "initialize_confidential" }), {
+        params: routeContext.params
+      });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "reserve_operation_unavailable",
+        retryable: true
+      });
+      expect(log).toHaveBeenCalledWith(JSON.stringify({
+        event: "workspace_confidential_reserve_initialization_failed",
+        code: "unexpected_operation_failure"
+      }));
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining("provider internals"));
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
