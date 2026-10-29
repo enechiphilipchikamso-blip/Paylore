@@ -7,7 +7,8 @@ import {
 import {
   findWrappedMintAuthorityPda,
   findWrappedMintPda,
-  getUnwrapInstruction
+  getUnwrapInstruction,
+  getWrapInstruction
 } from "@solana-program/token-wrap";
 import {
   address,
@@ -17,6 +18,131 @@ import {
 } from "@solana/kit";
 
 const U64_MAX = (1n << 64n) - 1n;
+
+
+export async function buildWrappedUsdcWrapPlan(input: {
+  ownerAddress: string;
+  reserveAddress: string;
+  reserveTokenAccountAddress: string;
+  wrappedMintAddress: string;
+  unwrappedMintAddress: string;
+  tokenWrapProgramAddress: string;
+  amount: bigint;
+}): Promise<{
+  plan: InstructionPlan;
+  sourceTokenAccount: string;
+  destinationTokenAccount: string;
+  wrappedMintAuthority: string;
+  unwrappedEscrow: string;
+  expectedWrappedMintAddress: string;
+}> {
+  if (input.amount <= 0n || input.amount > U64_MAX) {
+    throw new Error("The wrap amount must be a positive u64 value.");
+  }
+
+  const owner = address(input.ownerAddress);
+  const reserve = address(input.reserveAddress);
+  const wrappedMint = address(input.wrappedMintAddress);
+  const unwrappedMint = address(input.unwrappedMintAddress);
+  const tokenWrapProgram = address(input.tokenWrapProgramAddress);
+  const [expectedWrappedMint] = await findWrappedMintPda(
+    {
+      unwrappedMint,
+      wrappedTokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+    },
+    { programAddress: tokenWrapProgram }
+  );
+  if (expectedWrappedMint !== wrappedMint) {
+    throw new Error(
+      "The configured wrapped-USDC mint does not derive from the configured Circle USDC mint and Token Wrap program."
+    );
+  }
+
+  const [expectedDestinationTokenAccount] = await findAssociatedTokenPda({
+    owner: reserve,
+    mint: wrappedMint,
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+  });
+  const destinationTokenAccount = address(input.reserveTokenAccountAddress);
+  if (destinationTokenAccount !== expectedDestinationTokenAccount) {
+    throw new Error(
+      "The Reserve destination is not its deterministic wrapped-USDC Token-2022 account. No transaction was submitted."
+    );
+  }
+
+  const [wrappedMintAuthority] = await findWrappedMintAuthorityPda(
+    { wrappedMint },
+    { programAddress: tokenWrapProgram }
+  );
+  const [sourceTokenAccount] = await findAssociatedTokenPda({
+    owner,
+    mint: unwrappedMint,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS
+  });
+  const [unwrappedEscrow] = await findAssociatedTokenPda({
+    owner: wrappedMintAuthority,
+    mint: unwrappedMint,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS
+  });
+
+  const payer = createNoopSigner(owner);
+  const createEscrowAccount =
+    await getCreateAssociatedTokenIdempotentInstructionAsync({
+      payer,
+      ata: unwrappedEscrow,
+      owner: wrappedMintAuthority,
+      mint: unwrappedMint,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS
+    });
+  const wrap = getWrapInstruction(
+    {
+      recipientWrappedTokenAccount: destinationTokenAccount,
+      wrappedMint,
+      wrappedMintAuthority,
+      unwrappedTokenProgram: TOKEN_PROGRAM_ADDRESS,
+      wrappedTokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+      unwrappedTokenAccount: sourceTokenAccount,
+      unwrappedMint,
+      unwrappedEscrow,
+      transferAuthority: payer,
+      amount: input.amount
+    },
+    { programAddress: tokenWrapProgram }
+  );
+
+  const requiredAccounts = [
+    destinationTokenAccount,
+    wrappedMint,
+    wrappedMintAuthority,
+    TOKEN_PROGRAM_ADDRESS,
+    TOKEN_2022_PROGRAM_ADDRESS,
+    sourceTokenAccount,
+    unwrappedMint,
+    unwrappedEscrow,
+    owner
+  ];
+  const emittedAccounts = new Set(
+    (wrap.accounts ?? []).map((account) => account.address)
+  );
+  if (
+    wrap.programAddress !== tokenWrapProgram ||
+    wrap.data.byteLength === 0 ||
+    requiredAccounts.some((requiredAccount) => !emittedAccounts.has(requiredAccount))
+  ) {
+    throw new Error(
+      "The generated Token Wrap wrap instruction does not match the expected SDK ABI. No transaction was submitted."
+    );
+  }
+
+  return {
+    plan: nonDivisibleSequentialInstructionPlan([createEscrowAccount, wrap]),
+    sourceTokenAccount,
+    destinationTokenAccount,
+    wrappedMintAuthority,
+    unwrappedEscrow,
+    expectedWrappedMintAddress: expectedWrappedMint
+  };
+}
 
 export async function buildWrappedUsdcUnwrapPlan(input: {
   ownerAddress: string;

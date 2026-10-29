@@ -135,3 +135,39 @@ export function assertExactFinalizedUnwrapBalances(input: {
     );
   }
 }
+
+export function assertExactFinalizedWrapBalances(input: {
+  amountBaseUnits: bigint;
+  sourceBalanceBefore: bigint;
+  sourceBalanceAfter: bigint;
+  escrowBalanceBefore: bigint;
+  escrowBalanceAfter: bigint;
+  destinationBalanceBefore: bigint;
+  destinationBalanceAfter: bigint;
+  transactionSignature: string;
+}): void {
+  const sourceDebit = input.sourceBalanceBefore - input.sourceBalanceAfter;
+  const escrowCredit = input.escrowBalanceAfter - input.escrowBalanceBefore;
+  const destinationCredit =
+    input.destinationBalanceAfter - input.destinationBalanceBefore;
+  const balances = [
+    input.sourceBalanceBefore,
+    input.sourceBalanceAfter,
+    input.escrowBalanceBefore,
+    input.escrowBalanceAfter,
+    input.destinationBalanceBefore,
+    input.destinationBalanceAfter
+  ];
+
+  if (
+    input.amountBaseUnits <= 0n ||
+    balances.some((balance) => balance < 0n) ||
+    sourceDebit !== input.amountBaseUnits ||
+    escrowCredit !== input.amountBaseUnits ||
+    destinationCredit !== input.amountBaseUnits
+  ) {
+    throw new Error(
+      `The wrap result could not be reconciled against the exact Circle-USDC debit, Token Wrap escrow credit and Reserve wrapped-USDC credit. Do not submit a duplicate wrap. Transaction: ${input.transactionSignature}`
+    );
+  }
+}

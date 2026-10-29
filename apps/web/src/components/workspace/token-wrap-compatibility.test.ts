@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertDevnetTokenWrapIdentity,
   assertDevnetTokenWrapProgramAccount,
+  assertExactFinalizedWrapBalances,
   assertExactFinalizedUnwrapBalances,
   assertExpectedAssociatedTokenAccount,
   DEVNET_TOKEN_WRAP_EXPECTED
@@ -134,4 +135,59 @@ describe("custom Devnet Token Wrap compatibility", () => {
       })
     ).toThrow("Do not submit a duplicate unwrap");
   });
+
+  it("requires exact source debit, escrow credit, and Reserve wrapped-USDC credit for a wrap", () => {
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceBalanceBefore: 1_000_000n,
+        sourceBalanceAfter: 750_000n,
+        escrowBalanceBefore: 20_000n,
+        escrowBalanceAfter: 270_000n,
+        destinationBalanceBefore: 500_000n,
+        destinationBalanceAfter: 750_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceBalanceBefore: 1_000_000n,
+        sourceBalanceAfter: 800_000n,
+        escrowBalanceBefore: 20_000n,
+        escrowBalanceAfter: 270_000n,
+        destinationBalanceBefore: 500_000n,
+        destinationBalanceAfter: 750_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceBalanceBefore: 1_000_000n,
+        sourceBalanceAfter: 750_000n,
+        escrowBalanceBefore: 20_000n,
+        escrowBalanceAfter: 260_000n,
+        destinationBalanceBefore: 500_000n,
+        destinationBalanceAfter: 750_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceBalanceBefore: 1_000_000n,
+        sourceBalanceAfter: 750_000n,
+        escrowBalanceBefore: 20_000n,
+        escrowBalanceAfter: 270_000n,
+        destinationBalanceBefore: 500_000n,
+        destinationBalanceAfter: 700_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+  });
+
 });
