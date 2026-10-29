@@ -105,6 +105,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
 ): Promise<NextResponse> {
+  let attemptedAction: "initialize" | "restore" | "initialize_confidential" = "initialize";
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
@@ -125,6 +126,7 @@ export async function POST(
     if (!parsed.success) {
       return NextResponse.json({ error: "invalid_reserve_action" }, { status: 400 });
     }
+    attemptedAction = parsed.data.action;
 
     if (parsed.data.action === "initialize_confidential") {
       const result = await initializeWorkspaceConfidentialReserveAccount(
@@ -153,6 +155,16 @@ export async function POST(
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
     if (error instanceof WorkspaceReserveInitializationError) {
+      const event = attemptedAction === "initialize_confidential"
+        ? "workspace_confidential_reserve_initialization_failed"
+        : attemptedAction === "restore"
+          ? "workspace_reserve_key_custody_restore_failed"
+          : "workspace_reserve_key_custody_configuration_failed";
+      console.error(JSON.stringify({
+        event,
+        code: error.code,
+        status: error.statusCode
+      }));
       return NextResponse.json({
         error: error.code,
         retryable: error.statusCode === 503
@@ -170,9 +182,19 @@ export async function POST(
         { status: 409 }
       );
     }
-    console.error(JSON.stringify({ event: "workspace_reserve_key_custody_configuration_failed" }));
+    const event = attemptedAction === "initialize_confidential"
+      ? "workspace_confidential_reserve_initialization_failed"
+      : attemptedAction === "restore"
+        ? "workspace_reserve_key_custody_restore_failed"
+        : "workspace_reserve_key_custody_configuration_failed";
+    console.error(JSON.stringify({ event, code: "unexpected_operation_failure" }));
     return NextResponse.json(
-      { error: "reserve_key_custody_unavailable" },
+      {
+        error: attemptedAction === "initialize_confidential"
+          ? "reserve_operation_unavailable"
+          : "reserve_key_custody_unavailable",
+        retryable: true
+      },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
