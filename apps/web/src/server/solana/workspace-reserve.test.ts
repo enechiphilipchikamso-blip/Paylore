@@ -443,6 +443,12 @@ describe("workspace confidential reserve initialization", () => {
 
     expect(h.submittedSteps).toEqual(["program_configure"]);
     expect(h.reserveConfigured).toBe(true);
+
+    const retry = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    );
+    expect(retry.status).toBe("program_configured");
+    expect(h.submittedSteps).toEqual(["program_configure"]);
   });
 
   it("blocks reserve setup when the Gas Tank balance cannot be verified", async () => {
