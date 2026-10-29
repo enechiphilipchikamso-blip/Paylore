@@ -275,8 +275,8 @@ export default async function WorkspacePage({
                   {setupProgress.gasTank.address ? (
                     <p className="workspace-setup__address">Gas Tank address: <code>{setupProgress.gasTank.address}</code></p>
                   ) : null}
-                  {setupProgress.gasTank.balanceLamports && setupProgress.gasTank.status !== "balance_unavailable" ? (
-                    <p className="workspace-setup__balance">Live balance: {setupProgress.gasTank.balanceLamports} lamports</p>
+                  {setupProgress.gasTank.balanceSol !== null && setupProgress.gasTank.status !== "balance_unavailable" ? (
+                    <p className="workspace-setup__balance">Live balance: {setupProgress.gasTank.balanceSol} SOL</p>
                   ) : null}
                   <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>
                     {setupProgress.gasTank.status === "not_initialized" ? "Set up Gas Tank" : "Review and fund Gas Tank"}
