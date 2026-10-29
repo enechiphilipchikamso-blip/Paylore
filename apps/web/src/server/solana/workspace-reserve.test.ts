@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   gasTank: "GasTankSigner11111111111111111111111111111",
   gasTankExists: true,
   gasTankBalanceLamports: 1_000_000_000n,
+  sendTransactionError: null as Error | null,
   feePayerAddresses: [] as string[],
   registeredSignerAddresses: [] as string[][],
   setupArgs: null as null | { payer: string; owner: string },
@@ -96,6 +97,7 @@ function reset(): void {
     accountOwner: h.tokenProgram,
     gasTankExists: true,
     gasTankBalanceLamports: 1_000_000_000n,
+    sendTransactionError: null,
     feePayerAddresses: [],
     registeredSignerAddresses: [],
     setupArgs: null,
@@ -154,6 +156,7 @@ vi.mock("@solana/kit", () => ({
     }),
     sendTransaction: () => ({
       send: async () => {
+        if (h.sendTransactionError) throw h.sendTransactionError;
         const step = getPlanStep(h.currentPlan);
         h.submittedSteps.push(step);
         if (step === "account_setup") {
@@ -387,6 +390,22 @@ describe("workspace confidential reserve initialization", () => {
 
     expect(h.submittedSteps).toEqual([]);
     expect(h.setupArgs).toBeNull();
+  });
+
+  it("maps a late Gas Tank debit failure to a funding message instead of a generic verification error", async () => {
+    h.sendTransactionError = new Error(
+      "Attempt to debit an account but found no record of a prior credit."
+    );
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.attachCalls).toEqual([]);
   });
 
   it("requires Gas Tank key custody before submitting reserve setup transactions", async () => {
