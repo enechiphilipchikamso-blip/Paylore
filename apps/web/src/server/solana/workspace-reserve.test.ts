@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   sendTransactionError: null as Error | null,
   feePayerAddresses: [] as string[],
   registeredSignerAddresses: [] as string[][],
+  registeredInstructionSigners: [] as string[][],
   setupArgs: null as null | { payer: string; owner: string },
   configureAccounts: null as null | any[],
   reserve: "ReserveAuthority1111111111111111111111111",
@@ -100,6 +101,7 @@ function reset(): void {
     sendTransactionError: null,
     feePayerAddresses: [],
     registeredSignerAddresses: [],
+    registeredInstructionSigners: [],
     setupArgs: null,
     configureAccounts: null,
     workspaceInitialized: true,
@@ -197,18 +199,50 @@ vi.mock("@solana/kit", () => ({
   createTransactionMessage: () => ({}),
   createTransactionPlanner: (options: any) => async (plan: any) => {
     h.currentPlan = plan;
+    const instructions: any[] = [];
+    const visit = (value: any): void => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      if (value.instruction) instructions.push(value.instruction);
+      else if (value.programAddress && value.data instanceof Uint8Array) instructions.push(value);
+      if (Array.isArray(value.plans)) value.plans.forEach(visit);
+    };
+    visit(plan);
     return {
       ...options.createTransactionMessage(),
-      instructions: []
+      instructions
     };
   },
   createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
-  partiallySignTransactionMessageWithSigners: async (message: any) => message,
+  partiallySignTransactionMessageWithSigners: async (message: any) => {
+    h.registeredInstructionSigners.push(
+      message.instructions.map((instruction: any) =>
+        (instruction.accounts ?? [])
+          .filter((account: any) => account.signer)
+          .map((account: any) => account.signer.address)
+      ).flat()
+    );
+    return message;
+  },
   addSignersToTransactionMessage: (signers: any[], message: any) => {
     h.registeredSignerAddresses.push(signers.map((signer) => signer.address));
-    return { ...message, registeredSigners: signers };
+    const signersByAddress = new Map(signers.map((signer) => [signer.address, signer]));
+    return {
+      ...message,
+      feePayer: typeof message.feePayer === "object"
+        ? message.feePayer
+        : signersByAddress.get(message.feePayer?.address) ?? message.feePayer,
+      registeredSigners: signers,
+      instructions: message.instructions.map((instruction: any) => ({
+        ...instruction,
+        accounts: instruction.accounts?.map((account: any) =>
+          [2, 3].includes(account.role) && signersByAddress.has(account.address)
+            ? { ...account, signer: signersByAddress.get(account.address) }
+            : account
+        )
+      }))
+    };
   },
   getBase64EncodedWireTransaction: () => "dGVzdC10cmFuc2FjdGlvbg==",
   setTransactionMessageFeePayerSigner: (signer: any, message: any) => {
@@ -273,7 +307,10 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
       kind: "single",
       instruction: {
         programAddress: h.tokenProgram,
-        accounts: [],
+        accounts: [
+          { address: input.payer.address, role: 3 },
+          { address: input.owner.address, role: 3 }
+        ],
         data: new Uint8Array([200])
       }
     };
@@ -370,6 +407,10 @@ describe("workspace confidential reserve initialization", () => {
     expect(h.registeredSignerAddresses).toEqual([
       [h.gasTank, h.reserve],
       [h.gasTank, h.reserve]
+    ]);
+    expect(h.registeredInstructionSigners).toEqual([
+      [h.gasTank, h.reserve],
+      [h.reserve, h.gasTank]
     ]);
     expect(h.configureAccounts?.map((account) => account.address)).toEqual([
       h.authority, h.workspace, h.gasTank, h.reserveState,
