@@ -136,7 +136,7 @@ describe("ReserveActions Gas Tank preflight", () => {
     );
 
     expect(html).toContain("current balance is 0.2 SOL");
-    expect(html).toContain("exact fees and rent");
+    expect(html).toContain("conservative rent allowance and network-fee buffer");
     expect(html).toContain("Gas Tank address:");
     expect(html).toContain("gas-tank-address");
   });
