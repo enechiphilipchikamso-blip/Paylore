@@ -273,7 +273,7 @@ export default async function WorkspacePage({
                   ) : setupProgress.gasTank.status === "balance_unavailable" ? (
                     <p>Paylore could not verify the live Gas Tank balance. Open the Gas Tank page and refresh its balance before starting Reserve setup.</p>
                   ) : (
-                    <p>The Gas Tank is initialized and its live balance is available. Reserve setup will check the precise fee and rent requirement again before submitting any transaction.</p>
+                    <p>The Gas Tank is initialized and its live balance is available. Reserve setup will check a conservative rent allowance and network-fee buffer again before submitting any transaction.</p>
                   )}
                   {setupProgress.gasTank.address ? (
                     <p className="workspace-setup__address">Gas Tank address: <code>{setupProgress.gasTank.address}</code></p>
