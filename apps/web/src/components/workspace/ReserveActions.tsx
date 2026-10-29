@@ -487,7 +487,7 @@ export function ReserveActions({
             </>
           ) : gasTankPreflight.status === "unavailable" ? (
             <>
-              <p>Paylore could not verify the Gas Tank's live SOL balance. Confidential Reserve initialization is disabled until the current balance can be checked.</p>
+              <p>Paylore could not verify the Gas Tank&apos;s live SOL balance. Confidential Reserve initialization is disabled until the current balance can be checked.</p>
               <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Check Gas Tank</Link>
             </>
           ) : (
