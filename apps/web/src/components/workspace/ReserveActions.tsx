@@ -176,21 +176,36 @@ export function ReserveActions({
       } | null;
 
       if (!response.ok) {
+        const messageByError: Record<string, string> = {
+          reserve_mint_authority_approval_required:
+            "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready.",
+          workspace_program_not_initialized:
+            "The Paylore Program workspace state is not initialized. Reserve setup stopped before submitting transactions.",
+          reserve_devnet_rpc_required:
+            "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted.",
+          reserve_confidential_account_not_ready:
+            "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed.",
+          reserve_gas_tank_not_initialized:
+            "Set up the workspace Gas Tank before initializing the confidential reserve.",
+          reserve_gas_tank_insufficient_funds:
+            "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
+          reserve_gas_tank_balance_unavailable:
+            "Paylore could not verify the Gas Tank's current SOL balance. No reserve setup transaction was submitted. Refresh the Gas Tank page and retry.",
+          reserve_gas_tank_key_mismatch:
+            "The stored Gas Tank signing identity did not match its recorded address. Reserve setup was stopped for safety; contact support before retrying.",
+          reserve_gas_tank_custody_unavailable:
+            "Paylore could not access the encrypted Gas Tank signing key. Reserve setup was not confirmed. Retry after checking Gas Tank status.",
+          reserve_token_account_identity_mismatch:
+            "The expected reserve token account exists with a different owner or mint. No reserve setup transaction was submitted."
+        };
         setNotice({
           state: "error",
-          text: result?.error === "reserve_mint_authority_approval_required"
-            ? "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready."
-            : result?.error === "workspace_program_not_initialized"
-              ? "The confidential token account is ready, but the Paylore Program workspace state is not initialized. No program reserve was configured."
-              : result?.error === "reserve_devnet_rpc_required"
-                ? "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted."
-                : result?.error === "reserve_confidential_account_not_ready"
-                  ? "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed."
-                  : action === "initialize"
-                    ? "Reserve signing-key custody could not be configured. Please try again."
-                    : action === "restore"
-                      ? "The encrypted reserve signing-key backup could not be verified. Please try again."
-                      : "The confidential reserve operation could not be verified. Check the current on-chain state before retrying."
+          text: messageByError[result?.error ?? ""] ??
+            (action === "initialize"
+              ? "Reserve signing-key custody could not be configured. Please try again."
+              : action === "restore"
+                ? "The encrypted reserve signing-key backup could not be verified. Please try again."
+                : "Paylore could not complete confidential reserve setup. Refresh the Reserve page and check any submitted transaction before trying again.")
         });
         return;
       }
@@ -223,7 +238,9 @@ export function ReserveActions({
           setSetupPhase(null);
           setNotice({
             state: "partial",
-            text: "The reserve-owned confidential account is ready, but its Paylore Program workspace state has not been initialized. The program reserve remains unconfigured."
+            text: result.confidentialTransferReady
+              ? "The reserve-owned confidential account is ready, but the Paylore Program workspace state has not been initialized. The program reserve remains unconfigured."
+              : "The Paylore Program workspace state is not initialized. Paylore stopped before submitting reserve setup transactions; complete workspace setup first."
           });
           setOnChainAccount(result as OnChainAccountState);
           return;
