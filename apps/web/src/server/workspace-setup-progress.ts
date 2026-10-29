@@ -70,11 +70,18 @@ export async function getWorkspaceSetupProgress(
     };
   } else {
     const snapshot = gasTankResult.value;
-    gasTank = {
-      status: snapshot.lowBalance ? "funding_required" : "ready",
-      address: snapshot.address,
-      balanceSol: formatSol(snapshot.balanceLamports)
-    };
+    const balanceSol = formatSol(snapshot.balanceLamports);
+    gasTank = balanceSol === null
+      ? {
+          status: "balance_unavailable",
+          address: snapshot.address,
+          balanceSol: null
+        }
+      : {
+          status: snapshot.lowBalance ? "funding_required" : "ready",
+          address: snapshot.address,
+          balanceSol
+        };
   }
 
   let reserve: WorkspaceSetupProgress["reserve"];
