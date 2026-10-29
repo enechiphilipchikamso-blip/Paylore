@@ -107,6 +107,19 @@ describe("active workspace setup checklist", () => {
     );
   });
 
+  it("does not describe an activated subscription as fully ready while Reserve setup is incomplete", async () => {
+    const page = await WorkspacePage({
+      params: Promise.resolve({ workspaceId: "workspace-a" }),
+      searchParams: Promise.resolve({ activated: "1" })
+    });
+    const html = renderToStaticMarkup(page);
+
+    expect(html).toContain("Studio subscription is active.");
+    expect(html).toContain("Finish Gas Tank funding and confidential Reserve setup below");
+    expect(html).toContain("Workspace setup is incomplete");
+    expect(html).not.toContain("Studio is active and ready to use.");
+  });
+
   it("hides setup tasks once the live checks report completion", async () => {
     mocks.getWorkspaceSetupProgress.mockResolvedValue({
       gasTank: { status: "ready", address: "gas-tank-address", balanceSol: "0.2" },
