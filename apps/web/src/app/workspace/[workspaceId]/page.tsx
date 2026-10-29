@@ -25,6 +25,7 @@ import { WorkspaceActivation } from "../../../components/workspace/WorkspaceActi
 import { WorkspaceRetentionBanner } from "../../../components/workspace/WorkspaceRetentionBanner";
 import { loadPayloreConfig } from "../../../server/config";
 import { isValidSolanaAddress } from "../../../server/security";
+import { getWorkspaceSetupProgress } from "../../../server/workspace-setup-progress";
 
 export const metadata: Metadata = {
   title: "Workspace",
@@ -130,6 +131,16 @@ export default async function WorkspacePage({
     );
   }
 
+  const setupProgress =
+    workspace.role === "organization_admin" &&
+    (subscription.status === "active" || subscription.status === "cancel_scheduled")
+      ? await getWorkspaceSetupProgress(
+          db,
+          workspaceId,
+          sessionState.session.walletAddress
+        )
+      : null;
+
   return (
     <div className="protected-wrap workspace-page">
       {query.activated === "1" ? (
@@ -208,6 +219,7 @@ export default async function WorkspacePage({
           <Link href={`/workspace/${workspaceId}/contributors`}>Contributor Directory</Link>
           <Link href={`/workspace/${workspaceId}/contributors/invitations`}>Invitations</Link>
           <Link href={`/workspace/${workspaceId}/settings`}>Settings</Link>
+          <Link href={`/workspace/${workspaceId}/gas-tank`}>Gas Tank</Link>
           {workspace.role === "organization_admin" ? (
             <Link href={`/workspace/${workspaceId}/settings/reserve`}>Confidential reserve</Link>
           ) : null}
@@ -235,6 +247,65 @@ export default async function WorkspacePage({
           .
         </p>
       </header>
+
+      {setupProgress && !setupProgress.complete ? (
+        <section className="workspace-setup" aria-labelledby="workspace-setup-heading">
+          <div className="state-callout" data-state="partial" role="status">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Workspace setup is incomplete. Finish the Gas Tank setup and confidential reserve checks to prepare this workspace for private payroll.</p>
+          </div>
+          <section className="surface-card workspace-setup__card">
+            <p className="eyebrow">Getting started</p>
+            <h2 id="workspace-setup-heading">Finish setting up this workspace</h2>
+            <ol className="workspace-setup__steps">
+              <li className="workspace-setup__step" data-state={setupProgress.gasTank.status}>
+                <span className="workspace-setup__number" aria-hidden="true">1</span>
+                <div className="workspace-setup__content">
+                  <p className="eyebrow">First</p>
+                  <h3>Gas Tank setup</h3>
+                  {setupProgress.gasTank.status === "not_initialized" ? (
+                    <p>Create the workspace Gas Tank. Paylore protects its signing key on the server; the workspace administrator supplies the SOL.</p>
+                  ) : setupProgress.gasTank.status === "funding_required" ? (
+                    <p>The Gas Tank needs more SOL. Transfer SOL from the administrator wallet to the Gas Tank before starting confidential Reserve setup. Paylore checks the live balance against transaction fees and rent before submitting.</p>
+                  ) : setupProgress.gasTank.status === "balance_unavailable" ? (
+                    <p>Paylore could not verify the live Gas Tank balance. Open the Gas Tank page and refresh its balance before starting Reserve setup.</p>
+                  ) : (
+                    <p>The Gas Tank is initialized and its live balance is available. Reserve setup will check the precise fee and rent requirement again before submitting any transaction.</p>
+                  )}
+                  {setupProgress.gasTank.address ? (
+                    <p className="workspace-setup__address">Gas Tank address: <code>{setupProgress.gasTank.address}</code></p>
+                  ) : null}
+                  {setupProgress.gasTank.balanceLamports && setupProgress.gasTank.status !== "balance_unavailable" ? (
+                    <p className="workspace-setup__balance">Live balance: {setupProgress.gasTank.balanceLamports} lamports</p>
+                  ) : null}
+                  <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>
+                    {setupProgress.gasTank.status === "not_initialized" ? "Set up Gas Tank" : "Review and fund Gas Tank"}
+                  </Link>
+                </div>
+              </li>
+              <li className="workspace-setup__step" data-state={setupProgress.reserve.status}>
+                <span className="workspace-setup__number" aria-hidden="true">2</span>
+                <div className="workspace-setup__content">
+                  <p className="eyebrow">Next</p>
+                  <h3>Confidential reserve setup</h3>
+                  {setupProgress.reserve.status === "key_custody_required" ? (
+                    <p>After the Gas Tank is initialized and funded, configure encrypted Reserve signing-key custody, then initialize its confidential Token-2022 account and Payroll Program reserve state.</p>
+                  ) : setupProgress.reserve.status === "workspace_program_not_initialized" ? (
+                    <p>The Paylore Program workspace account is not initialized. Reserve setup will stop without submitting a transaction until that workspace state exists.</p>
+                  ) : setupProgress.reserve.status === "unavailable" ? (
+                    <p>Paylore could not verify the current Reserve state. Open Reserve settings and refresh the on-chain check before trying setup again.</p>
+                  ) : (
+                    <p>The Reserve still owns and authorizes its token account. When the Gas Tank has enough SOL, initialize or reconcile the confidential account and its Payroll Program reserve state.</p>
+                  )}
+                  <Link className="button" href={`/workspace/${workspaceId}/settings/reserve`}>
+                    Open confidential reserve
+                  </Link>
+                </div>
+              </li>
+            </ol>
+          </section>
+        </section>
+      ) : null}
 
       <section className="invite-state">
         {query.created === "1" ? (
