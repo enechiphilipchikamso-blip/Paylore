@@ -145,18 +145,10 @@ export function findAuthenticatedWallet(walletAddress: string): {
   }
   const disconnectFeature = wallet.features["standard:disconnect"];
 
-  const account: WalletAccount = {
-    ...registeredAccount,
-    publicKey: Uint8Array.from(registeredAccount.publicKey),
-    chains: registeredAccount.chains.filter(
-      (chain): chain is WalletAccount["chains"][number] =>
-        chain === "solana:devnet"
-    ),
-    features: registeredAccount.features.filter(
-      (entry): entry is WalletAccount["features"][number] =>
-        entry.includes(":")
-    )
-  };
+  // Wallets expose accounts as class instances whose address and other fields are
+  // prototype getters, so copying with spread drops them. Wallets may also require
+  // the exact account object they registered, so pass it through unchanged.
+  const account = registeredAccount as unknown as WalletAccount;
   return {
     account,
     signAndSendTransaction: feature.signAndSendTransaction,
