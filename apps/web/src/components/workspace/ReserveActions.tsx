@@ -341,7 +341,7 @@ export function ReserveActions({
             </>
           ) : gasTankPreflight.status === "funding_required" ? (
             <>
-              <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below Paylore's 0.05 SOL low-balance threshold. This threshold is a warning, not a fee quote: Paylore checks the actual fees and rent before submitting setup transactions and stops if the balance is insufficient.</p>
+              <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below Paylore's 0.05 SOL low-balance threshold. This threshold is a warning, not a fee quote: Paylore checks a conservative rent allowance plus a network-fee buffer before submitting setup transactions and stops if the balance is insufficient.</p>
               <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Review and fund Gas Tank</Link>
             </>
           ) : gasTankPreflight.status === "unavailable" ? (
