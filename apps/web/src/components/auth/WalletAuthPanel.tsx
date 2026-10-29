@@ -3,7 +3,8 @@
 import Image from "next/image";
 import {
   useEffect,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -125,6 +126,22 @@ type VerifyPayload = {
   signedMessage: string;
   signature: string;
 };
+
+function getStoredWallet(): string | null {
+  try {
+    const storedWallet = localStorage.getItem("paylore-last-wallet");
+    return storedWallet &&
+      SUPPORTED_WALLET_OPTIONS.some((option) => option.label === storedWallet)
+      ? storedWallet
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function subscribeToStoredWallet(): () => void {
+  return () => {};
+}
 
 function bytesToBase64(
   bytes: ArrayLike<number>
@@ -327,21 +344,15 @@ export function WalletAuthPanel({
       StandardAccount | null
     >(null);
 
-  const [lastUsedWallet, setLastUsedWallet] = useState<string | null>(() => {
-    try {
-      const storedWallet = localStorage.getItem("paylore-last-wallet");
-      if (
-        storedWallet &&
-        SUPPORTED_WALLET_OPTIONS.some((option) => option.label === storedWallet)
-      ) {
-        return storedWallet;
-      }
-    } catch {
-      // Fall back to the default state when browser storage is unavailable.
-    }
-
-    return null;
-  });
+  const storedWallet = useSyncExternalStore(
+    subscribeToStoredWallet,
+    getStoredWallet,
+    () => null
+  );
+  const [lastUsedWalletOverride, setLastUsedWalletOverride] = useState<
+    string | null
+  >(null);
+  const lastUsedWallet = lastUsedWalletOverride ?? storedWallet;
 
   const [status, setStatus] =
     useState<
@@ -561,14 +572,14 @@ export function WalletAuthPanel({
         getSupportedWalletLabel(wallet);
 
       if (walletLabel) {
-        setLastUsedWallet(walletLabel);
+        setLastUsedWalletOverride(walletLabel);
         try {
           localStorage.setItem(
             "paylore-last-wallet",
             walletLabel
           );
         } catch {
-          setLastUsedWallet(walletLabel);
+          setLastUsedWalletOverride(walletLabel);
         }
       }
 

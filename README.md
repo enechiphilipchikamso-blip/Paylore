@@ -45,3 +45,15 @@ Install dependencies:
 
 ```bash
 pnpm install --frozen-lockfile
+```
+
+Before a QA regression run, set `PAYLORE_QA_DATABASE_URL` in the untracked
+`.env.local` file and create a pre-regression backup:
+
+```bash
+pnpm db:backup:qa
+```
+
+The command verifies the connection, writes a custom-format dump to
+`/tmp/paylore-qa/paylore-pre-regression.dump`, restricts the dump to the
+current user, and lists its contents. Use a QA database URL only.
