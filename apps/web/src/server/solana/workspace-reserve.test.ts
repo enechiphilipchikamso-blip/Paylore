@@ -9,6 +9,13 @@ import {
 const h = vi.hoisted(() => ({
   tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   authority: "11111111111111111111111111111111",
+  gasTank: "GasTankSigner11111111111111111111111111111",
+  gasTankExists: true,
+  gasTankBalanceLamports: 1_000_000_000n,
+  feePayerAddresses: [] as string[],
+  registeredSignerAddresses: [] as string[][],
+  setupArgs: null as null | { payer: string; owner: string },
+  configureAccounts: null as null | any[],
   reserve: "ReserveAuthority1111111111111111111111111",
   reserveToken: "ReserveTokenAccount111111111111111111111",
   mint: "WrappedUsdcMint11111111111111111111111111",
@@ -87,6 +94,12 @@ function reset(): void {
   Object.assign(h, {
     accountReady: true,
     accountOwner: h.tokenProgram,
+    gasTankExists: true,
+    gasTankBalanceLamports: 1_000_000_000n,
+    feePayerAddresses: [],
+    registeredSignerAddresses: [],
+    setupArgs: null,
+    configureAccounts: null,
     workspaceInitialized: true,
     reserveConfigured: false,
     publicBalanceBaseUnits: 0n,
@@ -112,7 +125,9 @@ vi.mock("@solana/kit", () => ({
   address: (value: string) => value,
   isSome: (value: { __option?: string } | null | undefined) => value?.__option === "Some",
   blockhash: (value: string) => value,
-  createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserve })),
+  createKeyPairSignerFromBytes: vi.fn(async (bytes: Uint8Array) => ({
+    address: bytes[0] === 10 ? h.gasTank : h.reserve
+  })),
   createSolanaRpc: vi.fn(() => ({
     getSignatureStatuses: (signatures: string[]) => ({
       send: async () => ({
@@ -130,6 +145,12 @@ vi.mock("@solana/kit", () => ({
     }),
     getLatestBlockhash: () => ({
       send: async () => ({ value: { blockhash: "recent-blockhash", lastValidBlockHeight: 500n } })
+    }),
+    getBalance: () => ({
+      send: async () => ({ value: h.gasTankBalanceLamports })
+    }),
+    getMinimumBalanceForRentExemption: (space: bigint) => ({
+      send: async () => space === 1024n ? 5_000_000n : 3_000_000n
     }),
     sendTransaction: () => ({
       send: async () => {
@@ -171,18 +192,31 @@ vi.mock("@solana/kit", () => ({
     })
   })),
   createTransactionMessage: () => ({}),
-  createTransactionPlanner: () => async (plan: any) => {
+  createTransactionPlanner: (options: any) => async (plan: any) => {
     h.currentPlan = plan;
-    return plan;
+    return {
+      ...options.createTransactionMessage(),
+      instructions: []
+    };
   },
   createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
   partiallySignTransactionMessageWithSigners: async (message: any) => message,
+  addSignersToTransactionMessage: (signers: any[], message: any) => {
+    h.registeredSignerAddresses.push(signers.map((signer) => signer.address));
+    return { ...message, registeredSigners: signers };
+  },
   getBase64EncodedWireTransaction: () => "dGVzdC10cmFuc2FjdGlvbg==",
-  setTransactionMessageFeePayerSigner: (_signer: any, message: any) => message,
+  setTransactionMessageFeePayerSigner: (signer: any, message: any) => {
+    h.feePayerAddresses.push(signer.address);
+    return { ...message, feePayer: signer };
+  },
   setTransactionMessageLifetimeUsingBlockhash: (_lifetime: any, message: any) => message,
-  singleInstructionPlan: (instruction: any) => ({ kind: "single", instruction }),
+  singleInstructionPlan: (instruction: any) => {
+    h.configureAccounts = instruction.accounts;
+    return { kind: "single", instruction };
+  },
   getAddressEncoder: () => ({ encode: (value: string) => encode(value) }),
   getProgramDerivedAddress: async ({ seeds }: { seeds: Uint8Array[] }) => {
     const first = new TextDecoder().decode(seeds[0]);
@@ -230,14 +264,17 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
     availableBalance: h.availableBalanceBaseUnits,
     pendingBalance: h.pendingBalanceBaseUnits
   })),
-  getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async () => ({
-    kind: "single",
-    instruction: {
-      programAddress: h.tokenProgram,
-      accounts: [],
-      data: new Uint8Array([200])
-    }
-  }))
+  getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async (input: any) => {
+    h.setupArgs = { payer: input.payer.address, owner: input.owner.address };
+    return {
+      kind: "single",
+      instruction: {
+        programAddress: h.tokenProgram,
+        accounts: [],
+        data: new Uint8Array([200])
+      }
+    };
+  })
 }));
 
 vi.mock("@solana/zk-sdk/bundler", () => {
@@ -251,16 +288,17 @@ vi.mock("@solana/zk-sdk/bundler", () => {
 
 vi.mock("@paylore/database", () => ({
   getWorkspacePayrollProgramAuthority: vi.fn(async () => ({ authorityAddress: h.authority })),
+  getWorkspaceGasTank: vi.fn(async () => h.gasTankExists ? ({ address: h.gasTank }) : null),
   getWorkspaceReserve: vi.fn(async () => ({
     address: h.reserve,
     confidentialAccountSetupSignature: null,
     programReserveSetupSignature: null
   })),
-  attachWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { phase: string; signature: string }) => {
+  attachWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { workspaceId: string; phase: string; signature: string }) => {
     h.attachCalls.push(input);
     return "attached";
   }),
-  clearWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { phase: string; signature: string }) => {
+  clearWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { workspaceId: string; phase: string; signature: string }) => {
     h.clearCalls.push(input);
     return true;
   })
@@ -278,6 +316,10 @@ vi.mock("../config", () => ({
 vi.mock("../reserve", () => ({
   withWorkspaceReserveKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
     run(new Uint8Array(64).fill(9))
+}));
+vi.mock("../gas-tank", () => ({
+  withWorkspaceGasTankKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
+    run(new Uint8Array(64).fill(10))
 }));
 
 import { attachWorkspaceReserveSetupSignature } from "@paylore/database";
@@ -310,6 +352,54 @@ describe("workspace confidential reserve initialization", () => {
       phase: "program_configure",
       signature: "setup-signature-1"
     }]);
+  });
+
+  it("uses the Gas Tank for fees while the Reserve remains the token owner and authority", async () => {
+    h.accountReady = false;
+
+    const result = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    );
+
+    expect(result.status).toBe("program_configured");
+    expect(h.setupArgs).toEqual({ payer: h.gasTank, owner: h.reserve });
+    expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
+    expect(h.registeredSignerAddresses).toEqual([
+      [h.gasTank, h.reserve],
+      [h.gasTank, h.reserve]
+    ]);
+    expect(h.configureAccounts?.map((account) => account.address)).toEqual([
+      h.authority, h.workspace, h.gasTank, h.reserveState,
+      h.reserve, h.reserveToken, h.mint, "11111111111111111111111111111111"
+    ]);
+  });
+
+  it("blocks all reserve setup transactions when the Gas Tank cannot cover rent and fees", async () => {
+    h.accountReady = false;
+    h.gasTankBalanceLamports = 1n;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.setupArgs).toBeNull();
+  });
+
+  it("requires Gas Tank key custody before submitting reserve setup transactions", async () => {
+    h.gasTankExists = false;
+    h.accountReady = false;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_not_initialized",
+      statusCode: 409
+    });
+    expect(h.submittedSteps).toEqual([]);
   });
 
   it("creates the confidential account before configuring the reserve when the token account is absent", async () => {
