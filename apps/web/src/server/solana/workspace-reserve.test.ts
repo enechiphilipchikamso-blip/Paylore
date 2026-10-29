@@ -410,7 +410,7 @@ describe("workspace confidential reserve initialization", () => {
     ]);
     expect(h.registeredInstructionSigners).toEqual([
       [h.gasTank, h.reserve],
-      [h.reserve, h.gasTank]
+      [h.gasTank, h.reserve]
     ]);
     expect(h.configureAccounts?.map((account) => account.address)).toEqual([
       h.authority, h.workspace, h.gasTank, h.reserveState,
