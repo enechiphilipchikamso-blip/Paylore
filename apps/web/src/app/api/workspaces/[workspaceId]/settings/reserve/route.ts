@@ -105,7 +105,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> }
 ): Promise<NextResponse> {
-  let attemptedAction: "initialize" | "restore" | "initialize_confidential" = "initialize";
+  let attemptedAction: "unknown" | "initialize" | "restore" | "initialize_confidential" = "unknown";
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
@@ -159,7 +159,9 @@ export async function POST(
         ? "workspace_confidential_reserve_initialization_failed"
         : attemptedAction === "restore"
           ? "workspace_reserve_key_custody_restore_failed"
-          : "workspace_reserve_key_custody_configuration_failed";
+          : attemptedAction === "initialize"
+            ? "workspace_reserve_key_custody_configuration_failed"
+            : "workspace_reserve_route_failed";
       console.error(JSON.stringify({
         event,
         code: error.code,
@@ -186,11 +188,13 @@ export async function POST(
       ? "workspace_confidential_reserve_initialization_failed"
       : attemptedAction === "restore"
         ? "workspace_reserve_key_custody_restore_failed"
-        : "workspace_reserve_key_custody_configuration_failed";
+        : attemptedAction === "initialize"
+          ? "workspace_reserve_key_custody_configuration_failed"
+          : "workspace_reserve_route_failed";
     console.error(JSON.stringify({ event, code: "unexpected_operation_failure" }));
     return NextResponse.json(
       {
-        error: attemptedAction === "initialize_confidential"
+        error: attemptedAction === "initialize_confidential" || attemptedAction === "unknown"
           ? "reserve_operation_unavailable"
           : "reserve_key_custody_unavailable",
         retryable: true
