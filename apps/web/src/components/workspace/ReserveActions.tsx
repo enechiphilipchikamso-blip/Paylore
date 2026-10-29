@@ -351,7 +351,7 @@ export function ReserveActions({
             </>
           ) : (
             <>
-              <p>The Gas Tank is initialized and its current balance is {gasTankPreflight.balanceSol} SOL. Paylore will check the exact fees and rent again immediately before any Reserve setup transaction.</p>
+              <p>The Gas Tank is initialized and its current balance is {gasTankPreflight.balanceSol} SOL. Paylore will check a conservative rent allowance and network-fee buffer immediately before any Reserve setup transaction.</p>
               {gasTankPreflight.address ? <p>Gas Tank address: <code>{gasTankPreflight.address}</code></p> : null}
             </>
           )}
