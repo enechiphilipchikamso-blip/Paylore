@@ -744,6 +744,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       mint: input.mintAddress, programId: input.programId, reserveState: input.reserveState, reserveBump: input.reserveBump
     });
     if (existingState === "program_configured") {
+      await verifyGasTankBalanceReadable(input.rpc, gasTankAddress);
       return {
         status: "program_configured", reserveAddress: input.reserveAddress,
         tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
