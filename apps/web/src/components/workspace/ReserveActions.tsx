@@ -190,7 +190,7 @@ export function ReserveActions({
           reserve_gas_tank_insufficient_funds:
             "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
           reserve_gas_tank_balance_unavailable:
-            "Paylore could not verify the Gas Tank's current SOL balance. No reserve setup transaction was submitted. Refresh the Gas Tank page and retry.",
+            "Paylore could not verify the Gas Tank's current SOL balance before the next setup step. Check the Gas Tank and Reserve status before retrying.",
           reserve_gas_tank_key_mismatch:
             "The stored Gas Tank signing identity did not match its recorded address. Reserve setup was stopped for safety; contact support before retrying.",
           reserve_gas_tank_custody_unavailable:
