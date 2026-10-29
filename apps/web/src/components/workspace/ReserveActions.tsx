@@ -17,6 +17,43 @@ export function gasTankAllowsReserveInitialization(
 ): boolean {
   return status === "ready" || status === "funding_required";
 }
+
+export function getReserveActionErrorMessage(
+  errorCode: string | undefined,
+  action: ReserveAction
+): string {
+  const messageByError: Record<string, string> = {
+    reserve_mint_authority_approval_required:
+      "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready.",
+    workspace_program_not_initialized:
+      "The Paylore Program workspace state is not initialized. Reserve setup stopped before submitting transactions.",
+    reserve_devnet_rpc_required:
+      "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted.",
+    reserve_confidential_account_not_ready:
+      "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed.",
+    reserve_gas_tank_not_initialized:
+      "Set up the workspace Gas Tank before initializing the confidential reserve.",
+    reserve_gas_tank_insufficient_funds:
+      "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
+    reserve_gas_tank_balance_unavailable:
+      "Paylore could not verify the Gas Tank's live SOL balance. Reserve setup may be partially complete; refresh the Gas Tank and Reserve status before retrying.",
+    reserve_gas_tank_key_mismatch:
+      "The stored Gas Tank signing identity did not match its recorded address. Reserve setup was stopped for safety; contact support before retrying.",
+    reserve_gas_tank_custody_unavailable:
+      "Paylore could not access the encrypted Gas Tank signing key. Reserve setup was not confirmed. Retry after checking Gas Tank status.",
+    reserve_token_account_identity_mismatch:
+      "The expected reserve token account exists with a different owner or mint. No reserve setup transaction was submitted."
+  };
+  const specificMessage = errorCode ? messageByError[errorCode] : undefined;
+  if (specificMessage) return specificMessage;
+  if (action === "initialize") {
+    return "Reserve signing-key custody could not be configured. Please try again.";
+  }
+  if (action === "restore") {
+    return "The encrypted reserve signing-key backup could not be verified. Please try again.";
+  }
+  return "Paylore could not complete confidential reserve setup. Refresh the Reserve page and check any submitted transaction before trying again.";
+}
 type OnChainAccountState = {
   status:
     | "not_checked"
@@ -190,36 +227,9 @@ export function ReserveActions({
       } | null;
 
       if (!response.ok) {
-        const messageByError: Record<string, string> = {
-          reserve_mint_authority_approval_required:
-            "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready.",
-          workspace_program_not_initialized:
-            "The Paylore Program workspace state is not initialized. Reserve setup stopped before submitting transactions.",
-          reserve_devnet_rpc_required:
-            "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted.",
-          reserve_confidential_account_not_ready:
-            "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed.",
-          reserve_gas_tank_not_initialized:
-            "Set up the workspace Gas Tank before initializing the confidential reserve.",
-          reserve_gas_tank_insufficient_funds:
-            "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
-          reserve_gas_tank_balance_unavailable:
-            "Paylore could not verify the Gas Tank's live SOL balance. Reserve setup may be partially complete; refresh the Gas Tank and Reserve status before retrying.",
-          reserve_gas_tank_key_mismatch:
-            "The stored Gas Tank signing identity did not match its recorded address. Reserve setup was stopped for safety; contact support before retrying.",
-          reserve_gas_tank_custody_unavailable:
-            "Paylore could not access the encrypted Gas Tank signing key. Reserve setup was not confirmed. Retry after checking Gas Tank status.",
-          reserve_token_account_identity_mismatch:
-            "The expected reserve token account exists with a different owner or mint. No reserve setup transaction was submitted."
-        };
         setNotice({
           state: "error",
-          text: messageByError[result?.error ?? ""] ??
-            (action === "initialize"
-              ? "Reserve signing-key custody could not be configured. Please try again."
-              : action === "restore"
-                ? "The encrypted reserve signing-key backup could not be verified. Please try again."
-                : "Paylore could not complete confidential reserve setup. Refresh the Reserve page and check any submitted transaction before trying again.")
+          text: getReserveActionErrorMessage(result?.error, action)
         });
         return;
       }
