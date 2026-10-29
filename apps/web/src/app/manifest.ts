@@ -4,6 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Paylore",
     short_name: "Paylore",
+    id: "/",
     description: "Private on-chain payroll for crypto-native organizations.",
     start_url: "/",
     scope: "/",
@@ -28,7 +29,7 @@ export default function manifest(): MetadataRoute.Manifest {
       },
       {
         src: "/brand/paylore.png",
-        sizes: "192x192",
+        sizes: "1254x1254",
         type: "image/png",
         purpose: "maskable",
       },
