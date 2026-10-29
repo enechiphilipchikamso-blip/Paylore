@@ -138,36 +138,20 @@ export function assertExactFinalizedUnwrapBalances(input: {
 
 export function assertExactFinalizedWrapBalances(input: {
   amountBaseUnits: bigint;
-  sourceBalanceBefore: bigint;
-  sourceBalanceAfter: bigint;
-  escrowBalanceBefore: bigint;
-  escrowBalanceAfter: bigint;
-  destinationBalanceBefore: bigint;
-  destinationBalanceAfter: bigint;
+  sourceDebitBaseUnits: bigint;
+  escrowCreditBaseUnits: bigint;
+  destinationCreditBaseUnits: bigint;
   transactionSignature: string;
 }): void {
-  const sourceDebit = input.sourceBalanceBefore - input.sourceBalanceAfter;
-  const escrowCredit = input.escrowBalanceAfter - input.escrowBalanceBefore;
-  const destinationCredit =
-    input.destinationBalanceAfter - input.destinationBalanceBefore;
-  const balances = [
-    input.sourceBalanceBefore,
-    input.sourceBalanceAfter,
-    input.escrowBalanceBefore,
-    input.escrowBalanceAfter,
-    input.destinationBalanceBefore,
-    input.destinationBalanceAfter
-  ];
-
+  // The escrow is shared across wraps, so compare token-balance deltas from this signature's transaction metadata, not separate global snapshots.
   if (
     input.amountBaseUnits <= 0n ||
-    balances.some((balance) => balance < 0n) ||
-    sourceDebit !== input.amountBaseUnits ||
-    escrowCredit !== input.amountBaseUnits ||
-    destinationCredit !== input.amountBaseUnits
+    input.sourceDebitBaseUnits !== input.amountBaseUnits ||
+    input.escrowCreditBaseUnits !== input.amountBaseUnits ||
+    input.destinationCreditBaseUnits !== input.amountBaseUnits
   ) {
     throw new Error(
-      `The wrap result could not be reconciled against the exact Circle-USDC debit, Token Wrap escrow credit and Reserve wrapped-USDC credit. Do not submit a duplicate wrap. Transaction: ${input.transactionSignature}`
+      `The finalized wrap transaction does not reconcile to the requested Circle-USDC debit, Token Wrap escrow credit and Reserve wrapped-USDC credit. Do not submit a duplicate wrap. Transaction: ${input.transactionSignature}`
     );
   }
 }

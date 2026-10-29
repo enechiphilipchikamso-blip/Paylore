@@ -136,16 +136,13 @@ describe("custom Devnet Token Wrap compatibility", () => {
     ).toThrow("Do not submit a duplicate unwrap");
   });
 
-  it("requires exact source debit, escrow credit, and Reserve wrapped-USDC credit for a wrap", () => {
+  it("requires per-transaction exact source debit, escrow credit, and Reserve wrapped-USDC credit", () => {
     expect(() =>
       assertExactFinalizedWrapBalances({
         amountBaseUnits: 250_000n,
-        sourceBalanceBefore: 1_000_000n,
-        sourceBalanceAfter: 750_000n,
-        escrowBalanceBefore: 20_000n,
-        escrowBalanceAfter: 270_000n,
-        destinationBalanceBefore: 500_000n,
-        destinationBalanceAfter: 750_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 250_000n,
         transactionSignature: "wrap-signature"
       })
     ).not.toThrow();
@@ -153,12 +150,9 @@ describe("custom Devnet Token Wrap compatibility", () => {
     expect(() =>
       assertExactFinalizedWrapBalances({
         amountBaseUnits: 250_000n,
-        sourceBalanceBefore: 1_000_000n,
-        sourceBalanceAfter: 800_000n,
-        escrowBalanceBefore: 20_000n,
-        escrowBalanceAfter: 270_000n,
-        destinationBalanceBefore: 500_000n,
-        destinationBalanceAfter: 750_000n,
+        sourceDebitBaseUnits: 200_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 250_000n,
         transactionSignature: "wrap-signature"
       })
     ).toThrow("Do not submit a duplicate wrap");
@@ -166,12 +160,9 @@ describe("custom Devnet Token Wrap compatibility", () => {
     expect(() =>
       assertExactFinalizedWrapBalances({
         amountBaseUnits: 250_000n,
-        sourceBalanceBefore: 1_000_000n,
-        sourceBalanceAfter: 750_000n,
-        escrowBalanceBefore: 20_000n,
-        escrowBalanceAfter: 260_000n,
-        destinationBalanceBefore: 500_000n,
-        destinationBalanceAfter: 750_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 240_000n,
+        destinationCreditBaseUnits: 250_000n,
         transactionSignature: "wrap-signature"
       })
     ).toThrow("Do not submit a duplicate wrap");
@@ -179,12 +170,19 @@ describe("custom Devnet Token Wrap compatibility", () => {
     expect(() =>
       assertExactFinalizedWrapBalances({
         amountBaseUnits: 250_000n,
-        sourceBalanceBefore: 1_000_000n,
-        sourceBalanceAfter: 750_000n,
-        escrowBalanceBefore: 20_000n,
-        escrowBalanceAfter: 270_000n,
-        destinationBalanceBefore: 500_000n,
-        destinationBalanceAfter: 700_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 200_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 0n,
+        sourceDebitBaseUnits: 0n,
+        escrowCreditBaseUnits: 0n,
+        destinationCreditBaseUnits: 0n,
         transactionSignature: "wrap-signature"
       })
     ).toThrow("Do not submit a duplicate wrap");
