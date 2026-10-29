@@ -11,8 +11,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ href, children, ...props }: { href: string; children: unknown; [key: string]: unknown }) =>
-    <a href={href} {...props}>{children as never}</a>
+  default: ({ href, children, ...props }: { href: string; children: any; [key: string]: any }) =>
+    <a href={href} {...props}>{children}</a>
 }));
 vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
