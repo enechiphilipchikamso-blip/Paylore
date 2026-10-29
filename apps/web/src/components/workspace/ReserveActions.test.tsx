@@ -14,6 +14,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  canFundReserveWithOrdinaryUsdc,
   gasTankAllowsReserveInitialization,
   getReserveActionErrorMessage,
   ReserveActions
@@ -28,6 +29,15 @@ const baseProps = {
     updatedAt: "2026-10-02T00:00:00.000Z"
   }
 };
+
+describe("ReserveActions ordinary-USDC funding gate", () => {
+  it("only enables wrapping into a verified configured Reserve", () => {
+    expect(canFundReserveWithOrdinaryUsdc("program_configured", true)).toBe(true);
+    expect(canFundReserveWithOrdinaryUsdc("confidential_account_ready", true)).toBe(false);
+    expect(canFundReserveWithOrdinaryUsdc("account_missing", false)).toBe(false);
+    expect(canFundReserveWithOrdinaryUsdc("not_checked", true)).toBe(false);
+  });
+});
 
 describe("ReserveActions Gas Tank preflight", () => {
   it("blocks initialization until the Gas Tank exists and its live balance is verifiable", () => {

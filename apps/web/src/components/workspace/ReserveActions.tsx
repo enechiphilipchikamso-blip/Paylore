@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { isWalletCancellation } from "../auth/walletErrors";
+import { findAuthenticatedWallet } from "./authenticated-wallet";
+import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
+import { usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
 type ReserveAction = "initialize" | "restore" | "initialize_confidential";
@@ -11,6 +15,13 @@ type GasTankReservePreflight = {
   address: string | null;
   balanceSol: string | null;
 };
+
+export function canFundReserveWithOrdinaryUsdc(
+  status: OnChainAccountState["status"],
+  confidentialTransferReady: boolean
+): boolean {
+  return status === "program_configured" && confidentialTransferReady;
+}
 
 export function gasTankAllowsReserveInitialization(
   status: GasTankReservePreflight["status"]
@@ -129,6 +140,16 @@ export function ReserveActions({
   const [checkingOnChain, setCheckingOnChain] = useState(true);
   const [setupSignature, setSetupSignature] = useState<string | null>(null);
   const [setupPhase, setSetupPhase] = useState<ReservePhase | null>(null);
+  const [fundingAmount, setFundingAmount] = useState("");
+  const [fundingBusy, setFundingBusy] = useState(false);
+  const [fundingNotice, setFundingNotice] = useState<{
+    state: "success" | "error" | "partial";
+    text: string;
+  } | null>(null);
+  const [pendingWrap, setPendingWrap] = useState<{
+    signature: string;
+    amountBaseUnits: string;
+  } | null>(null);
 
   const loadOnChainState = useCallback(async () => {
     const response = await fetch(
@@ -191,7 +212,7 @@ export function ReserveActions({
   }, [loadOnChainState]);
 
   async function run(action: ReserveAction) {
-    if (busy) return;
+    if (busy || fundingBusy) return;
     setBusy(true);
     setActiveAction(action);
     setNotice(null);
@@ -312,6 +333,126 @@ export function ReserveActions({
     }
   }
 
+
+  async function fundReserveWithOrdinaryUsdc() {
+    if (busy || fundingBusy) return;
+    let amountBaseUnits: string;
+    try {
+      amountBaseUnits = pendingWrap ? pendingWrap.amountBaseUnits : usdcToBaseUnits(fundingAmount);
+    } catch (error) {
+      setFundingNotice({ state: "error", text: error instanceof Error ? error.message : "Enter a valid USDC amount." });
+      return;
+    }
+    setFundingBusy(true);
+    setFundingNotice(null);
+    let walletSubmissionStarted = false;
+    let activeSignature = pendingWrap?.signature ?? null;
+    try {
+      if (!activeSignature) {
+        const preparedResponse = await fetch(
+          "/api/workspaces/" + workspaceId + "/settings/reserve/funding",
+          {
+            method: "POST", credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "prepare", amountBaseUnits })
+          }
+        );
+        const prepared = await preparedResponse.json().catch(() => null) as {
+          walletAddress?: string; reserveAddress?: string; reserveTokenAccountAddress?: string;
+          wrappedMintAddress?: string; unwrappedMintAddress?: string; tokenWrapProgramAddress?: string; error?: string;
+        } | null;
+        if (!preparedResponse.ok || !prepared?.walletAddress || !prepared.reserveAddress ||
+            !prepared.reserveTokenAccountAddress || !prepared.wrappedMintAddress ||
+            !prepared.unwrappedMintAddress || !prepared.tokenWrapProgramAddress) {
+          const messages: Record<string, string> = {
+            reserve_wrap_source_usdc_missing: "Your wallet has no ordinary Circle Devnet USDC token account. Fund it with Circle Devnet USDC before trying again.",
+            reserve_wrap_source_usdc_insufficient: "Your wallet does not have enough ordinary Circle Devnet USDC for this amount.",
+            reserve_confidential_account_not_ready: "Finish Reserve initialization and verify the Reserve before funding it.",
+            reserve_wrap_identity_mismatch: "The configured Token Wrap program or USDC mint does not match the approved Devnet identity. No transaction was submitted.",
+            reserve_wrap_program_unavailable: "The approved Token Wrap program could not be verified as deployed and executable. No transaction was submitted."
+          };
+          throw new Error(messages[prepared?.error ?? ""] ?? "Reserve funding preflight failed. No transaction was submitted.");
+        }
+        const wallet = findAuthenticatedWallet(prepared.walletAddress);
+        walletSubmissionStarted = true;
+        const result = await wrapOrdinaryUsdcIntoReserve(wallet, {
+          walletAddress: prepared.walletAddress,
+          reserveAddress: prepared.reserveAddress,
+          reserveTokenAccountAddress: prepared.reserveTokenAccountAddress,
+          wrappedMintAddress: prepared.wrappedMintAddress,
+          unwrappedMintAddress: prepared.unwrappedMintAddress,
+          tokenWrapProgramAddress: prepared.tokenWrapProgramAddress,
+          amountBaseUnits: BigInt(amountBaseUnits)
+        });
+        activeSignature = result.signature;
+        setPendingWrap({ signature: activeSignature, amountBaseUnits });
+        walletSubmissionStarted = false;
+      }
+
+      const verificationResponse = await fetch(
+        "/api/workspaces/" + workspaceId + "/settings/reserve/funding",
+        {
+          method: "POST", credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "verify", amountBaseUnits, signature: activeSignature })
+        }
+      );
+      const verification = await verificationResponse.json().catch(() => null) as {
+        status?: string;
+        error?: string;
+      } | null;
+      if (verificationResponse.status === 202) {
+        setFundingNotice({
+          state: "partial",
+          text: "The wrap transaction is not finalized yet. Verify this same signature again; do not submit another wrap."
+        });
+        return;
+      }
+      if (!verificationResponse.ok || verification?.status !== "wrapped_public_balance_verified") {
+        if (verification?.error === "reserve_wrap_transaction_failed") {
+          setPendingWrap(null);
+          setFundingNotice({
+            state: "error",
+            text: "The submitted wrap failed on-chain. Refresh the Reserve state before making another attempt."
+          });
+        } else {
+          setFundingNotice({
+            state: "partial",
+            text: "Paylore could not reconcile the submitted wrap to the exact USDC debit, Token Wrap escrow credit and Reserve credit. Do not submit a duplicate; verify this same transaction again."
+          });
+        }
+        return;
+      }
+      setPendingWrap(null);
+      setFundingNotice({
+        state: "success",
+        text: "The ordinary Circle USDC wrap is finalized and verified in the Reserve's public wrapped-USDC balance. This confirms the public funding step only; the Reserve must not be treated as confidentially funded until its confidential deposit and apply are verified."
+      });
+      await refreshOnChainState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const signatureFromError = message.match(/[1-9A-HJ-NP-Za-km-z]{80,90}/)?.[0];
+      if (signatureFromError) {
+        setPendingWrap({ signature: signatureFromError, amountBaseUnits });
+        setFundingNotice({
+          state: "partial",
+          text: "A wallet transaction signature was returned but finality could not be established. Verify this same signature before retrying; do not submit another wrap."
+        });
+      } else if (isWalletCancellation(error)) {
+        setFundingNotice({ state: "partial", text: "The wallet request was cancelled. No Reserve wrap was confirmed." });
+      } else if (walletSubmissionStarted) {
+        setFundingNotice({
+          state: "partial",
+          text: "The wallet did not confirm whether it submitted the wrap. Check wallet activity and Reserve state before retrying; do not submit a duplicate."
+        });
+      } else {
+        setFundingNotice({ state: "error", text: message || "The Reserve wrap could not be completed. No success has been recorded." });
+      }
+    } finally {
+      setFundingBusy(false);
+    }
+  }
+
   return (
     <div className="reserve-actions">
       {notice ? (
@@ -409,30 +550,54 @@ export function ReserveActions({
           ) : (
             <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
           )}
-          {onChainAccount.tokenAccount && onChainAccount.confidentialTransferReady ? (
-            <section className="reserve-summary" aria-label="Manual reserve funding">
-              <h3>Manual reserve funding</h3>
-              <p>Reserve Token-2022 account: <code>{onChainAccount.tokenAccount}</code></p>
-              <p>Public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
-              <p>To fund the reserve, send only the configured wrapped-USDC mint on Devnet to this token account. Plain USDC or another mint is not interchangeable. Paylore does not sweep or automatically refill the reserve.</p>
-              <button
-                className="button button--secondary"
-                onClick={() => {
-                  const tokenAccount = onChainAccount.tokenAccount;
-                  if (!tokenAccount) return;
-                  void navigator.clipboard.writeText(tokenAccount).then(() => {
-                    setNotice({ state: "success", text: "Reserve token-account address copied." });
-                  }).catch(() => {
-                    setNotice({ state: "error", text: "Could not copy the reserve token-account address. Select and copy the address shown above." });
-                  });
-                }}
-                type="button"
-              >
-                Copy reserve token-account address
+          {canFundReserveWithOrdinaryUsdc(onChainAccount.status, onChainAccount.confidentialTransferReady === true) &&
+          onChainAccount.tokenAccount ? (
+            <section className="reserve-summary" aria-label="Fund Reserve with ordinary Circle USDC">
+              <h3>Fund the Reserve with ordinary USDC</h3>
+              <p>
+                Enter the amount of Circle Devnet USDC in your connected wallet.
+                Paylore checks the token accounts, asks your wallet to approve the
+                wrap, and verifies the finalized USDC debit, Token Wrap escrow
+                credit, and Reserve wrapped-USDC credit. A verified public credit
+                is not the same as a verified confidential balance.
+              </p>
+              <p>Current public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
+              <label htmlFor="reserve-ordinary-usdc-amount">Amount (USDC)</label>
+              <input
+                id="reserve-ordinary-usdc-amount"
+                name="reserve-ordinary-usdc-amount"
+                inputMode="decimal"
+                autoComplete="off"
+                value={fundingAmount}
+                disabled={busy || fundingBusy || Boolean(pendingWrap)}
+                onChange={(event) => setFundingAmount(event.target.value)}
+                placeholder="0.00"
+                aria-describedby="reserve-ordinary-usdc-help"
+              />
+              <p id="reserve-ordinary-usdc-help">
+                Use up to six decimal places. Your wallet must approve the transaction and pay its network fees.
+              </p>
+              {fundingBusy ? (
+                <p className="loading-indicator" role="status" aria-live="polite">
+                  <span className="loading-indicator__icon" aria-hidden="true" />
+                  {pendingWrap ? "Verifying the submitted wrap…" : "Checking USDC and preparing the wallet transaction…"}
+                </p>
+              ) : null}
+              {fundingNotice ? (
+                <div className="state-callout" data-state={fundingNotice.state}
+                  role={fundingNotice.state === "error" ? "alert" : "status"} aria-live="polite">
+                  <span className="state-callout__signal" aria-hidden="true" />
+                  <p>{fundingNotice.text}</p>
+                </div>
+              ) : null}
+              <button className="button" type="button"
+                disabled={busy || fundingBusy || checkingOnChain}
+                onClick={() => void fundReserveWithOrdinaryUsdc()}>
+                {fundingBusy ? "Working…" : pendingWrap ? "Verify submitted wrap" : "Wrap USDC and fund Reserve"}
               </button>
             </section>
           ) : null}
-          <button className="button button--secondary" disabled={checkingOnChain} onClick={() => {
+          <button className="button button--secondary" disabled={checkingOnChain || busy || fundingBusy} onClick={() => {
             setCheckingOnChain(true);
             void refreshOnChainState();
           }} type="button">
@@ -440,13 +605,14 @@ export function ReserveActions({
           </button>
           {canInitialize ? (
             <>
-              <button className="button button--secondary" disabled={busy} onClick={() => void run("restore")} type="button">
+              <button className="button button--secondary" disabled={busy || fundingBusy} onClick={() => void run("restore")} type="button">
                 Verify encrypted backup
               </button>
               <button
                 className="button"
                 disabled={
                   busy ||
+                  fundingBusy ||
                   checkingOnChain ||
                   !gasTankAllowsReserveInitialization(gasTankPreflight.status)
                 }
@@ -463,7 +629,7 @@ export function ReserveActions({
           <h2>Reserve key custody not configured</h2>
           <p>Configure encrypted custody for the reserve signing key. This action does not create or fund an on-chain confidential reserve.</p>
           {canInitialize ? (
-            <button className="button" disabled={busy} onClick={() => void run("initialize")} type="button">
+            <button className="button" disabled={busy || fundingBusy} onClick={() => void run("initialize")} type="button">
               Configure reserve key custody
             </button>
           ) : null}
