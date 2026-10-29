@@ -36,7 +36,7 @@ describe("workspace setup progress", () => {
         gasTank: {
           status: "ready",
           address: "gas-tank-address",
-          balanceLamports: "100000000"
+          balanceSol: "0.1"
         },
         reserve: { status: "ready" },
         complete: true
@@ -49,7 +49,7 @@ describe("workspace setup progress", () => {
 
     await expect(getWorkspaceSetupProgress({} as never, "workspace-a", "wallet-a"))
       .resolves.toMatchObject({
-        gasTank: { status: "not_initialized", address: null, balanceLamports: null },
+        gasTank: { status: "not_initialized", address: null, balanceSol: null },
         reserve: { status: "key_custody_required" },
         complete: false
       });
@@ -64,7 +64,7 @@ describe("workspace setup progress", () => {
 
     await expect(getWorkspaceSetupProgress({} as never, "workspace-a", "wallet-a"))
       .resolves.toMatchObject({
-        gasTank: { status: "funding_required", balanceLamports: "1000" },
+        gasTank: { status: "funding_required", balanceSol: "0.000001" },
         reserve: { status: "ready" },
         complete: false
       });
@@ -75,7 +75,7 @@ describe("workspace setup progress", () => {
 
     await expect(getWorkspaceSetupProgress({} as never, "workspace-a", "wallet-a"))
       .resolves.toMatchObject({
-        gasTank: { status: "balance_unavailable", address: null, balanceLamports: null },
+        gasTank: { status: "balance_unavailable", address: null, balanceSol: null },
         reserve: { status: "ready" },
         complete: false
       });
