@@ -51,11 +51,14 @@ export default async function WorkspaceReservePage({
           This workspace has a dedicated reserve signing address. Its private
           key is protected on the server and never delivered to the browser.
           Key custody alone does not create or fund an on-chain confidential
-          reserve. Configure the reserve-owned Token-2022 account and matching
-          Payroll Program reserve state, then fund it with the configured
-          wrapped-USDC mint. A payroll claim is reported settled only after its
-          confidential transfer reaches finality and the reserve debit is
-          reconciled.
+          reserve. Initialize the workspace Gas Tank and fund it with SOL first;
+          the Gas Tank pays Reserve setup transaction fees and account rent.
+          The Reserve remains the token-account owner and signs as the authority
+          where required. Configure the reserve-owned Token-2022 account and
+          matching Payroll Program reserve state, then fund it with the
+          configured wrapped-USDC mint. A payroll claim is reported settled only
+          after its confidential transfer reaches finality and the reserve debit
+          is reconciled.
         </p>
       </header>
       <section className="surface-card">
