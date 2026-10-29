@@ -10,6 +10,7 @@ import {
 } from "../../../../../components/workspace/WorkspaceNavigation";
 import { ReserveActions } from "../../../../../components/workspace/ReserveActions";
 import { getWorkspacePageContext } from "../../../../../server/workspace-page-context";
+import { getWorkspaceGasTankSnapshot } from "../../../../../server/gas-tank";
 
 export const metadata: Metadata = {
   title: "Confidential payroll reserve",
@@ -17,6 +18,27 @@ export const metadata: Metadata = {
 };
 
 export const dynamic = "force-dynamic";
+
+type GasTankReservePreflight = {
+  status: "not_initialized" | "funding_required" | "ready" | "unavailable";
+  address: string | null;
+  balanceSol: string | null;
+};
+
+function formatSolBalance(lamports: string): string | null {
+  try {
+    const value = BigInt(lamports);
+    if (value < 0n) return null;
+    const whole = value / 1_000_000_000n;
+    const fraction = (value % 1_000_000_000n)
+      .toString()
+      .padStart(9, "0")
+      .replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+  } catch {
+    return null;
+  }
+}
 
 export default async function WorkspaceReservePage({
   params
@@ -29,10 +51,32 @@ export default async function WorkspaceReservePage({
     `/workspace/${workspaceId}/settings/reserve`
   );
   if (context.workspace.role !== "organization_admin") notFound();
-  const [reserve, subscription] = await Promise.all([
+  const [reserve, subscription, gasTankResult] = await Promise.all([
     getWorkspaceReserve(context.db, workspaceId),
-    getWorkspaceSubscription(context.db, workspaceId)
+    getWorkspaceSubscription(context.db, workspaceId),
+    getWorkspaceGasTankSnapshot(context.db, workspaceId)
+      .then((snapshot) => ({ ok: true as const, snapshot }))
+      .catch(() => ({ ok: false as const, snapshot: null }))
   ]);
+  const gasTankPreflight: GasTankReservePreflight = !gasTankResult.ok
+    ? { status: "unavailable", address: null, balanceSol: null }
+    : !gasTankResult.snapshot
+      ? { status: "not_initialized", address: null, balanceSol: null }
+      : (() => {
+          const balanceSol = formatSolBalance(gasTankResult.snapshot.balanceLamports);
+          if (balanceSol === null) {
+            return {
+              status: "unavailable" as const,
+              address: gasTankResult.snapshot.address,
+              balanceSol: null
+            };
+          }
+          return {
+            status: gasTankResult.snapshot.lowBalance ? "funding_required" as const : "ready" as const,
+            address: gasTankResult.snapshot.address,
+            balanceSol
+          };
+        })();
   const canInitialize =
     subscription?.status === "active" ||
     subscription?.status === "cancel_scheduled";
@@ -71,6 +115,7 @@ export default async function WorkspaceReservePage({
         <ReserveActions
           workspaceId={workspaceId}
           canInitialize={canInitialize}
+          gasTankPreflight={gasTankPreflight}
           reserve={reserve
             ? {
                 address: reserve.address,
