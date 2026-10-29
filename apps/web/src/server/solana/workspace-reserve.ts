@@ -180,7 +180,7 @@ async function executePlan(
   } catch (error) {
     if (error instanceof FinalityPendingError) return { successful: false, pending: true, signatures, trackingFailed };
     if (error instanceof FinalityFailedError) return { successful: false, pending: false, signatures, trackingFailed };
-    if (/(insufficient funds|insufficient lamports|insufficient balance|insufficient fee|fee payer.{0,40}insufficient)/i.test(
+    if (/(insufficient funds|insufficient lamports|insufficient balance|insufficient fee|fee payer.{0,40}insufficient|attempt to debit an account but found no record of a prior credit)/i.test(
       error instanceof Error ? error.message : String(error)
     )) {
       throw new WorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409);
