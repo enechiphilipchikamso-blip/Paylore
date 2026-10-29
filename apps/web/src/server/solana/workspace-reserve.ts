@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  AccountRole, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
+  AccountRole, addSignersToTransactionMessage, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress,
@@ -20,10 +20,11 @@ import {
 import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
-  getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
+  getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
   type Database
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
+import { withWorkspaceGasTankKey } from "../gas-tank";
 import { withWorkspaceReserveKey } from "../reserve";
 import {
   classifyReserveFundingState, hasApprovedConfidentialTransferAccount, verifyWorkspaceProgramState,
@@ -38,6 +39,10 @@ const encoder = new TextEncoder();
 
 type Token = Awaited<ReturnType<typeof fetchToken>>["data"];
 type Mint = Awaited<ReturnType<typeof fetchMint>>["data"];
+type KeyPairSigner = Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+const TOKEN_ACCOUNT_RENT_PREFLIGHT_SIZE = 1024n;
+const RESERVE_STATE_RENT_SIZE = 137n;
+const RESERVE_SETUP_FEE_BUFFER_LAMPORTS = 50_000n;
 type WorkspaceReservePhase = "account_setup" | "program_configure";
 
 export type WorkspaceConfidentialReserveResult = {
@@ -124,13 +129,14 @@ async function waitForFinality(
 }
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
-  signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  feePayerSigner: KeyPairSigner,
   plan: InstructionPlan,
-  submitted?: (signature: string) => Promise<void>
+  submitted?: (signature: string) => Promise<void>,
+  additionalSigners: readonly KeyPairSigner[] = []
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
-      setTransactionMessageFeePayerSigner(signer, createTransactionMessage({ version: 0 })),
+      setTransactionMessageFeePayerSigner(feePayerSigner, createTransactionMessage({ version: 0 })),
     onTransactionMessageUpdated: async (message) => {
       const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
       return setTransactionMessageLifetimeUsingBlockhash({
@@ -144,7 +150,11 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
-      const signed = await partiallySignTransactionMessageWithSigners(message);
+      const messageWithSigners = addSignersToTransactionMessage(
+        [feePayerSigner, ...additionalSigners],
+        message
+      );
+      const signed = await partiallySignTransactionMessageWithSigners(messageWithSigners);
       const wire = getBase64EncodedWireTransaction(signed);
       const signature = await rpc.sendTransaction(wire, {
         encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
@@ -170,7 +180,47 @@ async function executePlan(
   } catch (error) {
     if (error instanceof FinalityPendingError) return { successful: false, pending: true, signatures, trackingFailed };
     if (error instanceof FinalityFailedError) return { successful: false, pending: false, signatures, trackingFailed };
+    if (/(insufficient funds|insufficient lamports|insufficient balance|insufficient fee|fee payer.{0,40}insufficient)/i.test(
+      error instanceof Error ? error.message : String(error)
+    )) {
+      throw new WorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409);
+    }
     throw error;
+  }
+}
+async function assertGasTankCanFundReserveSetup(input: {
+  rpc: ReturnType<typeof createSolanaRpc>;
+  gasTankAddress: string;
+  needsTokenAccountRent: boolean;
+  needsReserveStateRent: boolean;
+  transactionCount: number;
+}): Promise<void> {
+  if (input.transactionCount === 0) return;
+  try {
+    const balanceResponse = await input.rpc.getBalance(
+      address(input.gasTankAddress),
+      { commitment: "confirmed" }
+    ).send();
+    const balance = BigInt(balanceResponse.value);
+    if (balance < 0n) throw new Error("The RPC returned a negative balance.");
+
+    let required = BigInt(input.transactionCount) * RESERVE_SETUP_FEE_BUFFER_LAMPORTS;
+    if (input.needsTokenAccountRent) {
+      required += BigInt(await input.rpc.getMinimumBalanceForRentExemption(
+        TOKEN_ACCOUNT_RENT_PREFLIGHT_SIZE
+      ).send());
+    }
+    if (input.needsReserveStateRent) {
+      required += BigInt(await input.rpc.getMinimumBalanceForRentExemption(
+        RESERVE_STATE_RENT_SIZE
+      ).send());
+    }
+    if (balance < required) {
+      throw new WorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409);
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceReserveInitializationError) throw error;
+    throw new WorkspaceReserveInitializationError("reserve_gas_tank_balance_unavailable", 503);
   }
 }
 function workspaceSeed(workspaceId: string): Uint8Array {
@@ -286,6 +336,7 @@ function configureWorkspaceReserveInstruction(input: {
   programId: string;
   authorityAddress: string;
   workspace: string;
+  payerAddress: string;
   reserveState: string;
   reserveAuthority: string;
   reserveToken: string;
@@ -296,8 +347,9 @@ function configureWorkspaceReserveInstruction(input: {
     accounts: [
       { address: address(input.authorityAddress), role: AccountRole.READONLY },
       { address: address(input.workspace), role: AccountRole.READONLY },
+      { address: address(input.payerAddress), role: AccountRole.WRITABLE_SIGNER },
       { address: address(input.reserveState), role: AccountRole.WRITABLE },
-      { address: address(input.reserveAuthority), role: AccountRole.WRITABLE_SIGNER },
+      { address: address(input.reserveAuthority), role: AccountRole.READONLY_SIGNER },
       { address: address(input.reserveToken), role: AccountRole.READONLY },
       { address: address(input.mint), role: AccountRole.READONLY },
       { address: SYSTEM_PROGRAM, role: AccountRole.READONLY }
@@ -325,7 +377,9 @@ async function withReserveContext<T>(
   workspaceId: string,
   fallbackAuthorityAddress: string,
   run: (input: {
-    signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+    signer: KeyPairSigner;
+    feePayerSigner: KeyPairSigner | null;
+    gasTankAddress: string | null;
     rpc: ReturnType<typeof createSolanaRpc>;
     reserveAddress: string;
     mintAddress: string;
@@ -346,7 +400,8 @@ async function withReserveContext<T>(
     aesKey: AeKey;
     derived: Awaited<ReturnType<typeof deriveConfidentialKeys>>;
     programId: string;
-  }) => Promise<T>
+  }) => Promise<T>,
+  options: { requireGasTankFeePayer?: boolean } = {}
 ): Promise<T | WorkspaceConfidentialReserveResult> {
   const reserve = await getWorkspaceReserve(db, workspaceId);
   if (!reserve) return { status: "no_reserve" };
@@ -383,7 +438,7 @@ async function withReserveContext<T>(
     const elgamal = ElGamalKeypair.fromSecretKey(secret);
     const aesKey = AeKey.fromBytes(derived.aeKey);
     try {
-      return await run({
+      const context = {
         signer, rpc, reserveAddress: reserve.address, mintAddress, mintAccount, reserveTokenAddress,
         workspaceAuthority, workspace: derivedWorkspace.workspace, workspaceSeed: derivedWorkspace.seed,
         workspaceBump: derivedWorkspace.bump, reserveState, reserveBump,
@@ -392,7 +447,26 @@ async function withReserveContext<T>(
           programConfigureSignature: reserve.programReserveSetupSignature
         },
         elgamal, secret, aesKey, derived, programId
-      });
+      };
+      if (!options.requireGasTankFeePayer) {
+        return await run({ ...context, feePayerSigner: null, gasTankAddress: null });
+      }
+      const gasTank = await getWorkspaceGasTank(db, workspaceId);
+      if (!gasTank) {
+        throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
+      }
+      try {
+        return await withWorkspaceGasTankKey(db, workspaceId, async (gasTankPrivateBytes) => {
+          const feePayerSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+          if (feePayerSigner.address !== gasTank.address) {
+            throw new WorkspaceReserveInitializationError("reserve_gas_tank_key_mismatch", 503);
+          }
+          return await run({ ...context, feePayerSigner, gasTankAddress: gasTank.address });
+        });
+      } catch (error) {
+        if (error instanceof WorkspaceReserveInitializationError) throw error;
+        throw new WorkspaceReserveInitializationError("reserve_gas_tank_custody_unavailable", 503);
+      }
     } finally {
       secret.free(); elgamal.free(); aesKey.free();
       derived.elgamalKeypair.secretKey.fill(0); derived.aeKey.fill(0);
@@ -498,6 +572,11 @@ export async function initializeWorkspaceConfidentialReserveAccount(
   continuation: { signature?: string | null; phase?: WorkspaceReservePhase | null } = {}
 ): Promise<WorkspaceConfidentialReserveResult> {
   const result = await withReserveContext(db, workspaceId, fallbackAuthorityAddress, async (input) => {
+    const feePayerSigner = input.feePayerSigner;
+    const gasTankAddress = input.gasTankAddress;
+    if (!feePayerSigner || !gasTankAddress) {
+      throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
+    }
     const pendingAttempt = continuation.signature && continuation.phase
       ? { signature: continuation.signature, phase: continuation.phase }
       : input.setupSignatures.programConfigureSignature
@@ -538,6 +617,9 @@ export async function initializeWorkspaceConfidentialReserveAccount(
     }
     if (encoded.exists) {
       const existing = (await fetchToken(input.rpc, address(input.reserveTokenAddress))).data;
+      if (existing.owner !== input.reserveAddress || existing.mint !== input.mintAddress) {
+        throw new WorkspaceReserveInitializationError("reserve_token_account_identity_mismatch", 409);
+      }
       accountReady = hasApprovedConfidentialTransferAccount({
         owner: existing.owner,
         mint: existing.mint,
@@ -549,13 +631,46 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       }, { owner: input.reserveAddress, mint: input.mintAddress });
     }
 
+    const initialWorkspaceStatus = await inspectWorkspaceProgramState(input.rpc, {
+      workspace: input.workspace, bump: input.workspaceBump, seed: input.workspaceSeed,
+      workspaceId, authorityAddress: input.workspaceAuthority, programId: input.programId
+    });
+    if (initialWorkspaceStatus === "workspace_program_not_initialized") {
+      return {
+        status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
+        tokenAccount: input.reserveTokenAddress, confidentialTransferReady: accountReady,
+        programReserveConfigured: false
+      };
+    }
+
+    const initialReserveStatus = await inspectReserveProgramState(input.rpc, {
+      workspace: input.workspace, reserveAuthority: input.reserveAddress, reserveToken: input.reserveTokenAddress,
+      mint: input.mintAddress, programId: input.programId, reserveState: input.reserveState, reserveBump: input.reserveBump
+    });
+    const setupTransactionsNeeded = (accountReady ? 0 : 1) +
+      (initialReserveStatus === "program_configured" ? 0 : 1);
+    await assertGasTankCanFundReserveSetup({
+      rpc: input.rpc,
+      gasTankAddress,
+      needsTokenAccountRent: !encoded.exists,
+      needsReserveStateRent: initialReserveStatus !== "program_configured",
+      transactionCount: setupTransactionsNeeded
+    });
+
     if (!accountReady) {
       const confidentialMint = extensions(input.mintAccount).find((item) => item.__kind === "ConfidentialTransferMint");
       if (confidentialMint?.autoApproveNewAccounts !== true) {
         throw new WorkspaceReserveInitializationError("reserve_mint_authority_approval_required", 409);
       }
+      await assertGasTankCanFundReserveSetup({
+        rpc: input.rpc,
+        gasTankAddress,
+        needsTokenAccountRent: !encoded.exists,
+        needsReserveStateRent: false,
+        transactionCount: 1
+      });
       const setup = await getCreateConfidentialTransferAccountInstructionPlan({
-        payer: input.signer,
+        payer: feePayerSigner,
         owner: input.signer,
         mint: address(input.mintAddress),
         token: address(input.reserveTokenAddress),
@@ -564,14 +679,14 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         aesKey: input.aesKey,
         includeConfidentialTransferFeeAmount: extensions(input.mintAccount).some((item) => item.__kind === "TransferFeeConfig")
       });
-      const submitted = await executePlan(input.rpc, input.signer, setup, async (signature) => {
+      const submitted = await executePlan(input.rpc, feePayerSigner, setup, async (signature) => {
         const tracked = await attachWorkspaceReserveSetupSignature(db, {
           workspaceId, phase: "account_setup", signature
         });
         if (tracked !== "attached" && tracked !== "duplicate") {
           throw new Error("Reserve account setup signature tracking conflicted.");
         }
-      });
+      }, [input.signer]);
       const signature = submitted.signatures.at(-1);
       if (submitted.pending || submitted.trackingFailed) {
         return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: input.reserveTokenAddress, signature, phase: "account_setup" };
@@ -622,19 +737,26 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       };
     }
 
+    await assertGasTankCanFundReserveSetup({
+      rpc: input.rpc,
+      gasTankAddress,
+      needsTokenAccountRent: false,
+      needsReserveStateRent: true,
+      transactionCount: 1
+    });
     const ix = configureWorkspaceReserveInstruction({
       programId: input.programId, authorityAddress: input.workspaceAuthority, workspace: input.workspace,
-      reserveState: input.reserveState, reserveAuthority: input.reserveAddress,
+      payerAddress: gasTankAddress, reserveState: input.reserveState, reserveAuthority: input.reserveAddress,
       reserveToken: tokenState.tokenAccount, mint: input.mintAddress
     });
-    const configured = await executePlan(input.rpc, input.signer, singleInstructionPlan(ix), async (signature) => {
+    const configured = await executePlan(input.rpc, feePayerSigner, singleInstructionPlan(ix), async (signature) => {
       const tracked = await attachWorkspaceReserveSetupSignature(db, {
         workspaceId, phase: "program_configure", signature
       });
       if (tracked !== "attached" && tracked !== "duplicate") {
         throw new Error("Reserve program configuration signature tracking conflicted.");
       }
-    });
+    }, [input.signer]);
     const signature = configured.signatures.at(-1);
     if (configured.pending || configured.trackingFailed) {
       return { status: "pending", reserveAddress: input.reserveAddress, tokenAccount: tokenState.tokenAccount, signature, phase: "program_configure" };
@@ -665,6 +787,6 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, fundingState: tokenState.fundingState,
       programReserveConfigured: true
     };
-  });
+  }, { requireGasTankFeePayer: true });
   return result as WorkspaceConfidentialReserveResult;
 }
