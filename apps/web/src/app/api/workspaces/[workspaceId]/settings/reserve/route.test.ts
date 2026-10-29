@@ -243,6 +243,28 @@ describe("workspace reserve key custody and on-chain setup route", () => {
     }
   });
 
+  it("uses a route-level error when setup fails before the requested action is known", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getWorkspaceForUser.mockRejectedValue(new Error("database internals"));
+    try {
+      const response = await POST(request({ action: "initialize_confidential" }), {
+        params: routeContext.params
+      });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "reserve_operation_unavailable",
+        retryable: true
+      });
+      expect(log).toHaveBeenCalledWith(JSON.stringify({
+        event: "workspace_reserve_route_failed",
+        code: "unexpected_operation_failure"
+      }));
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining("database internals"));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("uses an operation-specific error when an unexpected Reserve setup failure occurs", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.initializeWorkspaceConfidentialReserveAccount.mockRejectedValue(new Error("provider internals"));
