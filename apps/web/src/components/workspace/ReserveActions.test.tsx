@@ -13,7 +13,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() })
 }));
 
-import { ReserveActions } from "./ReserveActions";
+import {
+  gasTankAllowsReserveInitialization,
+  ReserveActions
+} from "./ReserveActions";
 
 const baseProps = {
   workspaceId: "workspace-a",
@@ -26,6 +29,12 @@ const baseProps = {
 };
 
 describe("ReserveActions Gas Tank preflight", () => {
+  it("blocks initialization until the Gas Tank exists and its live balance is verifiable", () => {
+    expect(gasTankAllowsReserveInitialization("not_initialized")).toBe(false);
+    expect(gasTankAllowsReserveInitialization("unavailable")).toBe(false);
+    expect(gasTankAllowsReserveInitialization("ready")).toBe(true);
+  });
+
   it("requires Gas Tank setup before enabling confidential Reserve initialization", () => {
     const html = renderToStaticMarkup(
       <ReserveActions
@@ -78,6 +87,10 @@ describe("ReserveActions Gas Tank preflight", () => {
     expect(html).toContain("Confidential Reserve initialization is disabled");
     expect(html).toContain('href="/workspace/workspace-a/gas-tank"');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Initialize confidential reserve<\/button>/);
+  });
+
+  it("allows the exact server-side balance check to decide whether a low-balance warning is actually insufficient", () => {
+    expect(gasTankAllowsReserveInitialization("funding_required")).toBe(true);
   });
 
   it("shows the live Gas Tank balance and states that exact rent and fees are rechecked", () => {
