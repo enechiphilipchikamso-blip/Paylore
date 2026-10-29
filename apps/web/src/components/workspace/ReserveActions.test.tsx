@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   gasTankAllowsReserveInitialization,
+  getReserveActionErrorMessage,
   ReserveActions
 } from "./ReserveActions";
 
@@ -33,6 +34,35 @@ describe("ReserveActions Gas Tank preflight", () => {
     expect(gasTankAllowsReserveInitialization("not_initialized")).toBe(false);
     expect(gasTankAllowsReserveInitialization("unavailable")).toBe(false);
     expect(gasTankAllowsReserveInitialization("ready")).toBe(true);
+  });
+
+  it("maps insufficient Gas Tank funding to a specific next action", () => {
+    expect(getReserveActionErrorMessage(
+      "reserve_gas_tank_insufficient_funds",
+      "initialize_confidential"
+    )).toBe(
+      "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry."
+    );
+  });
+
+  it("tells users to reconcile Reserve state when Gas Tank balance verification fails", () => {
+    const message = getReserveActionErrorMessage(
+      "reserve_gas_tank_balance_unavailable",
+      "initialize_confidential"
+    );
+    expect(message).toContain("Reserve setup may be partially complete");
+    expect(message).toContain("refresh the Gas Tank and Reserve status");
+    expect(message).not.toContain("No transaction was submitted");
+    expect(message).not.toContain("could not be verified");
+  });
+
+  it("does not replace an unrecognized operation error with the previous misleading message", () => {
+    const message = getReserveActionErrorMessage(
+      "some_future_error",
+      "initialize_confidential"
+    );
+    expect(message).toContain("check any submitted transaction before trying again");
+    expect(message).not.toBe("The confidential reserve operation could not be verified. Check the current on-chain state before retrying.");
   });
 
   it("requires Gas Tank setup before enabling confidential Reserve initialization", () => {
