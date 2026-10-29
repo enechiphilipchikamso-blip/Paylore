@@ -2278,3 +2278,105 @@ ul {
     width: 100%;
   }
 }
+
+.workspace-setup {
+  display: grid;
+  gap: var(--space-4);
+  margin-block: var(--space-6);
+}
+
+.workspace-setup__card {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.workspace-setup__steps {
+  position: relative;
+  display: grid;
+  gap: var(--space-5);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.workspace-setup__steps::before {
+  position: absolute;
+  top: 1.75rem;
+  bottom: 1.75rem;
+  left: 1.05rem;
+  width: 2px;
+  background: var(--color-border);
+  content: "";
+}
+
+.workspace-setup__step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  min-width: 0;
+}
+
+.workspace-setup__number {
+  z-index: 1;
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.workspace-setup__step[data-state="ready"] .workspace-setup__number {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+.workspace-setup__content {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.workspace-setup__content h3 {
+  margin-top: -0.25rem;
+}
+
+.workspace-setup__content > p:not(.eyebrow) {
+  max-width: 62ch;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.workspace-setup__address,
+.workspace-setup__balance {
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+
+.workspace-setup__address code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 36rem) {
+  .workspace-setup__content {
+    padding: var(--space-3);
+  }
+
+  .workspace-setup__step {
+    gap: var(--space-2);
+  }
+
+  .workspace-setup__steps::before {
+    left: 1rem;
+  }
+}
