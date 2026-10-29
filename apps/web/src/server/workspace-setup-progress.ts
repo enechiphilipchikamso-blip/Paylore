@@ -21,13 +21,28 @@ export type WorkspaceSetupProgress = {
   gasTank: {
     status: GasTankSetupStatus;
     address: string | null;
-    balanceLamports: string | null;
+    balanceSol: string | null;
   };
   reserve: {
     status: ReserveSetupStatus;
   };
   complete: boolean;
 };
+
+function formatSol(lamports: string): string | null {
+  try {
+    const value = BigInt(lamports);
+    if (value < 0n) return null;
+    const whole = value / 1_000_000_000n;
+    const fraction = (value % 1_000_000_000n)
+      .toString()
+      .padStart(9, "0")
+      .replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+  } catch {
+    return null;
+  }
+}
 
 /** Reads live setup signals without turning provider failures into a false ready state. */
 export async function getWorkspaceSetupProgress(
@@ -45,20 +60,20 @@ export async function getWorkspaceSetupProgress(
     gasTank = {
       status: "balance_unavailable",
       address: null,
-      balanceLamports: null
+      balanceSol: null
     };
   } else if (!gasTankResult.value) {
     gasTank = {
       status: "not_initialized",
       address: null,
-      balanceLamports: null
+      balanceSol: null
     };
   } else {
     const snapshot = gasTankResult.value;
     gasTank = {
       status: snapshot.lowBalance ? "funding_required" : "ready",
       address: snapshot.address,
-      balanceLamports: snapshot.balanceLamports
+      balanceSol: formatSol(snapshot.balanceLamports)
     };
   }
 
