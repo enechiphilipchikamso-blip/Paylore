@@ -146,7 +146,10 @@ export default async function WorkspacePage({
       {query.activated === "1" ? (
         <div className="state-callout" data-state="success" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>{workspace.workspaceName} is active and ready to use.</p>
+          <p>{workspace.workspaceName} subscription is active.</p>
+          {setupProgress && !setupProgress.complete ? (
+            <p>Finish Gas Tank funding and confidential Reserve setup below before running private payroll.</p>
+          ) : null}
         </div>
       ) : null}
       <nav
