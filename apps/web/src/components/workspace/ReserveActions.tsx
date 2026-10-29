@@ -1,10 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type ReservePhase = "account_setup" | "program_configure";
 type ReserveAction = "initialize" | "restore" | "initialize_confidential";
+type GasTankReservePreflight = {
+  status: "not_initialized" | "funding_required" | "ready" | "unavailable";
+  address: string | null;
+  balanceSol: string | null;
+};
 type OnChainAccountState = {
   status:
     | "not_checked"
@@ -54,9 +60,11 @@ function fundingStateDescription(state: OnChainAccountState["fundingState"]): st
 export function ReserveActions({
   workspaceId,
   reserve,
-  canInitialize
+  canInitialize,
+  gasTankPreflight
 }: {
   workspaceId: string;
+  gasTankPreflight: GasTankReservePreflight;
   reserve: {
     address: string;
     createdAt: string;
@@ -296,6 +304,43 @@ export function ReserveActions({
           <p>{notice.text}</p>
         </div>
       ) : null}
+      <section
+        className="state-callout"
+        data-state={
+          gasTankPreflight.status === "ready"
+            ? "success"
+            : gasTankPreflight.status === "funding_required"
+              ? "partial"
+              : "error"
+        }
+        aria-labelledby="reserve-gas-tank-status"
+      >
+        <span className="state-callout__signal" aria-hidden="true" />
+        <div>
+          <h3 id="reserve-gas-tank-status">Gas Tank setup comes first</h3>
+          {gasTankPreflight.status === "not_initialized" ? (
+            <>
+              <p>Initialize the workspace Gas Tank and fund it with SOL before confidential Reserve setup. The Gas Tank pays setup transaction fees and account rent; the Reserve remains the token owner and authority.</p>
+              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Set up Gas Tank</Link>
+            </>
+          ) : gasTankPreflight.status === "funding_required" ? (
+            <>
+              <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below Paylore's 0.05 SOL low-balance threshold. This threshold is a warning, not a fee quote: Paylore checks the actual fees and rent before submitting setup transactions and stops if the balance is insufficient.</p>
+              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Review and fund Gas Tank</Link>
+            </>
+          ) : gasTankPreflight.status === "unavailable" ? (
+            <>
+              <p>Paylore could not verify the Gas Tank's live SOL balance. Confidential Reserve initialization is disabled until the current balance can be checked.</p>
+              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Check Gas Tank</Link>
+            </>
+          ) : (
+            <>
+              <p>The Gas Tank is initialized and its current balance is {gasTankPreflight.balanceSol} SOL. Paylore will check the exact fees and rent again immediately before any Reserve setup transaction.</p>
+              {gasTankPreflight.address ? <p>Gas Tank address: <code>{gasTankPreflight.address}</code></p> : null}
+            </>
+          )}
+        </div>
+      </section>
       {busy ? (
         <p className="loading-indicator" role="status">
           <span className="loading-indicator__icon" aria-hidden="true" />
@@ -382,7 +427,17 @@ export function ReserveActions({
               <button className="button button--secondary" disabled={busy} onClick={() => void run("restore")} type="button">
                 Verify encrypted backup
               </button>
-              <button className="button" disabled={busy} onClick={() => void run("initialize_confidential")} type="button">
+              <button
+                className="button"
+                disabled={
+                  busy ||
+                  checkingOnChain ||
+                  gasTankPreflight.status === "not_initialized" ||
+                  gasTankPreflight.status === "unavailable"
+                }
+                onClick={() => void run("initialize_confidential")}
+                type="button"
+              >
                 {setupSignature ? "Check reserve initialization status" : "Initialize confidential reserve"}
               </button>
             </>
