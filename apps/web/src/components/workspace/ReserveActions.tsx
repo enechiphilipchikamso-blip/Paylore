@@ -11,6 +11,12 @@ type GasTankReservePreflight = {
   address: string | null;
   balanceSol: string | null;
 };
+
+export function gasTankAllowsReserveInitialization(
+  status: GasTankReservePreflight["status"]
+): boolean {
+  return status === "ready" || status === "funding_required";
+}
 type OnChainAccountState = {
   status:
     | "not_checked"
@@ -432,8 +438,7 @@ export function ReserveActions({
                 disabled={
                   busy ||
                   checkingOnChain ||
-                  gasTankPreflight.status === "not_initialized" ||
-                  gasTankPreflight.status === "unavailable"
+                  !gasTankAllowsReserveInitialization(gasTankPreflight.status)
                 }
                 onClick={() => void run("initialize_confidential")}
                 type="button"
