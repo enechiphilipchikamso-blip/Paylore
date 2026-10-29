@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   gasTankExists: true,
   gasTankBalanceLamports: 1_000_000_000n,
   gasTankBalanceError: null as Error | null,
+  gasTankBalanceCalls: 0,
+  gasTankBalanceFailsOnCall: 0,
   sendTransactionError: null as Error | null,
   feePayerAddresses: [] as string[],
   registeredSignerAddresses: [] as string[][],
@@ -100,6 +102,8 @@ function reset(): void {
     gasTankExists: true,
     gasTankBalanceLamports: 1_000_000_000n,
     gasTankBalanceError: null,
+    gasTankBalanceCalls: 0,
+    gasTankBalanceFailsOnCall: 0,
     sendTransactionError: null,
     feePayerAddresses: [],
     registeredSignerAddresses: [],
@@ -154,7 +158,11 @@ vi.mock("@solana/kit", () => ({
     }),
     getBalance: () => ({
       send: async () => {
+        h.gasTankBalanceCalls++;
         if (h.gasTankBalanceError) throw h.gasTankBalanceError;
+        if (h.gasTankBalanceFailsOnCall === h.gasTankBalanceCalls) {
+          throw new Error("RPC unavailable after reserve setup.");
+        }
         return { value: h.gasTankBalanceLamports };
       }
     }),
@@ -421,6 +429,20 @@ describe("workspace confidential reserve initialization", () => {
       h.authority, h.workspace, h.gasTank, h.reserveState,
       h.reserve, h.reserveToken, h.mint, "11111111111111111111111111111111"
     ]);
+  });
+
+  it("does not declare Reserve setup ready when the post-finality Gas Tank balance check fails", async () => {
+    h.gasTankBalanceFailsOnCall = 3;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+
+    expect(h.submittedSteps).toEqual(["program_configure"]);
+    expect(h.reserveConfigured).toBe(true);
   });
 
   it("blocks reserve setup when the Gas Tank balance cannot be verified", async () => {
