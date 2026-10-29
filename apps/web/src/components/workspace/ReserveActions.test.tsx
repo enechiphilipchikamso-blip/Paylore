@@ -123,7 +123,7 @@ describe("ReserveActions Gas Tank preflight", () => {
       />
     );
 
-    expect(html).toContain("could not verify the Gas Tank's live SOL balance");
+    expect(html).toContain("could not verify the current live SOL balance for the Gas Tank");
     expect(html).toContain("Confidential Reserve initialization is disabled");
     expect(html).toContain('href="/workspace/workspace-a/gas-tank"');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Initialize confidential reserve<\/button>/);

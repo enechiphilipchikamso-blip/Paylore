@@ -47,7 +47,7 @@ export function getReserveActionErrorMessage(
     reserve_gas_tank_insufficient_funds:
       "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
     reserve_gas_tank_balance_unavailable:
-      "Paylore could not verify the Gas Tank&apos;s live SOL balance. Reserve setup may be partially complete; refresh the Gas Tank and Reserve status before retrying.",
+      "Paylore could not verify the current live SOL balance for the Gas Tank. Reserve setup may be partially complete; refresh the Gas Tank and Reserve status before retrying.",
     reserve_gas_tank_key_mismatch:
       "The stored Gas Tank signing identity did not match its recorded address. Reserve setup was stopped for safety; contact support before retrying.",
     reserve_gas_tank_custody_unavailable:
@@ -482,7 +482,7 @@ export function ReserveActions({
             </>
           ) : gasTankPreflight.status === "funding_required" ? (
             <>
-              <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below Paylore&apos;s 0.05 SOL low-balance threshold. This threshold is a warning, not a fee quote: Paylore checks a conservative rent allowance plus a network-fee buffer before submitting setup transactions and stops if the balance is insufficient.</p>
+              <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below the 0.05 SOL low-balance warning threshold used by Paylore. This threshold is a warning, not a fee quote: Paylore checks a conservative rent allowance plus a network-fee buffer before submitting setup transactions and stops if the balance is insufficient.</p>
               <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Review and fund Gas Tank</Link>
             </>
           ) : gasTankPreflight.status === "unavailable" ? (
