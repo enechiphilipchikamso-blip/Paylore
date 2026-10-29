@@ -188,6 +188,23 @@ async function executePlan(
     throw error;
   }
 }
+async function verifyGasTankBalanceReadable(
+  rpc: ReturnType<typeof createSolanaRpc>,
+  gasTankAddress: string
+): Promise<void> {
+  try {
+    const response = await rpc.getBalance(
+      address(gasTankAddress),
+      { commitment: "confirmed" }
+    ).send();
+    if (BigInt(response.value) < 0n) {
+      throw new Error("The RPC returned a negative balance.");
+    }
+  } catch {
+    throw new WorkspaceReserveInitializationError("reserve_gas_tank_balance_unavailable", 503);
+  }
+}
+
 async function assertGasTankCanFundReserveSetup(input: {
   rpc: ReturnType<typeof createSolanaRpc>;
   gasTankAddress: string;
@@ -779,6 +796,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
     if (verified !== "program_configured") {
       throw new WorkspaceReserveInitializationError("reserve_program_configuration_not_verified", 503);
     }
+    await verifyGasTankBalanceReadable(input.rpc, gasTankAddress);
     return {
       status: "program_configured", reserveAddress: input.reserveAddress,
       tokenAccount: tokenState.tokenAccount, confidentialTransferReady: true,
