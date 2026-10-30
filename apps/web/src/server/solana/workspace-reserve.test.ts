@@ -183,7 +183,7 @@ vi.mock("@solana/kit", () => ({
           h.configCalls++;
           h.reserveConfigured = true;
         }
-        return h.setupSignature + "-" + h.submittedSteps.length;
+        return "1".repeat(64);
       }
     }),
     getAccountInfo: (pubkey: string) => ({
@@ -258,7 +258,8 @@ vi.mock("@solana/kit", () => ({
       }))
     };
   },
-  getBase64EncodedWireTransaction: () => "dGVzdC10cmFuc2FjdGlvbg==",
+  getBase64EncodedWireTransaction: () =>
+    Buffer.from([1, ...new Array(64).fill(0)]).toString("base64"),
   setTransactionMessageFeePayerSigner: (signer: any, message: any) => {
     h.feePayerAddresses.push(signer.address);
     return { ...message, feePayer: signer };
@@ -442,12 +443,12 @@ describe("workspace confidential reserve initialization", () => {
     expect(h.attachCalls).toEqual([{
       workspaceId: "workspace-a",
       phase: "program_configure",
-      signature: "setup-signature-1"
+      signature: "1".repeat(64)
     }]);
     expect(h.clearCalls).toEqual([{
       workspaceId: "workspace-a",
       phase: "program_configure",
-      signature: "setup-signature-1"
+      signature: "1".repeat(64)
     }]);
   });
 
