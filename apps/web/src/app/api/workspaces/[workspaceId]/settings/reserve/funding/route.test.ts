@@ -252,6 +252,29 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
     expect(mocks.completeWorkspaceReserveConfidentialFunding).not.toHaveBeenCalled();
   });
 
+  it("keeps the submitted wrap recoverable when the RPC cannot report transaction status", async () => {
+    mocks.verifyFinalizedReserveWrapFunding.mockRejectedValue(
+      new mocks.MockReserveWrapFundingError("reserve_wrap_transaction_status_unavailable", 503)
+    );
+    const response = await POST(request({
+      action: "verify",
+      amountBaseUnits: "1000000",
+      signature: "s".repeat(88)
+    }), { params });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "pending",
+      phase: "wrap_pending",
+      stage: "wrap_pending",
+      error: "reserve_wrap_transaction_status_unavailable",
+      retryable: true
+    });
+    expect(mocks.recordPendingReserveWrapFunding.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.verifyFinalizedReserveWrapFunding.mock.invocationCallOrder[0]
+    );
+    expect(mocks.completeWorkspaceReserveConfidentialFunding).not.toHaveBeenCalled();
+  });
+
   it("restores a submitted public wrap after reload before finality is known", async () => {
     mocks.getActiveWorkspaceReserveFundingOperation.mockResolvedValue({
       transactionSignature: "s".repeat(88),

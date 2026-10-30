@@ -340,12 +340,12 @@ export async function recordPendingReserveWrapFunding(input: {
       wrapSubmittedAt: new Date().toISOString()
     }
   });
+  if (begun.status === "reserve_not_found") {
+    throw new ReserveWrapFundingError("reserve_not_found", 409);
+  }
   const operation = begun.operation;
   if (!operation) {
     throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
-  }
-  if (begun.status === "reserve_not_found") {
-    throw new ReserveWrapFundingError("reserve_not_found", 409);
   }
   if (begun.status === "in_progress") {
     throw new ReserveWrapFundingError("reserve_confidential_funding_in_progress", 409);
