@@ -298,6 +298,35 @@ async function assertGasTankCanFundReserveSetup(input: {
     throw new WorkspaceReserveInitializationError("reserve_gas_tank_balance_unavailable", 503);
   }
 }
+export async function assertWorkspaceReserveFundingGasTankReady(
+  db: Database,
+  workspaceId: string
+): Promise<void> {
+  const gasTank = await getWorkspaceGasTank(db, workspaceId);
+  if (!gasTank?.address) {
+    throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
+  }
+  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  await assertGasTankCanFundReserveSetup({
+    rpc,
+    gasTankAddress: gasTank.address,
+    needsTokenAccountRent: false,
+    needsReserveStateRent: false,
+    transactionCount: 3
+  });
+  try {
+    await withWorkspaceGasTankKey(db, workspaceId, async (privateBytes) => {
+      const signer = await createKeyPairSignerFromBytes(privateBytes);
+      if (signer.address !== gasTank.address) {
+        throw new WorkspaceReserveInitializationError("reserve_gas_tank_key_mismatch", 409);
+      }
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceReserveInitializationError) throw error;
+    throw new WorkspaceReserveInitializationError("reserve_gas_tank_custody_unavailable", 503);
+  }
+}
+
 function workspaceSeed(workspaceId: string): Uint8Array {
   return new Uint8Array(createHash("sha256").update(`paylore:workspace:v1:${workspaceId}`).digest());
 }
