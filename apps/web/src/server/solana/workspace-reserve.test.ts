@@ -422,22 +422,22 @@ vi.mock("@solana/zk-sdk/bundler", () => {
 
 vi.mock("@paylore/database", () => ({
   isExactReserveFundingPreapply: (before: any, after: any) =>
-    before.pendingBalance > 0n &&
-    after.publicBalance === before.publicBalance &&
-    after.pendingBalance === 0n &&
-    after.availableBalance === before.availableBalance + before.pendingBalance,
+    BigInt(before.pendingBalance) > 0n &&
+    BigInt(after.publicBalance) === BigInt(before.publicBalance) &&
+    BigInt(after.pendingBalance) === 0n &&
+    BigInt(after.availableBalance) === BigInt(before.availableBalance) + BigInt(before.pendingBalance),
   isExactReserveFundingDeposit: (before: any, after: any, amount: bigint) =>
     amount > 0n && amount <= (1n << 48n) - 1n &&
     before.pendingBalance === 0n &&
-    before.publicBalance - after.publicBalance === amount &&
-    after.pendingBalance - before.pendingBalance === amount &&
-    after.availableBalance === before.availableBalance,
+    BigInt(before.publicBalance) - BigInt(after.publicBalance) === amount &&
+    BigInt(after.pendingBalance) - BigInt(before.pendingBalance) === amount &&
+    BigInt(after.availableBalance) === BigInt(before.availableBalance),
   isExactReserveFundingApply: (before: any, after: any, amount: bigint) =>
     amount > 0n && amount <= (1n << 48n) - 1n &&
-    before.pendingBalance === amount &&
-    after.publicBalance === before.publicBalance &&
-    after.pendingBalance === 0n &&
-    after.availableBalance - before.availableBalance === amount,
+    BigInt(before.pendingBalance) === amount &&
+    BigInt(after.publicBalance) === BigInt(before.publicBalance) &&
+    BigInt(after.pendingBalance) === 0n &&
+    BigInt(after.availableBalance) - BigInt(before.availableBalance) === amount,
   isUnchangedReserveFundingBalance: (expected: any, current: any) =>
     current.publicBalance === expected.publicBalance &&
     current.pendingBalance === expected.pendingBalance &&
