@@ -194,22 +194,38 @@ test.describe("public experience", () => {
 
     await page.goto("/");
 
-    await expect(
-      page.locator('link[rel="icon"][type="image/svg+xml"]')
-    ).toHaveAttribute("href", /\\/favicon\\.svg$/);
-    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", "Paylore");
-    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/manifest.webmanifest");
-    await expect(page.locator('link[rel="shortcut icon"]')).toHaveAttribute(
-      "href",
-      /\\/favicon\\.ico$/
+    const svgIconHref = await page
+      .locator('link[rel="icon"][type="image/svg+xml"]')
+      .getAttribute("href");
+    expect(new URL(svgIconHref!, page.url()).pathname).toBe("/favicon.svg");
+
+    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute(
+      "content",
+      "Paylore"
     );
-    await expect(page.locator('link[rel="icon"][type="image/png"][sizes="192x192"]')).toHaveAttribute(
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",
-      /\\/icons\\/paylore-192x192\\.png$/
+      "/manifest.webmanifest"
     );
-    await expect(
-      page.locator('link[rel="apple-touch-icon"]')
-    ).toHaveAttribute("href", /\\/apple-touch-icon\\.png$/);
+
+    const shortcutIconHref = await page
+      .locator('link[rel="shortcut icon"]')
+      .getAttribute("href");
+    expect(new URL(shortcutIconHref!, page.url()).pathname).toBe("/favicon.ico");
+
+    const pngIconHref = await page
+      .locator('link[rel="icon"][type="image/png"][sizes="192x192"]')
+      .getAttribute("href");
+    expect(new URL(pngIconHref!, page.url()).pathname).toBe(
+      "/icons/paylore-192x192.png"
+    );
+
+    const appleIconHref = await page
+      .locator('link[rel="apple-touch-icon"]')
+      .getAttribute("href");
+    expect(new URL(appleIconHref!, page.url()).pathname).toBe(
+      "/apple-touch-icon.png"
+    );
   });
 
   test("robots and sitemap contain public routes only", async ({ page }) => {
