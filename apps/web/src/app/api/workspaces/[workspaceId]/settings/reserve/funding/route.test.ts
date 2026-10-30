@@ -245,8 +245,9 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
     });
     const response = await GET(getRequest(), { params });
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ status: "another_admin_pending" });
-    await expect(response.json()).resolves.not.toHaveProperty("wrapSignature");
+    const body = await response.json();
+    expect(body).toMatchObject({ status: "another_admin_pending" });
+    expect(body).not.toHaveProperty("wrapSignature");
   });
 
   it("reports an insufficient Gas Tank balance without claiming funding is complete", async () => {
