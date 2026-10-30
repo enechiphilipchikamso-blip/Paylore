@@ -16,6 +16,49 @@ type GasTankReservePreflight = {
   balanceSol: string | null;
 };
 
+type ReserveFundingPhase = "preapply" | "deposit" | "apply";
+
+export function getReserveFundingOutcomeMessage(input: {
+  status: "pending" | "confidential_balance_verified" | "error";
+  phase?: ReserveFundingPhase;
+  errorCode?: string;
+}): { state: "success" | "error" | "partial"; text: string } {
+  if (input.status === "confidential_balance_verified") {
+    return {
+      state: "success",
+      text: "Ordinary USDC was wrapped, deposited into the Reserve's confidential pending balance, and applied to its available confidential balance. Paylore verified the finalized on-chain balances."
+    };
+  }
+  if (input.status === "pending") {
+    const text = input.phase === "preapply"
+      ? "Paylore is reconciling the Reserve's earlier pending confidential balance before depositing this funding. Continue this same operation; do not wrap USDC again."
+      : input.phase === "apply"
+        ? "The wrapped USDC is in the Reserve's confidential pending balance. Paylore is waiting for the apply transaction to make it available. Continue this same operation; do not wrap again."
+        : "The Reserve confidential deposit is awaiting finality. Continue this same operation; do not wrap USDC again.";
+    return { state: "partial", text };
+  }
+  const errors: Record<string, string> = {
+    reserve_gas_tank_insufficient_funds:
+      "The workspace Gas Tank does not have enough SOL to pay for the confidential Reserve transaction. Fund the Gas Tank, then continue this same operation; do not wrap USDC again.",
+    reserve_gas_tank_not_initialized:
+      "Initialize and fund the workspace Gas Tank before continuing confidential Reserve funding. Your verified wrapped-USDC deposit remains available to resume; do not wrap again.",
+    reserve_confidential_funding_in_progress:
+      "Another Reserve funding operation is being reconciled. Continue the existing operation after it finishes; do not submit another wrap.",
+    reserve_confidential_funding_public_balance_insufficient:
+      "The Reserve's public wrapped-USDC balance is below the amount to deposit. Refresh its finalized balance before continuing.",
+    reserve_confidential_account_not_ready:
+      "The Reserve confidential account is not ready for a deposit. Complete Reserve setup and refresh its on-chain status.",
+    reserve_confidential_pending_balance_not_cleared:
+      "The Reserve has an earlier confidential pending balance that has not been applied. Paylore stopped before making another deposit."
+  };
+  return {
+    state: "error",
+    text: errors[input.errorCode ?? ""] ??
+      "Paylore could not verify the confidential Reserve funding step. Check the same transaction and Reserve balance before retrying; do not submit a duplicate wrap."
+  };
+}
+
+
 export function canFundReserveWithOrdinaryUsdc(
   status: OnChainAccountState["status"],
   confidentialTransferReady: boolean
@@ -149,6 +192,8 @@ export function ReserveActions({
   const [pendingWrap, setPendingWrap] = useState<{
     signature: string;
     amountBaseUnits: string;
+    phase?: ReserveFundingPhase;
+    stage?: string;
   } | null>(null);
 
   const loadOnChainState = useCallback(async () => {
@@ -210,6 +255,53 @@ export function ReserveActions({
       active = false;
     };
   }, [loadOnChainState]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/workspaces/" + workspaceId + "/settings/reserve/funding", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store"
+    }).then(async (response) => {
+      const result = await response.json().catch(() => null) as {
+        status?: string;
+        wrapSignature?: string;
+        amountBaseUnits?: string;
+        phase?: ReserveFundingPhase;
+        stage?: string;
+        message?: string;
+      } | null;
+      if (!active || !result) return;
+      if (
+        response.ok &&
+        result.status === "pending" &&
+        typeof result.wrapSignature === "string" &&
+        typeof result.amountBaseUnits === "string" &&
+        /^[1-9][0-9]*$/.test(result.amountBaseUnits)
+      ) {
+        setPendingWrap({
+          signature: result.wrapSignature,
+          amountBaseUnits: result.amountBaseUnits,
+          phase: result.phase,
+          stage: result.stage
+        });
+        setFundingNotice(getReserveFundingOutcomeMessage({
+          status: "pending",
+          phase: result.phase
+        }));
+      } else if (result.status === "another_admin_pending") {
+        setFundingNotice({
+          state: "partial",
+          text: result.message ?? "A Reserve funding operation is already in progress. Continue that same operation before starting another."
+        });
+      }
+    }).catch(() => {
+      // A failed status read must not create a local success or erase a submitted signature.
+    });
+    return () => {
+      active = false;
+    };
+  }, [workspaceId]);
 
   async function run(action: ReserveAction) {
     if (busy || fundingBusy) return;
@@ -340,7 +432,10 @@ export function ReserveActions({
     try {
       amountBaseUnits = pendingWrap ? pendingWrap.amountBaseUnits : usdcToBaseUnits(fundingAmount);
     } catch (error) {
-      setFundingNotice({ state: "error", text: error instanceof Error ? error.message : "Enter a valid USDC amount." });
+      setFundingNotice({
+        state: "error",
+        text: error instanceof Error ? error.message : "Enter a valid USDC amount."
+      });
       return;
     }
     setFundingBusy(true);
@@ -352,26 +447,31 @@ export function ReserveActions({
         const preparedResponse = await fetch(
           "/api/workspaces/" + workspaceId + "/settings/reserve/funding",
           {
-            method: "POST", credentials: "same-origin",
+            method: "POST",
+            credentials: "same-origin",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ action: "prepare", amountBaseUnits })
           }
         );
         const prepared = await preparedResponse.json().catch(() => null) as {
-          walletAddress?: string; reserveAddress?: string; reserveTokenAccountAddress?: string;
-          wrappedMintAddress?: string; unwrappedMintAddress?: string; tokenWrapProgramAddress?: string; error?: string;
+          walletAddress?: string;
+          reserveAddress?: string;
+          reserveTokenAccountAddress?: string;
+          wrappedMintAddress?: string;
+          unwrappedMintAddress?: string;
+          tokenWrapProgramAddress?: string;
+          error?: string;
         } | null;
-        if (!preparedResponse.ok || !prepared?.walletAddress || !prepared.reserveAddress ||
-            !prepared.reserveTokenAccountAddress || !prepared.wrappedMintAddress ||
-            !prepared.unwrappedMintAddress || !prepared.tokenWrapProgramAddress) {
-          const messages: Record<string, string> = {
-            reserve_wrap_source_usdc_missing: "Your wallet has no ordinary Circle Devnet USDC token account. Fund it with Circle Devnet USDC before trying again.",
-            reserve_wrap_source_usdc_insufficient: "Your wallet does not have enough ordinary Circle Devnet USDC for this amount.",
-            reserve_confidential_account_not_ready: "Finish Reserve initialization and verify the Reserve before funding it.",
-            reserve_wrap_identity_mismatch: "The configured Token Wrap program or USDC mint does not match the approved Devnet identity. No transaction was submitted.",
-            reserve_wrap_program_unavailable: "The approved Token Wrap program could not be verified as deployed and executable. No transaction was submitted."
-          };
-          throw new Error(messages[prepared?.error ?? ""] ?? "Reserve funding preflight failed. No transaction was submitted.");
+        if (
+          !preparedResponse.ok ||
+          !prepared?.walletAddress ||
+          !prepared.reserveAddress ||
+          !prepared.reserveTokenAccountAddress ||
+          !prepared.wrappedMintAddress ||
+          !prepared.unwrappedMintAddress ||
+          !prepared.tokenWrapProgramAddress
+        ) {
+          throw new Error(prepared?.error ?? "Reserve funding preflight failed. No wallet transaction was submitted.");
         }
         const wallet = findAuthenticatedWallet(prepared.walletAddress);
         walletSubmissionStarted = true;
@@ -392,66 +492,92 @@ export function ReserveActions({
       const verificationResponse = await fetch(
         "/api/workspaces/" + workspaceId + "/settings/reserve/funding",
         {
-          method: "POST", credentials: "same-origin",
+          method: "POST",
+          credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "verify", amountBaseUnits, signature: activeSignature })
+          body: JSON.stringify({
+            action: "verify",
+            amountBaseUnits,
+            signature: activeSignature
+          })
         }
       );
       const verification = await verificationResponse.json().catch(() => null) as {
-        status?: string;
+        status?: "pending" | "confidential_balance_verified";
         error?: string;
+        phase?: ReserveFundingPhase;
+        stage?: string;
       } | null;
-      if (verificationResponse.status === 202) {
-        setFundingNotice({
-          state: "partial",
-          text: "The wrap transaction is not finalized yet. Verify this same signature again; do not submit another wrap."
+      if (verificationResponse.status === 202 || verification?.status === "pending") {
+        setPendingWrap({
+          signature: activeSignature,
+          amountBaseUnits,
+          phase: verification?.phase,
+          stage: verification?.stage
         });
+        setFundingNotice(getReserveFundingOutcomeMessage({
+          status: "pending",
+          phase: verification?.phase
+        }));
+        await refreshOnChainState();
         return;
       }
-      if (!verificationResponse.ok || verification?.status !== "wrapped_public_balance_verified") {
+      if (!verificationResponse.ok || verification?.status !== "confidential_balance_verified") {
         if (verification?.error === "reserve_wrap_transaction_failed") {
           setPendingWrap(null);
           setFundingNotice({
             state: "error",
-            text: "The submitted wrap failed on-chain. Refresh the Reserve state before making another attempt."
+            text: "The ordinary-USDC wrap failed on-chain. No Reserve confidential deposit was made. Refresh the Reserve before starting a new wrap."
           });
         } else {
-          setFundingNotice({
-            state: "partial",
-            text: "Paylore could not reconcile the submitted wrap to the exact USDC debit, Token Wrap escrow credit and Reserve credit. Do not submit a duplicate; verify this same transaction again."
-          });
+          if (activeSignature) {
+            setPendingWrap({ signature: activeSignature, amountBaseUnits });
+          }
+          setFundingNotice(getReserveFundingOutcomeMessage({
+            status: "error",
+            errorCode: verification?.error
+          }));
         }
         return;
       }
       setPendingWrap(null);
-      setFundingNotice({
-        state: "success",
-        text: "The ordinary Circle USDC wrap is finalized and verified in the Reserve's public wrapped-USDC balance. This confirms the public funding step only; the Reserve must not be treated as confidentially funded until its confidential deposit and apply are verified."
-      });
+      setFundingNotice(getReserveFundingOutcomeMessage({
+        status: "confidential_balance_verified"
+      }));
       await refreshOnChainState();
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       const signatureFromError = message.match(/[1-9A-HJ-NP-Za-km-z]{80,90}/)?.[0];
       if (signatureFromError) {
         setPendingWrap({ signature: signatureFromError, amountBaseUnits });
+        setFundingNotice(getReserveFundingOutcomeMessage({ status: "pending" }));
+      } else if (activeSignature && !isWalletCancellation(error)) {
+        setPendingWrap(pendingWrap ?? { signature: activeSignature, amountBaseUnits });
+        setFundingNotice(getReserveFundingOutcomeMessage({
+          status: "error",
+          errorCode: message
+        }));
+      } else if (isWalletCancellation(error)) {
         setFundingNotice({
           state: "partial",
-          text: "A wallet transaction signature was returned but finality could not be established. Verify this same signature before retrying; do not submit another wrap."
+          text: "The wallet request was cancelled. No new Reserve wrap was confirmed."
         });
-      } else if (isWalletCancellation(error)) {
-        setFundingNotice({ state: "partial", text: "The wallet request was cancelled. No Reserve wrap was confirmed." });
       } else if (walletSubmissionStarted) {
         setFundingNotice({
           state: "partial",
-          text: "The wallet did not confirm whether it submitted the wrap. Check wallet activity and Reserve state before retrying; do not submit a duplicate."
+          text: "The wallet did not confirm whether it submitted the wrap. Check wallet activity before retrying; do not submit a duplicate."
         });
       } else {
-        setFundingNotice({ state: "error", text: message || "The Reserve wrap could not be completed. No success has been recorded." });
+        setFundingNotice({
+          state: "error",
+          text: message || "The Reserve wrap could not be completed. No success has been recorded."
+        });
       }
     } finally {
       setFundingBusy(false);
     }
   }
+
 
   return (
     <div className="reserve-actions">
@@ -580,7 +706,15 @@ export function ReserveActions({
               {fundingBusy ? (
                 <p className="loading-indicator" role="status" aria-live="polite">
                   <span className="loading-indicator__icon" aria-hidden="true" />
-                  {pendingWrap ? "Verifying the submitted wrap…" : "Checking USDC and preparing the wallet transaction…"}
+                  {pendingWrap?.phase === "preapply"
+                    ? "Applying the Reserve's earlier pending confidential balance…"
+                    : pendingWrap?.phase === "deposit"
+                      ? "Depositing wrapped USDC into the confidential pending balance…"
+                      : pendingWrap?.phase === "apply"
+                        ? "Applying the new confidential balance…"
+                        : pendingWrap
+                          ? "Verifying and continuing the submitted Reserve funding…"
+                          : "Checking USDC and preparing the wallet transaction…"}
                 </p>
               ) : null}
               {fundingNotice ? (
@@ -593,7 +727,7 @@ export function ReserveActions({
               <button className="button" type="button"
                 disabled={busy || fundingBusy || checkingOnChain}
                 onClick={() => void fundReserveWithOrdinaryUsdc()}>
-                {fundingBusy ? "Working…" : pendingWrap ? "Verify submitted wrap" : "Wrap USDC and fund Reserve"}
+                {fundingBusy ? "Working…" : pendingWrap ? "Continue confidential funding" : "Wrap USDC and fund Reserve"}
               </button>
             </section>
           ) : null}
