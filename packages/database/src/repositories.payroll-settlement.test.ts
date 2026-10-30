@@ -74,6 +74,23 @@ describe("confidential payroll settlement repository", () => {
     expect(db.tx.update).not.toHaveBeenCalled();
     expect(db.tx.insert).not.toHaveBeenCalled();
   });
+  it("blocks new payroll settlement while an ordinary-USDC Reserve funding operation is active", async () => {
+    const db = fakeDatabase([
+      [{ workspaceId: common.workspaceId }],
+      [{ id: "reserve-funding-operation" }]
+    ]);
+    await expect(beginPayrollSettlementAttempt(db.db, {
+      workspaceId: common.workspaceId,
+      runId: common.runId,
+      allocationId: common.allocationId,
+      claimAddress: common.claimAddress,
+      claimCreationSignature: creationSignature,
+      sourceAvailableBefore: "9000000"
+    })).resolves.toEqual({ status: "workspace_busy" });
+    expect(db.tx.update).not.toHaveBeenCalled();
+    expect(db.tx.insert).not.toHaveBeenCalled();
+  });
+
   it("does not start over when a matching settlement is already pending", async () => {
     const db = fakeDatabase([
       [{ workspaceId: common.workspaceId }],
