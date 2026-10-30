@@ -59,7 +59,7 @@ describe("ReserveActions confidential funding outcomes", () => {
     });
     expect(notice.state).toBe("error");
     expect(notice.text).toContain("24-hour sponsorship limit");
-    expect(notice.text).toContain("continue this same Reserve funding operation");
+    expect(notice.text).toContain("Continue this same Reserve funding operation");
     expect(notice.text).toContain("do not wrap USDC again");
   });
 

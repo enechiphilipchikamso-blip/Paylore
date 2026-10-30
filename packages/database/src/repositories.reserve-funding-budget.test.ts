@@ -197,6 +197,8 @@ describe("workspace Reserve Gas Tank fee reservations", () => {
         stage: "apply_submitted",
         feeBudgetReserved: true,
         actualFeeLamports: "15000",
+        reservedFeeBudgetLamports: "100000",
+        feePerTransactionLamports: "100000",
         feeBudgetSettledCount: 1,
         feeReservationKeys: ["deposit:1", "apply:1"]
       }
