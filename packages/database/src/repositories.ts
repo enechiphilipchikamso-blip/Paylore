@@ -1,4 +1,5 @@
 import { canTransitionSubscriptionPaymentAttemptStatus, type SubscriptionPaymentAttemptStatus } from "./subscription-payment-attempt-policy";
+import { RESERVE_FUNDING_OPERATION_TYPE } from "./reserve-funding-operation-policy";
 import {
   and,
   asc,
@@ -4957,6 +4958,22 @@ export async function recordPayrollClaimSubmission(
 }
 
 
+async function hasActiveReserveConfidentialFunding(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  workspaceId: string
+): Promise<boolean> {
+  const rows = await tx.select({ id: gasTankOperations.id })
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.workspaceId, workspaceId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE),
+      inArray(gasTankOperations.status, ["preparing", "prepared"])
+    ))
+    .for("update")
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function beginPayrollSettlementAttempt(
   db: Database,
   input: {
@@ -4977,6 +4994,9 @@ export async function beginPayrollSettlementAttempt(
     const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
       .from(workspaceReserves).where(eq(workspaceReserves.workspaceId, input.workspaceId)).for("update").limit(1);
     if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+    if (await hasActiveReserveConfidentialFunding(tx, input.workspaceId)) {
+      return { status: "workspace_busy" as const };
+    }
     const rows = await tx.select({
       id: payrollAllocations.id,
       claimAddress: payrollAllocations.claimAddress,
@@ -6757,12 +6777,6 @@ export async function finalizeGasTankConfidentialAccountSetupForVerifiedAccount(
 
 
 
-import {
-  RESERVE_FUNDING_OPERATION_TYPE,
-  canAdvanceReserveFundingStage,
-  type ReserveFundingOperationStage
-} from "./reserve-funding-operation-policy";
-
 /** Serializes one Reserve confidential funding operation per workspace and keys it to the verified wrap signature. */
 export async function beginWorkspaceReserveFundingOperation(
   db: Database,
@@ -7344,28 +7358,42 @@ export async function beginPayrollClaimEscrowFunding(
   db: Database,
   input: { workspaceId: string; allocationId: string }
 ) {
-  const updated = await db.update(payrollClaimEscrows).set({
-    status: "funding",
-    updatedAt: new Date()
-  }).where(and(
-    eq(payrollClaimEscrows.workspaceId, input.workspaceId),
-    eq(payrollClaimEscrows.allocationId, input.allocationId),
-    eq(payrollClaimEscrows.status, "ready")
-  )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
-  if (updated[0]) return { status: "started" as const, tokenAccountAddress: updated[0].tokenAccountAddress };
-  const existing = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
-  if (!existing) return { status: "not_found" as const };
-  if (existing.status === "funded") {
-    return { status: "funded" as const, tokenAccountAddress: existing.tokenAccountAddress };
-  }
-  if (existing.status === "funding") {
-    return {
-      status: "pending" as const,
-      tokenAccountAddress: existing.tokenAccountAddress,
-      signature: existing.fundingSignature ?? undefined
-    };
-  }
-  return { status: "conflict" as const, tokenAccountAddress: existing.tokenAccountAddress };
+  return db.transaction(async (tx) => {
+    const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
+      .from(workspaceReserves)
+      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+    if (await hasActiveReserveConfidentialFunding(tx, input.workspaceId)) {
+      return { status: "workspace_busy" as const };
+    }
+    const updated = await tx.update(payrollClaimEscrows).set({
+      status: "funding",
+      updatedAt: new Date()
+    }).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId),
+      eq(payrollClaimEscrows.status, "ready")
+    )).returning({ tokenAccountAddress: payrollClaimEscrows.tokenAccountAddress });
+    if (updated[0]) return { status: "started" as const, tokenAccountAddress: updated[0].tokenAccountAddress };
+    const existing = await tx.select().from(payrollClaimEscrows).where(and(
+      eq(payrollClaimEscrows.workspaceId, input.workspaceId),
+      eq(payrollClaimEscrows.allocationId, input.allocationId)
+    )).limit(1);
+    if (!existing[0]) return { status: "not_found" as const };
+    if (existing[0].status === "funded") {
+      return { status: "funded" as const, tokenAccountAddress: existing[0].tokenAccountAddress };
+    }
+    if (existing[0].status === "funding") {
+      return {
+        status: "pending" as const,
+        tokenAccountAddress: existing[0].tokenAccountAddress,
+        signature: existing[0].fundingSignature ?? undefined
+      };
+    }
+    return { status: "conflict" as const, tokenAccountAddress: existing[0].tokenAccountAddress };
+  });
 }
 
 export async function preparePayrollClaimEscrowFundingAttempt(
@@ -7566,6 +7594,9 @@ export async function beginPayrollRecoveryAttempt(
       .for("update")
       .limit(1);
     if (!reserveRows[0]) return { status: "reserve_not_found" as const };
+    if (await hasActiveReserveConfidentialFunding(tx, input.workspaceId)) {
+      return { status: "workspace_busy" as const };
+    }
     const pendingRows = await tx.select({ id: payrollAllocations.id })
       .from(payrollAllocations)
       .where(and(
