@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   canFundReserveWithOrdinaryUsdc,
+  getReserveFundingOutcomeMessage,
   gasTankAllowsReserveInitialization,
   getReserveActionErrorMessage,
   ReserveActions
@@ -36,6 +37,40 @@ describe("ReserveActions ordinary-USDC funding gate", () => {
     expect(canFundReserveWithOrdinaryUsdc("confidential_account_ready", true)).toBe(false);
     expect(canFundReserveWithOrdinaryUsdc("account_missing", false)).toBe(false);
     expect(canFundReserveWithOrdinaryUsdc("not_checked", true)).toBe(false);
+  });
+});
+
+describe("ReserveActions confidential funding outcomes", () => {
+  it("keeps an unfinished apply operation resumable without asking for another wrap", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "pending",
+      phase: "apply"
+    });
+    expect(notice.state).toBe("partial");
+    expect(notice.text).toContain("pending confidential balance");
+    expect(notice.text).toContain("Continue this same operation");
+    expect(notice.text).toContain("do not wrap again");
+  });
+
+  it("asks the administrator to fund the Gas Tank and resume the same operation", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "error",
+      errorCode: "reserve_gas_tank_insufficient_funds"
+    });
+    expect(notice.state).toBe("error");
+    expect(notice.text).toContain("Fund the Gas Tank");
+    expect(notice.text).toContain("continue this same operation");
+    expect(notice.text).toContain("do not wrap USDC again");
+  });
+
+  it("claims confidential funding only after the deposit and apply balances are verified", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "confidential_balance_verified"
+    });
+    expect(notice.state).toBe("success");
+    expect(notice.text).toContain("deposited into the Reserve's confidential pending balance");
+    expect(notice.text).toContain("applied to its available confidential balance");
+    expect(notice.text).toContain("verified the finalized on-chain balances");
   });
 });
 
