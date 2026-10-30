@@ -130,22 +130,57 @@ async function waitForFinality(
   }
   return "pending";
 }
+
+function encodeReserveBase58(bytes: Uint8Array): string {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let number = 0n;
+  for (const byte of bytes) number = number * 256n + BigInt(byte);
+  let result = "";
+  while (number > 0n) {
+    result = alphabet[Number(number % 58n)] + result;
+    number /= 58n;
+  }
+  let leadingZeroes = 0;
+  while (leadingZeroes < bytes.length && bytes[leadingZeroes] === 0) leadingZeroes++;
+  return "1".repeat(leadingZeroes) + result;
+}
+
+function reserveSignatureFromWireTransaction(wire: string): string {
+  const bytes = Buffer.from(wire, "base64");
+  let offset = 0;
+  let signatureCount = 0;
+  let shift = 0;
+  while (offset < bytes.length && shift < 21) {
+    const value = bytes[offset++];
+    signatureCount |= (value & 0x7f) << shift;
+    if ((value & 0x80) === 0) break;
+    shift += 7;
+  }
+  if (signatureCount < 1 || bytes.length < offset + 64) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_signature_unavailable", 503);
+  }
+  return encodeReserveBase58(Uint8Array.from(bytes.subarray(offset, offset + 64)));
+}
+
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
   feePayerSigner: KeyPairSigner,
   plan: InstructionPlan,
   submitted?: (signature: string) => Promise<void>,
   additionalSigners: readonly KeyPairSigner[] = [],
-  memo?: string
+  memo?: string,
+  prepared?: (signature: string, lastValidBlockHeight: string) => Promise<void>
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
+  let currentLastValidBlockHeight: bigint | null = null;
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
       setTransactionMessageFeePayerSigner(feePayerSigner, createTransactionMessage({ version: 0 })),
     onTransactionMessageUpdated: async (message) => {
       const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
+      currentLastValidBlockHeight = BigInt(latest.value.lastValidBlockHeight);
       return setTransactionMessageLifetimeUsingBlockhash({
         blockhash: blockhash(latest.value.blockhash),
-        lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
+        lastValidBlockHeight: currentLastValidBlockHeight
       }, message);
     }
   });
@@ -154,23 +189,33 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
-      const memoMessage = memo
+      const messageWithMemo = memo
         ? appendTransactionMessageInstruction({
             programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
             accounts: [],
-            data: new TextEncoder().encode(memo)
+            data: encoder.encode(memo)
           }, message)
         : message;
       const messageWithSigners = addSignersToTransactionMessage(
         [feePayerSigner, ...additionalSigners],
-        memoMessage
+        messageWithMemo
       );
       const signed = await partiallySignTransactionMessageWithSigners(messageWithSigners);
       const wire = getBase64EncodedWireTransaction(signed);
+      const expectedSignature = reserveSignatureFromWireTransaction(wire);
+      if (prepared) {
+        if (currentLastValidBlockHeight === null) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_blockhash_unavailable", 503);
+        }
+        await prepared(expectedSignature, currentLastValidBlockHeight.toString());
+      }
       const signature = await rpc.sendTransaction(wire, {
         encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
       }).send();
       const signatureText = String(signature);
+      if (signatureText !== expectedSignature) {
+        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_signature_mismatch", 409);
+      }
       signatures.push(signatureText);
       if (submitted) {
         try {
@@ -180,8 +225,8 @@ async function executePlan(
         }
       }
       const finality = await waitForFinality(rpc, signature);
-      if (finality === "pending") throw new FinalityPendingError(String(signature));
-      if (finality === "failed") throw new FinalityFailedError(String(signature));
+      if (finality === "pending") throw new FinalityPendingError(signatureText);
+      if (finality === "failed") throw new FinalityFailedError(signatureText);
       return { signature };
     }
   });
