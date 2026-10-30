@@ -74,6 +74,15 @@ export function canFundReserveWithOrdinaryUsdc(
   return status === "program_configured" && confidentialTransferReady;
 }
 
+export function canStartOrdinaryUsdcReserveFunding(
+  status: OnChainAccountState["status"],
+  confidentialTransferReady: boolean,
+  gasTankStatus: GasTankReservePreflight["status"]
+): boolean {
+  return canFundReserveWithOrdinaryUsdc(status, confidentialTransferReady) &&
+    (gasTankStatus === "ready" || gasTankStatus === "funding_required");
+}
+
 export function gasTankAllowsReserveInitialization(
   status: GasTankReservePreflight["status"]
 ): boolean {
@@ -684,9 +693,11 @@ export function ReserveActions({
           ) : (
             <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
           )}
-          {canFundReserveWithOrdinaryUsdc(onChainAccount.status, onChainAccount.confidentialTransferReady === true) &&
-          onChainAccount.tokenAccount &&
-          (gasTankPreflight.status === "ready" || gasTankPreflight.status === "funding_required") ? (
+          {canStartOrdinaryUsdcReserveFunding(
+            onChainAccount.status,
+            onChainAccount.confidentialTransferReady === true,
+            gasTankPreflight.status
+          ) && onChainAccount.tokenAccount ? (
             <section className="reserve-summary" aria-label="Fund Reserve with ordinary Circle USDC">
               <h3>Fund the Reserve with ordinary USDC</h3>
               <p>
