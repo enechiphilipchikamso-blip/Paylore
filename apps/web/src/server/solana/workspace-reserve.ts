@@ -566,16 +566,23 @@ async function withReserveContext<T>(
       if (!gasTank) {
         throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
       }
+      let feePayerCallbackEntered = false;
       try {
         return await withWorkspaceGasTankKey(db, workspaceId, async (gasTankPrivateBytes) => {
-          const feePayerSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+          feePayerCallbackEntered = true;
+          let feePayerSigner: KeyPairSigner;
+          try {
+            feePayerSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+          } catch {
+            throw new WorkspaceReserveInitializationError("reserve_gas_tank_custody_unavailable", 503);
+          }
           if (feePayerSigner.address !== gasTank.address) {
             throw new WorkspaceReserveInitializationError("reserve_gas_tank_key_mismatch", 503);
           }
           return await run({ ...context, feePayerSigner, gasTankAddress: gasTank.address });
         });
       } catch (error) {
-        if (error instanceof WorkspaceReserveInitializationError) throw error;
+        if (error instanceof WorkspaceReserveInitializationError || feePayerCallbackEntered) throw error;
         throw new WorkspaceReserveInitializationError("reserve_gas_tank_custody_unavailable", 503);
       }
     } finally {
