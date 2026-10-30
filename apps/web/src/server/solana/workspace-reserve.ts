@@ -841,14 +841,19 @@ async function resolveReserveFundingFinality(input: {
     ).send()).value[0];
     const finality = classifyTransactionFinality(status);
     if (finality !== "pending") return finality;
+  } catch {
+    return "pending";
+  }
+  try {
     const currentBlockHeight = await input.rpc.getBlockHeight({ commitment: "finalized" }).send();
     if (BigInt(currentBlockHeight) <= BigInt(input.lastValidBlockHeight)) return "pending";
-    const transaction = await readReserveFundingTransaction(input.signatureText).catch((error) => {
-      if (error instanceof WorkspaceReserveInitializationError &&
-          error.code === "reserve_confidential_funding_transaction_not_finalized") return null;
-      throw error;
-    });
-    return transaction === null ? "failed" : "finalized";
+    const transaction = await readSolanaRpc<ReserveFundingTransaction>("getTransaction", [
+      input.signatureText,
+      { commitment: "finalized", encoding: "json", maxSupportedTransactionVersion: 0 }
+    ]);
+    if (transaction === null) return "failed";
+    if (!transaction.meta || transaction.meta.err === undefined) return "pending";
+    return transaction.meta.err === null ? "finalized" : "failed";
   } catch {
     return "pending";
   }
