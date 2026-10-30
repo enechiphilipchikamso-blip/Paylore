@@ -273,8 +273,10 @@ vi.mock("@solana/kit", () => ({
       if (Array.isArray(value.plans)) value.plans.forEach(visit);
     };
     visit(plan);
+    const initialMessage = options.createTransactionMessage();
+    const messageWithLifetime = await options.onTransactionMessageUpdated(initialMessage);
     return {
-      ...options.createTransactionMessage(),
+      ...messageWithLifetime,
       instructions
     };
   },
