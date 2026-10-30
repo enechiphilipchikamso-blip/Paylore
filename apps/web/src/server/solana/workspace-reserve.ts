@@ -2,16 +2,16 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  AccountRole, addSignersToTransactionMessage, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
+  AccountRole, addSignersToTransactionMessage, address, appendTransactionMessageInstruction, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
-  getBase64EncodedWireTransaction, getProgramDerivedAddress,
-  partiallySignTransactionMessageWithSigners, setTransactionMessageFeePayerSigner,
+  getBase64EncodedWireTransaction, getBase58Decoder, getProgramDerivedAddress,
+  partiallySignTransactionMessageWithSigners, setTransactionMessageFeePayerSigner, signature,
   setTransactionMessageLifetimeUsingBlockhash, singleInstructionPlan,
   type Instruction, type InstructionPlan, type Signature
 } from "@solana/kit";
 import {
-  fetchMint, fetchToken, findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS
+  fetchMint, fetchToken, findAssociatedTokenPda, getConfidentialDepositInstruction, TOKEN_2022_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 import {
   deriveConfidentialKeys, fetchConfidentialTransferBalance,
@@ -20,7 +20,7 @@ import {
 import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
-  getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
+  advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,\n  getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
   type Database
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
@@ -30,7 +30,7 @@ import {
   classifyReserveFundingState, hasApprovedConfidentialTransferAccount, verifyWorkspaceProgramState,
   type ReserveFundingState
 } from "./workspace-reserve-policy";
-import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
+import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";\nimport { readSolanaRpc } from "./rpc";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
@@ -132,7 +132,8 @@ async function executePlan(
   feePayerSigner: KeyPairSigner,
   plan: InstructionPlan,
   submitted?: (signature: string) => Promise<void>,
-  additionalSigners: readonly KeyPairSigner[] = []
+  additionalSigners: readonly KeyPairSigner[] = [],
+  memo?: string
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
@@ -150,6 +151,13 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
+      const memoMessage = memo
+        ? appendTransactionMessageInstruction({
+            programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+            accounts: [],
+            data: new TextEncoder().encode(memo)
+          }, message)
+        : message;
       const messageWithSigners = addSignersToTransactionMessage(
         [feePayerSigner, ...additionalSigners],
         message
@@ -527,6 +535,697 @@ export async function getWorkspaceConfidentialReserveSnapshot(
     };
   });
   return context as WorkspaceConfidentialReserveResult;
+}
+
+
+type SerializedReserveInstruction = {
+  programAddress: string;
+  dataBase64: string;
+  accountAddresses: string[];
+};
+
+type ReserveFundingTokenBalance = {
+  accountIndex?: unknown;
+  mint?: unknown;
+  owner?: unknown;
+  programId?: unknown;
+  uiTokenAmount?: { amount?: unknown; decimals?: unknown } | null;
+};
+
+type ReserveFundingTransaction = {
+  slot?: unknown;
+  meta?: {
+    err?: unknown;
+    fee?: unknown;
+    preTokenBalances?: ReserveFundingTokenBalance[] | null;
+    postTokenBalances?: ReserveFundingTokenBalance[] | null;
+    loadedAddresses?: { writable?: unknown[]; readonly?: unknown[] } | null;
+  } | null;
+  transaction?: {
+    signatures?: unknown;
+    message?: {
+      header?: { numRequiredSignatures?: unknown } | null;
+      accountKeys?: unknown;
+      instructions?: unknown;
+    } | null;
+  } | null;
+} | null;
+
+function serializeReserveInstruction(instruction: Instruction): SerializedReserveInstruction {
+  return {
+    programAddress: instruction.programAddress,
+    dataBase64: Buffer.from(instruction.data).toString("base64"),
+    accountAddresses: (instruction.accounts ?? []).map((account) => account.address)
+  };
+}
+
+function reserveFundingTransactionKeys(
+  message: Record<string, unknown>,
+  meta: NonNullable<ReserveFundingTransaction>["meta"]
+): string[] {
+  const values = Array.isArray(message.accountKeys) ? message.accountKeys : [];
+  const keys = values.map((entry) => {
+    if (typeof entry === "string") return entry;
+    const row = object(entry);
+    return typeof row?.pubkey === "string" ? row.pubkey : "";
+  });
+  const loaded = object(meta?.loadedAddresses);
+  const extra = [
+    ...(Array.isArray(loaded?.writable) ? loaded!.writable as unknown[] : []),
+    ...(Array.isArray(loaded?.readonly) ? loaded!.readonly as unknown[] : [])
+  ].map((entry) => {
+    if (typeof entry === "string") return entry;
+    const row = object(entry);
+    return typeof row?.pubkey === "string" ? row.pubkey : "";
+  });
+  return [...keys, ...extra];
+}
+
+function decodeReserveBase58(value: string): Uint8Array | null {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let number = 0n;
+  for (const character of value) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) return null;
+    number = number * 58n + BigInt(digit);
+  }
+  const bytes: number[] = [];
+  while (number > 0n) {
+    bytes.unshift(Number(number & 0xffn));
+    number >>= 8n;
+  }
+  for (const character of value) {
+    if (character !== "1") break;
+    bytes.unshift(0);
+  }
+  return Uint8Array.from(bytes);
+}
+
+function reserveInstructionProgram(instruction: Record<string, unknown>, keys: string[]): string {
+  if (typeof instruction.programId === "string") return instruction.programId;
+  return typeof instruction.programIdIndex === "number"
+    ? keys[instruction.programIdIndex] ?? ""
+    : "";
+}
+
+function reserveInstructionAccounts(instruction: Record<string, unknown>, keys: string[]): string[] {
+  if (!Array.isArray(instruction.accounts)) return [];
+  return instruction.accounts.map((entry) =>
+    typeof entry === "string" ? entry :
+      typeof entry === "number" ? keys[entry] ?? "" : ""
+  );
+}
+
+function reserveInstructionData(instruction: Record<string, unknown>): Uint8Array | null {
+  return typeof instruction.data === "string" ? decodeReserveBase58(instruction.data) : null;
+}
+
+function hasReserveMemo(
+  message: Record<string, unknown>,
+  keys: string[],
+  marker: string
+): boolean {
+  const instructions = Array.isArray(message.instructions) ? message.instructions : [];
+  return instructions.some((value) => {
+    const instruction = object(value);
+    if (!instruction || reserveInstructionProgram(instruction, keys) !== "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr") {
+      return false;
+    }
+    const data = reserveInstructionData(instruction);
+    return data !== null && new TextDecoder().decode(data) === marker;
+  });
+}
+
+function verifyReserveInstructionInTransaction(
+  transaction: NonNullable<ReserveFundingTransaction>,
+  expected: SerializedReserveInstruction,
+  marker: string,
+  reserveAddress: string
+): void {
+  const meta = object(transaction.meta);
+  const body = object(transaction.transaction);
+  const message = object(body?.message);
+  const signatures = body?.signatures;
+  if (!meta || !message || !Array.isArray(signatures) ||
+      meta.err !== null || !signatures.length || typeof transaction.slot !== "number") {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_not_finalized", 202);
+  }
+  const keys = reserveFundingTransactionKeys(message, meta as NonNullable<ReserveFundingTransaction>["meta"]);
+  const header = object(message.header);
+  const required = header?.numRequiredSignatures;
+  const signer = Array.isArray(message.accountKeys) && message.accountKeys.some((value, index) => {
+    const row = object(value);
+    const isSigner = typeof row?.signer === "boolean"
+      ? row.signer
+      : typeof required === "number" && index < required;
+    const key = typeof value === "string" ? value : object(value)?.pubkey;
+    return key === reserveAddress && isSigner;
+  });
+  if (!signer) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_authority_mismatch", 409);
+  }
+  const instructions = Array.isArray(message.instructions) ? message.instructions : [];
+  const matches = instructions.filter((value) => {
+    const instruction = object(value);
+    if (!instruction || reserveInstructionProgram(instruction, keys) !== expected.programAddress) return false;
+    const actualData = reserveInstructionData(instruction);
+    const expectedData = Buffer.from(expected.dataBase64, "base64");
+    return actualData !== null &&
+      Buffer.from(actualData).equals(expectedData) &&
+      JSON.stringify(reserveInstructionAccounts(instruction, keys)) === JSON.stringify(expected.accountAddresses);
+  });
+  if (matches.length !== 1 || !hasReserveMemo(message, keys, marker)) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_instruction_mismatch", 409);
+  }
+}
+
+function reserveTokenBalanceAmount(
+  rows: ReserveFundingTokenBalance[] | null | undefined,
+  index: number,
+  mint: string,
+  owner: string
+): bigint {
+  const matches = (rows ?? []).filter((row) => row.accountIndex === index);
+  if (matches.length !== 1) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_balance_unavailable", 409);
+  }
+  const row = matches[0];
+  const amount = row.uiTokenAmount?.amount;
+  if (
+    row.mint !== mint || row.owner !== owner ||
+    (row.programId !== undefined && row.programId !== TOKEN_2022_PROGRAM_ADDRESS) ||
+    typeof amount !== "string" || !/^(0|[1-9][0-9]*)$/.test(amount) ||
+    row.uiTokenAmount?.decimals !== 6
+  ) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_account_mismatch", 409);
+  }
+  return BigInt(amount);
+}
+
+function assertReservePublicBalanceDelta(input: {
+  transaction: NonNullable<ReserveFundingTransaction>;
+  tokenAddress: string;
+  mintAddress: string;
+  reserveAddress: string;
+  deltaBaseUnits: bigint;
+}): void {
+  const meta = object(input.transaction.meta) as NonNullable<ReserveFundingTransaction>["meta"];
+  const body = object(input.transaction.transaction);
+  const message = object(body?.message);
+  if (!meta || !message) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_not_finalized", 202);
+  }
+  const keys = reserveFundingTransactionKeys(message, meta);
+  const index = keys.indexOf(input.tokenAddress);
+  if (index < 0) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_account_mismatch", 409);
+  }
+  const before = reserveTokenBalanceAmount(meta.preTokenBalances, index, input.mintAddress, input.reserveAddress);
+  const after = reserveTokenBalanceAmount(meta.postTokenBalances, index, input.mintAddress, input.reserveAddress);
+  if (before - after !== input.deltaBaseUnits) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_public_debit_mismatch", 409);
+  }
+}
+
+async function readReserveFundingTransaction(
+  signatureText: string
+): Promise<NonNullable<ReserveFundingTransaction>> {
+  let transaction: ReserveFundingTransaction;
+  try {
+    transaction = await readSolanaRpc<ReserveFundingTransaction>("getTransaction", [
+      signatureText,
+      { commitment: "finalized", encoding: "json", maxSupportedTransactionVersion: 0 }
+    ]);
+  } catch {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_status_unavailable", 503);
+  }
+  if (!transaction || !transaction.meta || !transaction.transaction ||
+      typeof transaction.slot !== "number" || transaction.meta.err === undefined) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_not_finalized", 202);
+  }
+  if (transaction.meta.err !== null) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_failed", 409);
+  }
+  return transaction;
+}
+
+async function readReserveFundingFee(transaction: NonNullable<ReserveFundingTransaction>): Promise<string> {
+  const fee = transaction.meta?.fee;
+  if (typeof fee !== "number" || !Number.isSafeInteger(fee) || fee < 0) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_fee_unavailable", 503);
+  }
+  return String(fee);
+}
+
+async function findReserveFundingSignatureByMemo(
+  tokenAddress: string,
+  marker: string
+): Promise<string | null> {
+  let rows: Array<{ signature?: string }> = [];
+  try {
+    rows = await readSolanaRpc<Array<{ signature?: string }>>("getSignaturesForAddress", [
+      tokenAddress,
+      { commitment: "confirmed", limit: 40 }
+    ]);
+  } catch {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_status_unavailable", 503);
+  }
+  for (const row of rows) {
+    if (typeof row.signature !== "string") continue;
+    let transaction: ReserveFundingTransaction;
+    try {
+      transaction = await readSolanaRpc<ReserveFundingTransaction>("getTransaction", [
+        row.signature,
+        { commitment: "confirmed", encoding: "json", maxSupportedTransactionVersion: 0 }
+      ]);
+    } catch {
+      continue;
+    }
+    const body = object(transaction?.transaction);
+    const message = object(body?.message);
+    if (!message) continue;
+    const meta = object(transaction?.meta);
+    const keys = reserveFundingTransactionKeys(message, meta as NonNullable<ReserveFundingTransaction>["meta"] ?? null);
+    if (hasReserveMemo(message, keys, marker)) return row.signature;
+  }
+  return null;
+}
+
+type WorkspaceReserveConfidentialFundingResult = {
+  status: "confidential_balance_verified" | "pending";
+  wrapSignature: string;
+  depositSignature?: string;
+  applySignature?: string;
+  amountBaseUnits: string;
+  publicBalanceBaseUnits?: string;
+  availableBalanceBaseUnits?: string;
+};
+
+const MAX_CONFIDENTIAL_DEPOSIT_BASE_UNITS = (1n << 48n) - 1n;
+
+function reserveFundingMemo(wrapSignature: string, phase: "preapply" | "deposit" | "apply"): string {
+  return "PAYLORE_RESERVE_FUNDING:v1:" + wrapSignature + ":" + phase;
+}
+
+/** Converts the verified public Reserve credit into pending and then spendable confidential funds. */
+export async function completeWorkspaceReserveConfidentialFunding(input: {
+  db: Database;
+  workspaceId: string;
+  fallbackAuthorityAddress: string;
+  amountBaseUnits: string;
+  wrapSignature: string;
+}): Promise<WorkspaceReserveConfidentialFundingResult> {
+  if (
+    !/^[1-9][0-9]{0,19}$/.test(input.amountBaseUnits) ||
+    BigInt(input.amountBaseUnits) > MAX_CONFIDENTIAL_DEPOSIT_BASE_UNITS ||
+    !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.wrapSignature)
+  ) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_amount_invalid", 400);
+  }
+  const amount = BigInt(input.amountBaseUnits);
+  const result = await withReserveContext(
+    input.db,
+    input.workspaceId,
+    input.fallbackAuthorityAddress,
+    async (context) => {
+      if (!context.feePayerSigner || !context.gasTankAddress) {
+        throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
+      }
+      const account = await inspectTokenAccount({
+        rpc: context.rpc,
+        reserveAddress: context.reserveAddress,
+        reserveTokenAddress: context.reserveTokenAddress,
+        mintAddress: context.mintAddress,
+        secret: context.secret,
+        aesKey: context.aesKey
+      });
+      if (
+        account.status !== "account_ready" ||
+        !account.confidentialTransferReady ||
+        account.tokenAccount !== context.reserveTokenAddress ||
+        !account.publicBalanceBaseUnits ||
+        !account.availableBalanceBaseUnits ||
+        !account.pendingBalanceBaseUnits
+      ) {
+        throw new WorkspaceReserveInitializationError("reserve_confidential_account_not_ready", 409);
+      }
+      const workspaceStatus = await inspectWorkspaceProgramState(context.rpc, {
+        workspace: context.workspace,
+        bump: context.workspaceBump,
+        seed: context.workspaceSeed,
+        workspaceId: input.workspaceId,
+        authorityAddress: context.workspaceAuthority,
+        programId: context.programId
+      });
+      if (workspaceStatus === "workspace_program_not_initialized") {
+        throw new WorkspaceReserveInitializationError("workspace_program_not_initialized", 409);
+      }
+      const reserveStatus = await inspectReserveProgramState(context.rpc, {
+        workspace: context.workspace,
+        reserveAuthority: context.reserveAddress,
+        reserveToken: context.reserveTokenAddress,
+        mint: context.mintAddress,
+        programId: context.programId,
+        reserveState: context.reserveState,
+        reserveBump: context.reserveBump
+      });
+      if (reserveStatus !== "program_configured") {
+        throw new WorkspaceReserveInitializationError("reserve_program_not_configured", 409);
+      }
+
+      const publicBefore = BigInt(account.publicBalanceBaseUnits);
+      const availableBefore = BigInt(account.availableBalanceBaseUnits);
+      const pendingBefore = BigInt(account.pendingBalanceBaseUnits);
+      if (publicBefore < amount) {
+        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_public_balance_insufficient", 409);
+      }
+      const idempotencyKey = "reserve_funding:" + input.wrapSignature;
+      const requestDigest = createHash("sha256").update([
+        input.workspaceId, input.fallbackAuthorityAddress, input.amountBaseUnits,
+        input.wrapSignature, context.reserveAddress, context.reserveTokenAddress, context.mintAddress
+      ].join("|")).digest("hex");
+      const begun = await beginWorkspaceReserveFundingOperation(input.db, {
+        workspaceId: input.workspaceId,
+        idempotencyKey,
+        requestDigest,
+        wrapSignature: input.wrapSignature,
+        operationData: {
+          walletAddress: input.fallbackAuthorityAddress,
+          amountBaseUnits: input.amountBaseUnits,
+          wrapSignature: input.wrapSignature,
+          reserveAddress: context.reserveAddress,
+          reserveTokenAddress: context.reserveTokenAddress,
+          mintAddress: context.mintAddress,
+          initialPublicBalanceBaseUnits: account.publicBalanceBaseUnits,
+          initialAvailableBalanceBaseUnits: account.availableBalanceBaseUnits,
+          initialPendingBalanceBaseUnits: account.pendingBalanceBaseUnits
+        }
+      });
+      if (begun.status === "reserve_not_found") {
+        throw new WorkspaceReserveInitializationError("reserve_not_found", 409);
+      }
+      if (begun.status === "in_progress" || begun.status === "conflict" || begun.status === "invalid" || !begun.operation) {
+        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_in_progress", 409);
+      }
+      let operationData = object(begun.operation.operationData) ?? {};
+      if (
+        operationData.walletAddress !== input.fallbackAuthorityAddress ||
+        operationData.amountBaseUnits !== input.amountBaseUnits ||
+        operationData.wrapSignature !== input.wrapSignature ||
+        operationData.reserveAddress !== context.reserveAddress ||
+        operationData.reserveTokenAddress !== context.reserveTokenAddress ||
+        operationData.mintAddress !== context.mintAddress
+      ) {
+        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
+      }
+      let stage = String(operationData.stage ?? "");
+      const save = async (
+        expectedStage: ReserveFundingOperationStage,
+        nextStage: ReserveFundingOperationStage,
+        patch: Record<string, unknown> = {},
+        feeLamportsAdded = "0"
+      ) => {
+        const saved = await advanceWorkspaceReserveFundingOperation(input.db, {
+          workspaceId: input.workspaceId,
+          operationId: begun.operation!.id,
+          expectedStage,
+          nextStage,
+          operationData: patch,
+          feeLamportsAdded
+        });
+        if (saved !== "updated" && saved !== "duplicate") {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
+        }
+        operationData = { ...operationData, ...patch, stage: nextStage };
+        stage = nextStage;
+      };
+      const pending = (): WorkspaceReserveConfidentialFundingResult => ({
+        status: "pending",
+        wrapSignature: input.wrapSignature,
+        depositSignature: typeof operationData.depositSignature === "string" ? operationData.depositSignature : undefined,
+        applySignature: typeof operationData.applySignature === "string" ? operationData.applySignature : undefined,
+        amountBaseUnits: input.amountBaseUnits
+      });
+      if (begun.status === "finalized" || stage === "finalized") {
+        return {
+          status: "confidential_balance_verified",
+          wrapSignature: input.wrapSignature,
+          depositSignature: String(operationData.depositSignature ?? ""),
+          applySignature: String(operationData.applySignature ?? ""),
+          amountBaseUnits: input.amountBaseUnits,
+          publicBalanceBaseUnits: String(operationData.finalPublicBalanceBaseUnits ?? ""),
+          availableBalanceBaseUnits: String(operationData.finalAvailableBalanceBaseUnits ?? "")
+        };
+      }
+      if (stage === "wrap_verified" && pendingBefore > 0n) {
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+        const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
+          token: address(context.reserveTokenAddress),
+          tokenAccount: token,
+          authority: context.signer,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        const expected = serializeReserveInstruction(instruction);
+        await save("wrap_verified", "preapply_submitting", {
+          preapplyInstruction: expected,
+          preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply"),
+          preapplyStartedAt: new Date().toISOString()
+        });
+      } else if (stage === "wrap_verified") {
+        await save("wrap_verified", "preapply_finalized", {
+          availableBeforeDepositBaseUnits: account.availableBalanceBaseUnits,
+          publicBeforeDepositBaseUnits: account.publicBalanceBaseUnits
+        });
+      }
+
+      if (stage === "preapply_submitting") {
+        const marker = String(operationData.preapplyMarker ?? reserveFundingMemo(input.wrapSignature, "preapply"));
+        let txSignature = typeof operationData.preapplySignature === "string" ? operationData.preapplySignature : null;
+        if (!txSignature) {
+          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
+          if (!txSignature) return pending();
+          await save("preapply_submitting", "preapply_submitted", { preapplySignature: txSignature });
+        }
+        stage = "preapply_submitted";
+      }
+      if (stage === "preapply_submitted") {
+        const txSignature = String(operationData.preapplySignature);
+        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
+        if (finality === "pending") return pending();
+        const transaction = await readReserveFundingTransaction(txSignature);
+        const expected = object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction;
+        verifyReserveInstructionInTransaction(
+          transaction, expected, String(operationData.preapplyMarker), context.reserveAddress
+        );
+        assertReservePublicBalanceDelta({
+          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
+          reserveAddress: context.reserveAddress, deltaBaseUnits: 0n
+        });
+        const balances = await deriveConfidentialBalanceSnapshot(
+          context.rpc, context.reserveTokenAddress, context.secret, context.aesKey
+        );
+        if (
+          finality !== "finalized" ||
+          BigInt(balances.pendingBalanceBaseUnits) !== 0n ||
+          BigInt(balances.availableBalanceBaseUnits) !== availableBefore + pendingBefore
+        ) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_balance_mismatch", 409);
+        }
+        await save("preapply_submitted", "preapply_finalized", {
+          availableBeforeDepositBaseUnits: balances.availableBalanceBaseUnits,
+          publicBeforeDepositBaseUnits: account.publicBalanceBaseUnits,
+          preapplyFinalizedAt: new Date().toISOString()
+        }, await readReserveFundingFee(transaction));
+      }
+      if (stage === "preapply_failed") {
+        await save("preapply_failed", "preapply_submitting", {
+          preapplyInstruction: undefined,
+          preapplySignature: undefined,
+          preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply"),
+          preapplyStartedAt: new Date().toISOString()
+        });
+      }
+
+      if (stage === "preapply_finalized" || stage === "deposit_failed") {
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+        const balance = await fetchConfidentialTransferBalance({
+          token: address(context.reserveTokenAddress),
+          rpc: context.rpc,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        if (balance.pendingBalance !== 0n) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_pending_balance_not_cleared", 409);
+        }
+        const publicNow = BigInt(token.amount);
+        const availableNow = balance.availableBalance;
+        const expectedPublicBefore = BigInt(String(operationData.publicBeforeDepositBaseUnits ?? publicBefore.toString()));
+        const expectedAvailableBefore = BigInt(String(operationData.availableBeforeDepositBaseUnits ?? availableBefore.toString()));
+        if (publicNow !== expectedPublicBefore || availableNow !== expectedAvailableBefore) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_balance_changed", 409);
+        }
+        const instruction = getConfidentialDepositInstruction({
+          token: address(context.reserveTokenAddress),
+          mint: address(context.mintAddress),
+          authority: context.signer,
+          amount,
+          decimals: 6
+        });
+        const expected = serializeReserveInstruction(instruction);
+        const marker = reserveFundingMemo(input.wrapSignature, "deposit");
+        const expectedStage = stage as "preapply_finalized" | "deposit_failed";
+        await save(expectedStage, "deposit_submitting", {
+          depositInstruction: expected,
+          depositMarker: marker,
+          depositStartedAt: new Date().toISOString()
+        });
+      }
+      if (stage === "deposit_submitting") {
+        const marker = String(operationData.depositMarker ?? reserveFundingMemo(input.wrapSignature, "deposit"));
+        let txSignature = typeof operationData.depositSignature === "string" ? operationData.depositSignature : null;
+        if (!txSignature) {
+          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
+          if (!txSignature) return pending();
+          await save("deposit_submitting", "deposit_submitted", { depositSignature: txSignature });
+        }
+        stage = "deposit_submitted";
+      }
+      if (stage === "deposit_submitted") {
+        const txSignature = String(operationData.depositSignature);
+        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
+        if (finality === "pending") return pending();
+        const transaction = await readReserveFundingTransaction(txSignature);
+        const expected = object(operationData.depositInstruction) as unknown as SerializedReserveInstruction;
+        verifyReserveInstructionInTransaction(
+          transaction, expected, String(operationData.depositMarker), context.reserveAddress
+        );
+        assertReservePublicBalanceDelta({
+          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
+          reserveAddress: context.reserveAddress, deltaBaseUnits: amount
+        });
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+        const balance = await fetchConfidentialTransferBalance({
+          token: address(context.reserveTokenAddress),
+          rpc: context.rpc,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        const publicBeforeDeposit = BigInt(String(operationData.publicBeforeDepositBaseUnits));
+        const availableBeforeDeposit = BigInt(String(operationData.availableBeforeDepositBaseUnits));
+        if (
+          finality !== "finalized" ||
+          BigInt(token.amount) !== publicBeforeDeposit - amount ||
+          balance.pendingBalance !== amount ||
+          balance.availableBalance !== availableBeforeDeposit
+        ) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_balance_mismatch", 409);
+        }
+        await save("deposit_submitted", "deposit_finalized", {
+          depositPublicBalanceAfterBaseUnits: token.amount.toString(),
+          depositPendingBalanceAfterBaseUnits: balance.pendingBalance.toString(),
+          depositFinalizedAt: new Date().toISOString()
+        }, await readReserveFundingFee(transaction));
+      }
+      if (stage === "deposit_failed") {
+        await save("deposit_failed", "deposit_submitting", {
+          depositInstruction: undefined,
+          depositSignature: undefined,
+          depositMarker: reserveFundingMemo(input.wrapSignature, "deposit"),
+          depositStartedAt: new Date().toISOString()
+        });
+      }
+
+      if (stage === "deposit_finalized" || stage === "apply_failed") {
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+        const balance = await fetchConfidentialTransferBalance({
+          token: address(context.reserveTokenAddress),
+          rpc: context.rpc,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        if (balance.pendingBalance !== amount) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_pending_balance_mismatch", 409);
+        }
+        const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
+          token: address(context.reserveTokenAddress),
+          tokenAccount: token,
+          authority: context.signer,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        const expected = serializeReserveInstruction(instruction);
+        const marker = reserveFundingMemo(input.wrapSignature, "apply");
+        const expectedStage = stage as "deposit_finalized" | "apply_failed";
+        await save(expectedStage, "apply_submitting", {
+          applyInstruction: expected,
+          applyMarker: marker,
+          applyStartedAt: new Date().toISOString()
+        });
+      }
+      if (stage === "apply_submitting") {
+        const marker = String(operationData.applyMarker ?? reserveFundingMemo(input.wrapSignature, "apply"));
+        let txSignature = typeof operationData.applySignature === "string" ? operationData.applySignature : null;
+        if (!txSignature) {
+          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
+          if (!txSignature) return pending();
+          await save("apply_submitting", "apply_submitted", { applySignature: txSignature });
+        }
+        stage = "apply_submitted";
+      }
+      if (stage === "apply_submitted") {
+        const txSignature = String(operationData.applySignature);
+        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
+        if (finality === "pending") return pending();
+        const transaction = await readReserveFundingTransaction(txSignature);
+        const expected = object(operationData.applyInstruction) as unknown as SerializedReserveInstruction;
+        verifyReserveInstructionInTransaction(
+          transaction, expected, String(operationData.applyMarker), context.reserveAddress
+        );
+        assertReservePublicBalanceDelta({
+          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
+          reserveAddress: context.reserveAddress, deltaBaseUnits: 0n
+        });
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+        const balance = await fetchConfidentialTransferBalance({
+          token: address(context.reserveTokenAddress),
+          rpc: context.rpc,
+          elgamalSecretKey: context.secret,
+          aesKey: context.aesKey
+        });
+        const availableBeforeDeposit = BigInt(String(operationData.availableBeforeDepositBaseUnits));
+        const publicAfterDeposit = BigInt(String(operationData.depositPublicBalanceAfterBaseUnits));
+        if (
+          finality !== "finalized" ||
+          BigInt(token.amount) !== publicAfterDeposit ||
+          balance.pendingBalance !== 0n ||
+          balance.availableBalance !== availableBeforeDeposit + amount
+        ) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_apply_balance_mismatch", 409);
+        }
+        await save("apply_submitted", "finalized", {
+          finalPublicBalanceBaseUnits: token.amount.toString(),
+          finalAvailableBalanceBaseUnits: balance.availableBalance.toString(),
+          confidentialFundingVerifiedAt: new Date().toISOString()
+        }, await readReserveFundingFee(transaction));
+      }
+      if (stage !== "finalized") return pending();
+      return {
+        status: "confidential_balance_verified",
+        wrapSignature: input.wrapSignature,
+        depositSignature: String(operationData.depositSignature),
+        applySignature: String(operationData.applySignature),
+        amountBaseUnits: input.amountBaseUnits,
+        publicBalanceBaseUnits: String(operationData.finalPublicBalanceBaseUnits),
+        availableBalanceBaseUnits: String(operationData.finalAvailableBalanceBaseUnits)
+      };
+    },
+    { requireGasTankFeePayer: true }
+  );
+  if (!result || typeof result !== "object" || !("status" in result)) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_unavailable", 503);
+  }
+  return result as WorkspaceReserveConfidentialFundingResult;
 }
 
 async function inspectTokenAccount(input: {
