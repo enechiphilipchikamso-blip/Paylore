@@ -38,3 +38,55 @@ export function canAdvanceReserveFundingStage(
   return Object.prototype.hasOwnProperty.call(transitions, current) &&
     transitions[current as ReserveFundingOperationStage].includes(next);
 }
+
+
+export type ReserveFundingBalances = {
+  publicBalance: bigint;
+  pendingBalance: bigint;
+  availableBalance: bigint;
+};
+
+export function isExactReserveFundingPreapply(
+  before: ReserveFundingBalances,
+  after: ReserveFundingBalances
+): boolean {
+  return before.pendingBalance > 0n &&
+    after.publicBalance === before.publicBalance &&
+    after.pendingBalance === 0n &&
+    after.availableBalance === before.availableBalance + before.pendingBalance;
+}
+
+export function isExactReserveFundingDeposit(
+  before: ReserveFundingBalances,
+  after: ReserveFundingBalances,
+  amount: bigint
+): boolean {
+  return amount > 0n &&
+    amount <= (1n << 48n) - 1n &&
+    before.pendingBalance === 0n &&
+    before.publicBalance - after.publicBalance === amount &&
+    after.pendingBalance - before.pendingBalance === amount &&
+    after.availableBalance === before.availableBalance;
+}
+
+export function isExactReserveFundingApply(
+  before: ReserveFundingBalances,
+  after: ReserveFundingBalances,
+  amount: bigint
+): boolean {
+  return amount > 0n &&
+    amount <= (1n << 48n) - 1n &&
+    before.pendingBalance === amount &&
+    after.publicBalance === before.publicBalance &&
+    after.pendingBalance === 0n &&
+    after.availableBalance - before.availableBalance === amount;
+}
+
+export function isUnchangedReserveFundingBalance(
+  expected: ReserveFundingBalances,
+  current: ReserveFundingBalances
+): boolean {
+  return current.publicBalance === expected.publicBalance &&
+    current.pendingBalance === expected.pendingBalance &&
+    current.availableBalance === expected.availableBalance;
+}
