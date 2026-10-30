@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   canFundReserveWithOrdinaryUsdc,
+  canStartOrdinaryUsdcReserveFunding,
   getReserveFundingOutcomeMessage,
   gasTankAllowsReserveInitialization,
   getReserveActionErrorMessage,
@@ -71,6 +72,16 @@ describe("ReserveActions confidential funding outcomes", () => {
     expect(notice.text).toContain("deposited into the Reserve's confidential pending balance");
     expect(notice.text).toContain("applied to its available confidential balance");
     expect(notice.text).toContain("verified the finalized on-chain balances");
+  });
+});
+
+describe("ReserveActions Gas Tank funding gate", () => {
+  it("does not ask the administrator to wrap USDC until Gas Tank custody and balance are ready", () => {
+    expect(canStartOrdinaryUsdcReserveFunding("program_configured", true, "ready")).toBe(true);
+    expect(canStartOrdinaryUsdcReserveFunding("program_configured", true, "funding_required")).toBe(true);
+    expect(canStartOrdinaryUsdcReserveFunding("program_configured", true, "not_initialized")).toBe(false);
+    expect(canStartOrdinaryUsdcReserveFunding("program_configured", true, "unavailable")).toBe(false);
+    expect(canStartOrdinaryUsdcReserveFunding("account_missing", false, "ready")).toBe(false);
   });
 });
 
