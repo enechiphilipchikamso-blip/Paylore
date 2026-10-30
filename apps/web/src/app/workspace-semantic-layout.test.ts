@@ -16,7 +16,8 @@ const nestedWorkspacePages = [
   "./workspace/[workspaceId]/settings/deletion/page.tsx",
   "./workspace/[workspaceId]/settings/reserve/page.tsx",
   "./workspace/[workspaceId]/settings/page.tsx",
-  "./workspace/[workspaceId]/compensation/page.tsx"
+  "./workspace/[workspaceId]/compensation/page.tsx",
+  "./workspace/[workspaceId]/contributors/left/page.tsx"
 ];
 
 describe("workspace page landmarks", () => {

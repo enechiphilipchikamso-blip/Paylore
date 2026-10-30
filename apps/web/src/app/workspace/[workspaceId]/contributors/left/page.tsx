@@ -1,13 +1,8 @@
-"use client";
-
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 export default function ContributorLeftWorkspacePage() {
-  const router = useRouter();
-
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <section className="surface-card">
         <div className="state-callout" data-state="success" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
@@ -24,10 +19,10 @@ export default function ContributorLeftWorkspacePage() {
         <p>
           <Link href="/notifications">Review your notifications</Link>
         </p>
-        <button className="button" onClick={() => router.replace("/")} type="button">
-          Refresh and return to Paylore
-        </button>
+        <Link className="button" href="/">
+          Return to Paylore
+        </Link>
       </section>
-    </main>
+    </div>
   );
 }
