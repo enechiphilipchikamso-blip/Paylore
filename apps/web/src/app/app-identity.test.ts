@@ -11,7 +11,7 @@ const pngSignature = Buffer.from([
 async function readPublicAsset(path: string): Promise<Buffer> {
   const relativePath = path.startsWith("/") ? path.slice(1) : path;
   return readFile(
-    new URL(\`../../public/\${relativePath}\`, import.meta.url)
+    new URL("../../public/" + relativePath, import.meta.url)
   );
 }
 
@@ -161,7 +161,7 @@ describe("Paylore public dApp identity", () => {
 
     for (const path of expectedPaths) {
       const section = headerSections.find((match) => match.path === path);
-      expect(section, \`Missing public header rule for \${path}\`).toBeTruthy();
+      expect(section, "Missing public header rule for " + path).toBeTruthy();
       expect(section?.content).toContain(
         'Cache-Control = "public, max-age=0, must-revalidate"'
       );
