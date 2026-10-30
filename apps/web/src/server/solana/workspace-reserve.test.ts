@@ -259,6 +259,10 @@ vi.mock("@solana/kit", () => ({
     })
   })),
   createTransactionMessage: () => ({}),
+  appendTransactionMessageInstruction: (instruction: any, message: any) => ({
+    ...message,
+    instructions: [...(message.instructions ?? []), instruction]
+  }),
   createTransactionPlanner: (options: any) => async (plan: any) => {
     h.currentPlan = plan;
     const instructions: any[] = [];
