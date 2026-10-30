@@ -1,6 +1,7 @@
 import "server-only";
 
 import { address, createSolanaRpc, fetchEncodedAccount } from "@solana/kit";
+import { getActiveWorkspaceReserveFundingOperation } from "@paylore/database";
 import {
   fetchMint, fetchToken, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
@@ -106,6 +107,12 @@ async function resolveVerifiedContextP4(input: {
 }> {
   const amount = positiveAmountP4(input.amountBaseUnits);
   try {
+    if (input.requireSufficientSourceBalance) {
+      const activeOperation = await getActiveWorkspaceReserveFundingOperation(input.db, input.workspaceId);
+      if (activeOperation) {
+        throw new ReserveWrapFundingError("reserve_confidential_funding_in_progress", 409);
+      }
+    }
     const config = loadPayloreConfig();
     if (config.PAYLORE_NETWORK !== "devnet" ||
         config.TOKEN_WRAP_PROGRAM_ID !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress ||
