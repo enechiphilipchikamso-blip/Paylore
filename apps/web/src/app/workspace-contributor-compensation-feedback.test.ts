@@ -12,6 +12,7 @@ describe("contributor compensation action feedback", () => {
     expect(source).not.toMatch(/<button\b/);
 
     for (const action of [
+      "setup",
       "claim",
       "refresh",
       "apply",
@@ -32,6 +33,8 @@ describe("contributor compensation action feedback", () => {
     );
 
     expect(source).toContain('<ClaimAndCashOutStatus message={message} />');
+    expect(source).toContain("Setting up confidential account…");
+    expect(source).toContain("Settling confidential payroll…");
     expect(source).toContain('state: "success"');
     expect(source).toContain('state: "partial"');
     expect(source).toContain('state: "error"');

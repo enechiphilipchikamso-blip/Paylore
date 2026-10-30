@@ -687,11 +687,11 @@ export function ContributorCompensation({
               onClick={() => void runClaimAndCashOut()}
               type="button"
             >
-              {busyAction === "claim"
-        ? currentAccount?.status === "ready"
-          ? "Settling confidential payroll…"
-          : "Setting up confidential account…"
-        : "Claim & Cash Out"}
+              {busyAction === "setup"
+                ? "Setting up confidential account…"
+                : busyAction === "claim"
+                  ? "Settling confidential payroll…"
+                  : "Claim & Cash Out"}
             </BusyActionButton>
           </div>
         ) : null}
