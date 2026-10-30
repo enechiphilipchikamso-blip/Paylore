@@ -4061,6 +4061,19 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "apply_instruction_data": {
+          "name": "apply_instruction_data",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "apply_instruction_accounts": {
+          "name": "apply_instruction_accounts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         }
       },
       "indexes": {
