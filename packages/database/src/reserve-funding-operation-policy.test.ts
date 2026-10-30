@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canAdvanceReserveFundingStage } from "./reserve-funding-operation-policy";
+import {
+  canAdvanceReserveFundingStage,
+  isExactReserveFundingApply,
+  isExactReserveFundingDeposit,
+  isExactReserveFundingPreapply,
+  isUnchangedReserveFundingBalance
+} from "./reserve-funding-operation-policy";
 
 describe("Reserve funding operation state transitions", () => {
   it("allows only forward progress through pending, deposit and apply stages", () => {
@@ -24,5 +30,57 @@ describe("Reserve funding operation state transitions", () => {
     expect(canAdvanceReserveFundingStage("apply_submitted", "deposit_submitting")).toBe(false);
     expect(canAdvanceReserveFundingStage("finalized", "apply_submitting")).toBe(false);
     expect(canAdvanceReserveFundingStage("unknown", "finalized")).toBe(false);
+  });
+});
+
+
+describe("Reserve confidential balance transitions", () => {
+  const initial = {
+    publicBalance: 5_000_000n,
+    pendingBalance: 0n,
+    availableBalance: 2_000_000n
+  };
+
+  it("checks the full pending-to-available pre-apply transition", () => {
+    expect(isExactReserveFundingPreapply(
+      { ...initial, pendingBalance: 1_000_000n },
+      { ...initial, availableBalance: 3_000_000n }
+    )).toBe(true);
+    expect(isExactReserveFundingPreapply(
+      { ...initial, pendingBalance: 1_000_000n },
+      { ...initial, availableBalance: 2_000_000n }
+    )).toBe(false);
+  });
+
+  it("checks public debit, pending credit and unchanged available balance on deposit", () => {
+    expect(isExactReserveFundingDeposit(
+      initial,
+      { publicBalance: 4_000_000n, pendingBalance: 1_000_000n, availableBalance: 2_000_000n },
+      1_000_000n
+    )).toBe(true);
+    expect(isExactReserveFundingDeposit(
+      initial,
+      { publicBalance: 4_000_000n, pendingBalance: 999_999n, availableBalance: 2_000_000n },
+      1_000_000n
+    )).toBe(false);
+    expect(isExactReserveFundingDeposit(initial, initial, (1n << 48n))).toBe(false);
+  });
+
+  it("checks pending-to-available application without another public balance change", () => {
+    expect(isExactReserveFundingApply(
+      { publicBalance: 4_000_000n, pendingBalance: 1_000_000n, availableBalance: 2_000_000n },
+      { publicBalance: 4_000_000n, pendingBalance: 0n, availableBalance: 3_000_000n },
+      1_000_000n
+    )).toBe(true);
+    expect(isExactReserveFundingApply(
+      { publicBalance: 4_000_000n, pendingBalance: 1_000_000n, availableBalance: 2_000_000n },
+      { publicBalance: 4_000_000n, pendingBalance: 0n, availableBalance: 2_999_999n },
+      1_000_000n
+    )).toBe(false);
+  });
+
+  it("distinguishes an unchanged balance after a finalized failed transaction", () => {
+    expect(isUnchangedReserveFundingBalance(initial, { ...initial })).toBe(true);
+    expect(isUnchangedReserveFundingBalance(initial, { ...initial, publicBalance: 4_999_999n })).toBe(false);
   });
 });
