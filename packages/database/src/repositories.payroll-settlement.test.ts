@@ -77,6 +77,7 @@ describe("confidential payroll settlement repository", () => {
   it("does not start over when a matching settlement is already pending", async () => {
     const db = fakeDatabase([
       [{ workspaceId: common.workspaceId }],
+      [],
       [{ ...pendingAllocation, settlementSignature: null }]
     ]);
     await expect(beginPayrollSettlementAttempt(db.db, {
@@ -90,6 +91,7 @@ describe("confidential payroll settlement repository", () => {
   it("blocks a new claim while another allocation is recovering", async () => {
     const db = fakeDatabase([
       [{ workspaceId: common.workspaceId }],
+      [],
       [{
         id: "allocation-b", claimAddress: "claim-b", status: "unclaimed",
         transactionSignature: creationSignature, settlementSignature: null,
@@ -107,6 +109,7 @@ describe("confidential payroll settlement repository", () => {
   it("refuses to start a claim when that allocation is already reserved for recovery", async () => {
     const db = fakeDatabase([
       [{ workspaceId: common.workspaceId }],
+      [],
       [{ id: common.allocationId, claimAddress: common.claimAddress, status: "recovery_pending", transactionSignature: creationSignature, settlementSignature: null, settlementSourceAvailableBefore: null }]
     ]);
     await expect(beginPayrollSettlementAttempt(db.db, {
