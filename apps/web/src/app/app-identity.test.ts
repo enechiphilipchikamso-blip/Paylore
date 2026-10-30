@@ -11,7 +11,7 @@ const pngSignature = Buffer.from([
 async function readPublicAsset(path: string): Promise<Buffer> {
   const relativePath = path.startsWith("/") ? path.slice(1) : path;
   return readFile(
-    new URL(\`../../../../public/\${relativePath}\`, import.meta.url)
+    new URL(\`../../public/\${relativePath}\`, import.meta.url)
   );
 }
 
