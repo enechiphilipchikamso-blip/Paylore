@@ -41,6 +41,14 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_gas_tank_insufficient_funds:
       "The workspace Gas Tank does not have enough SOL to pay for the confidential Reserve transaction. Fund the Gas Tank, then continue this same operation; do not wrap USDC again.",
     reserve_gas_tank_not_initialized:
+      "Initialize and fund the workspace Gas Tank before approving this USDC wrap. No wrap transaction was submitted.",
+    reserve_gas_tank_balance_unavailable:
+      "Paylore could not verify the Gas Tank's current SOL balance. No USDC wrap was submitted. Check the Gas Tank and try again.",
+    reserve_gas_tank_key_mismatch:
+      "The Gas Tank signing address does not match its recorded key. Paylore stopped before asking your wallet to wrap USDC.",
+    reserve_gas_tank_custody_unavailable:
+      "Paylore could not unlock the Gas Tank signer. No USDC wrap was submitted. Check Gas Tank custody before trying again.",
+    reserve_gas_tank_not_initialized:
       "Initialize and fund the workspace Gas Tank before continuing confidential Reserve funding. Your verified wrapped-USDC deposit remains available to resume; do not wrap again.",
     reserve_confidential_funding_in_progress:
       "Another Reserve funding operation is being reconciled. Continue the existing operation after it finishes; do not submit another wrap.",
@@ -677,7 +685,8 @@ export function ReserveActions({
             <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
           )}
           {canFundReserveWithOrdinaryUsdc(onChainAccount.status, onChainAccount.confidentialTransferReady === true) &&
-          onChainAccount.tokenAccount ? (
+          onChainAccount.tokenAccount &&
+          (gasTankPreflight.status === "ready" || gasTankPreflight.status === "funding_required") ? (
             <section className="reserve-summary" aria-label="Fund Reserve with ordinary Circle USDC">
               <h3>Fund the Reserve with ordinary USDC</h3>
               <p>
