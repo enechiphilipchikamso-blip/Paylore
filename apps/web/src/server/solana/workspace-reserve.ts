@@ -15,13 +15,15 @@ import {
 } from "@solana-program/token-2022";
 import {
   deriveConfidentialKeys, fetchConfidentialTransferBalance,
+  getApplyConfidentialPendingBalanceInstructionFromToken,
   getCreateConfidentialTransferAccountInstructionPlan
 } from "@solana-program/token-2022/confidential";
 import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
-  advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,\n  getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
-  type Database
+  advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,
+  getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
+  type Database, type ReserveFundingOperationStage
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceGasTankKey } from "../gas-tank";
@@ -30,7 +32,8 @@ import {
   classifyReserveFundingState, hasApprovedConfidentialTransferAccount, verifyWorkspaceProgramState,
   type ReserveFundingState
 } from "./workspace-reserve-policy";
-import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";\nimport { readSolanaRpc } from "./rpc";
+import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
+import { readSolanaRpc } from "./rpc";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
@@ -160,7 +163,7 @@ async function executePlan(
         : message;
       const messageWithSigners = addSignersToTransactionMessage(
         [feePayerSigner, ...additionalSigners],
-        message
+        memoMessage
       );
       const signed = await partiallySignTransactionMessageWithSigners(messageWithSigners);
       const wire = getBase64EncodedWireTransaction(signed);
