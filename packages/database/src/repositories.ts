@@ -1,5 +1,9 @@
 import { canTransitionSubscriptionPaymentAttemptStatus, type SubscriptionPaymentAttemptStatus } from "./subscription-payment-attempt-policy";
-import { RESERVE_FUNDING_OPERATION_TYPE } from "./reserve-funding-operation-policy";
+import {
+  RESERVE_FUNDING_OPERATION_TYPE,
+  canAdvanceReserveFundingStage,
+  type ReserveFundingOperationStage
+} from "./reserve-funding-operation-policy";
 import {
   and,
   asc,
