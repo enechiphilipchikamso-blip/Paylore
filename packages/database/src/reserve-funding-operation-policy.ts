@@ -43,6 +43,91 @@ export function canAdvanceReserveFundingStage(
     transitions[current as ReserveFundingOperationStage].includes(next);
 }
 
+function fundingAttempt(value: unknown, retry: boolean): number {
+  const current = value === undefined
+    ? 0
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : null;
+  if (current === null) throw new Error("Invalid persisted Reserve funding attempt counter.");
+  const attempt = retry ? current + 1 : Math.max(current, 1);
+  if (attempt < 1 || attempt > 1000) {
+    throw new Error("Reserve confidential funding retry limit reached.");
+  }
+  return attempt;
+}
+
+/** Returns the confidential phases that need a fee reservation before this operation resumes. */
+export function getReserveFundingFeeReservationKeys(input: {
+  stage: string;
+  pendingBalance: bigint;
+  preapplyAttempt?: unknown;
+  depositAttempt?: unknown;
+  applyAttempt?: unknown;
+}): string[] {
+  const keys: string[] = [];
+  const addCurrent = (phase: "preapply" | "deposit" | "apply", attempt: unknown) => {
+    if (attempt === undefined) throw new Error("Missing active Reserve funding attempt counter.");
+    keys.push(phase + ":" + fundingAttempt(attempt, false));
+  };
+  const addNext = (phase: "preapply" | "deposit" | "apply", attempt: unknown) =>
+    keys.push(phase + ":" + fundingAttempt(attempt, true));
+
+  switch (input.stage) {
+    case "wrap_verified":
+      if (input.pendingBalance > 0n) addNext("preapply", input.preapplyAttempt);
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "preapply_submitting":
+      addCurrent("preapply", input.preapplyAttempt);
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "preapply_submitted":
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "preapply_failed":
+      addNext("preapply", input.preapplyAttempt);
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "preapply_finalized":
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "deposit_submitting":
+      addCurrent("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "deposit_submitted":
+      addNext("apply", input.applyAttempt);
+      break;
+    case "deposit_failed":
+      addNext("deposit", input.depositAttempt);
+      addNext("apply", input.applyAttempt);
+      break;
+    case "deposit_finalized":
+      addNext("apply", input.applyAttempt);
+      break;
+    case "apply_submitting":
+      addCurrent("apply", input.applyAttempt);
+      break;
+    case "apply_failed":
+      addNext("apply", input.applyAttempt);
+      break;
+    case "apply_submitted":
+    case "finalized":
+    case "wrap_pending":
+    case "wrap_failed":
+      break;
+    default:
+      throw new Error("Unknown Reserve confidential funding stage.");
+  }
+  return keys;
+}
+
 
 export type ReserveFundingBalances = {
   publicBalance: bigint;

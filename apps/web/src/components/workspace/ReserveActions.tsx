@@ -44,8 +44,12 @@ export function getReserveFundingOutcomeMessage(input: {
   const errors: Record<string, string> = {
     reserve_gas_tank_insufficient_funds:
       "The workspace Gas Tank does not have enough SOL to pay for the confidential Reserve transaction. Fund the Gas Tank, then continue this same operation; do not wrap USDC again.",
+    reserve_gas_tank_daily_sponsorship_limit:
+      "The workspace Gas Tank has reached its 24-hour sponsorship limit. Continue this same Reserve funding operation after earlier sponsored activity leaves the limit window; do not wrap USDC again.",
+    reserve_gas_tank_sponsorship_unavailable:
+      "Paylore could not safely reserve the Gas Tank fee budget. No confidential Reserve transaction was submitted. Check Gas Tank activity, then continue this same operation; do not wrap USDC again.",
     reserve_gas_tank_balance_unavailable:
-      "Paylore could not verify the Gas Tank's current SOL balance. No USDC wrap was submitted. Check the Gas Tank and try again.",
+      "Paylore could not verify the Gas Tank's current SOL balance. No confidential Reserve transaction was submitted. Check the Gas Tank and continue this same operation; do not wrap USDC again.",
     reserve_gas_tank_key_mismatch:
       "The Gas Tank signing address does not match its recorded key. Paylore stopped before asking your wallet to wrap USDC.",
     reserve_gas_tank_custody_unavailable:
@@ -54,6 +58,8 @@ export function getReserveFundingOutcomeMessage(input: {
       "Initialize and fund the workspace Gas Tank before continuing confidential Reserve funding. Your verified wrapped-USDC deposit remains available to resume; do not wrap again.",
     reserve_confidential_funding_in_progress:
       "Another Reserve funding operation is being reconciled. Continue the existing operation after it finishes; do not submit another wrap.",
+    reserve_confidential_funding_retry_limit:
+      "This Reserve funding operation has reached its retry limit. Paylore has stopped further transactions; contact support with the current operation details before continuing.",
     reserve_confidential_funding_public_balance_insufficient:
       "The Reserve's public wrapped-USDC balance is below the amount to deposit. Refresh its finalized balance before continuing.",
     reserve_confidential_account_not_ready:

@@ -42,6 +42,36 @@ describe("ReserveActions ordinary-USDC funding gate", () => {
 });
 
 describe("ReserveActions confidential funding outcomes", () => {
+  it("explains when the Reserve funding retry limit is reached", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "error",
+      errorCode: "reserve_confidential_funding_retry_limit"
+    });
+    expect(notice.state).toBe("error");
+    expect(notice.text).toContain("reached its retry limit");
+    expect(notice.text).toContain("contact support");
+  });
+
+  it("explains when the Gas Tank reaches the 24-hour sponsorship ceiling", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "error",
+      errorCode: "reserve_gas_tank_daily_sponsorship_limit"
+    });
+    expect(notice.state).toBe("error");
+    expect(notice.text).toContain("24-hour sponsorship limit");
+    expect(notice.text).toContain("continue this same Reserve funding operation");
+    expect(notice.text).toContain("do not wrap USDC again");
+  });
+
+  it("does not suggest another wallet wrap when the fee reservation service is unavailable", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "error",
+      errorCode: "reserve_gas_tank_sponsorship_unavailable"
+    });
+    expect(notice.state).toBe("error");
+    expect(notice.text).toContain("No confidential Reserve transaction was submitted");
+    expect(notice.text).toContain("do not wrap USDC again");
+  });
   it("shows a distinct recoverable status while the public wrap is awaiting finality", () => {
     const notice = getReserveFundingOutcomeMessage({
       status: "pending",

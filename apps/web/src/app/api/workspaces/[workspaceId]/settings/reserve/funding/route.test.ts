@@ -359,6 +359,22 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
     expect(mocks.completeWorkspaceReserveConfidentialFunding).not.toHaveBeenCalled();
   });
 
+  it("returns the daily Gas Tank sponsorship limit without claiming funding is complete", async () => {
+    mocks.completeWorkspaceReserveConfidentialFunding.mockRejectedValue(
+      new mocks.MockWorkspaceReserveInitializationError("reserve_gas_tank_daily_sponsorship_limit", 429)
+    );
+    const response = await POST(request({
+      action: "verify",
+      amountBaseUnits: "1000000",
+      signature: "s".repeat(88)
+    }), { params });
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "reserve_gas_tank_daily_sponsorship_limit",
+      retryable: false
+    });
+  });
+
   it("reports an insufficient Gas Tank balance without claiming funding is complete", async () => {
     mocks.completeWorkspaceReserveConfidentialFunding.mockRejectedValue(
       new mocks.MockWorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409)

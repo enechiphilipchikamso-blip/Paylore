@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertWorkspaceReserveFundingGasTankReady,
+  completeWorkspaceReserveConfidentialFunding,
   getWorkspaceConfidentialReserveSnapshot,
   initializeWorkspaceConfidentialReserveAccount,
   WorkspaceReserveInitializationError
@@ -42,7 +43,10 @@ const h = vi.hoisted(() => ({
   configCalls: 0,
   attachCalls: [] as Array<{phase:string;signature:string}>,
   clearCalls: [] as Array<{phase:string;signature:string}>,
-  signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">
+  signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">,
+  feeReservationCalls: [] as unknown[],
+  feeReservationResult: "reserved" as string,
+  currentFeeReservationOperationData: null as Record<string, unknown> | null
 }));
 
 function sha(value: string): Uint8Array {
@@ -122,7 +126,10 @@ function reset(): void {
     configCalls: 0,
     attachCalls: [],
     clearCalls: [],
-    signatureFinality: {}
+    signatureFinality: {},
+    feeReservationCalls: [],
+    feeReservationResult: "reserved",
+    currentFeeReservationOperationData: null
   });
 }
 
@@ -349,6 +356,46 @@ vi.mock("@paylore/database", () => ({
     confidentialAccountSetupSignature: null,
     programReserveSetupSignature: null
   })),
+  beginWorkspaceReserveFundingOperation: vi.fn(async (_db: unknown, input: any) => ({
+    status: "existing",
+    operation: {
+      id: "reserve-funding-operation",
+      status: "preparing",
+      feeLamports: "0",
+      operationData: { ...input.operationData, stage: input.initialStage ?? "wrap_verified" }
+    }
+  })),
+  getReserveFundingFeeReservationKeys: vi.fn((input: any) =>
+    input.pendingBalance > 0n
+      ? ["preapply:1", "deposit:1", "apply:1"]
+      : ["deposit:1", "apply:1"]
+  ),
+  reserveWorkspaceReserveFundingFeeBudget: vi.fn(async (_db: unknown, input: unknown) => {
+    h.feeReservationCalls.push(input);
+    if (h.feeReservationResult === "reserved" || h.feeReservationResult === "duplicate") {
+      const payload = input as { reservationKeys: string[] };
+      h.currentFeeReservationOperationData = {
+        wrapSignature: "s".repeat(88),
+        walletAddress: h.authority,
+        stage: "wrap_verified",
+        feeBudgetReserved: true,
+        actualFeeLamports: "0",
+        reservedFeeBudgetLamports: String(payload.reservationKeys.length * 100_000),
+        feeReservationKeys: payload.reservationKeys,
+        feeReservationSettledKeys: [],
+        feeBudgetSettledCount: 0
+      };
+    }
+    return h.feeReservationResult;
+  }),
+  getWorkspaceGasTankOperation: vi.fn(async () => h.currentFeeReservationOperationData
+    ? ({
+        id: "reserve-funding-operation",
+        status: "preparing",
+        operationData: h.currentFeeReservationOperationData
+      })
+    : null),
+  advanceWorkspaceReserveFundingOperation: vi.fn(async () => "updated"),
   attachWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { workspaceId: string; phase: string; signature: string }) => {
     h.attachCalls.push(input);
     return "attached";
@@ -419,6 +466,120 @@ describe("ordinary-USDC Reserve funding Gas Tank preflight", () => {
       statusCode: 409
     });
     expect(h.gasTankBalanceCalls).toBe(0);
+  });
+});
+
+describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
+  it("reserves deposit and apply fees before any confidential transaction can be sent", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.feeReservationResult = "insufficient_balance";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(1);
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      workspaceId: "workspace-a",
+      reservationKeys: ["deposit:1", "apply:1"],
+      feePerTransactionLamports: "100000",
+      availableBalanceLamports: "1000000000"
+    });
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("includes the earlier pending-balance apply phase in the same atomic fee reservation", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.pendingBalanceBaseUnits = 250_000n;
+    h.feeReservationResult = "insufficient_balance";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      reservationKeys: ["preapply:1", "deposit:1", "apply:1"]
+    });
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("stops before confidential submission when the daily Gas Tank sponsorship limit is reached", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.feeReservationResult = "daily_limit";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_daily_sponsorship_limit",
+      statusCode: 429
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("reconciles the committed fee reservation before checking the Reserve's available public balance", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 0n;
+    h.feeReservationResult = "reserved";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_confidential_funding_public_balance_insufficient",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(1);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("does not reserve or submit when the live Gas Tank balance cannot be read", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.gasTankBalanceError = new Error("RPC unavailable");
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(0);
+    expect(h.submittedSteps).toEqual([]);
   });
 });
 

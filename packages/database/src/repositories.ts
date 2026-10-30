@@ -6862,6 +6862,196 @@ export async function beginWorkspaceReserveFundingOperation(
 }
 
 /** A row lock and legal stage transition prevent two retries from submitting the same Reserve action. */
+/**
+ * Reserves every upcoming confidential Reserve transaction under the shared Gas Tank lock.
+ * The row lock serializes this commitment with payroll and contributor sponsorships.
+ */
+export async function reserveWorkspaceReserveFundingFeeBudget(
+  db: Database,
+  input: {
+    workspaceId: string;
+    operationId: string;
+    reservationKeys: string[];
+    feePerTransactionLamports: string;
+    availableBalanceLamports: string;
+    maxDailyFeeLamports: string;
+    maxDailyOperations: number;
+    since: Date;
+  }
+): Promise<"reserved" | "duplicate" | "insufficient_balance" | "daily_limit" | "conflict" | "gas_tank_not_initialized"> {
+  const validLamports = (value: string) =>
+    /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) < (1n << 64n);
+  const validKey = (value: string) =>
+    /^(preapply|deposit|apply):[1-9][0-9]{0,3}$/.test(value);
+  if (
+    !Array.isArray(input.reservationKeys) ||
+    input.reservationKeys.length < 1 ||
+    input.reservationKeys.length > 1000 ||
+    input.reservationKeys.some((key) => typeof key !== "string" || !validKey(key)) ||
+    new Set(input.reservationKeys).size !== input.reservationKeys.length ||
+    !validLamports(input.feePerTransactionLamports) ||
+    BigInt(input.feePerTransactionLamports) === 0n ||
+    !validLamports(input.availableBalanceLamports) ||
+    !validLamports(input.maxDailyFeeLamports) ||
+    !Number.isSafeInteger(input.maxDailyOperations) ||
+    input.maxDailyOperations < 1 ||
+    !Number.isFinite(input.since.getTime())
+  ) return "conflict";
+
+  const feePerTransaction = BigInt(input.feePerTransactionLamports);
+  return db.transaction(async (tx) => {
+    const tanks = await tx.select({ workspaceId: workspaceGasTanks.workspaceId })
+      .from(workspaceGasTanks)
+      .where(eq(workspaceGasTanks.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!tanks[0]) return "gas_tank_not_initialized";
+
+    const operationRows = await tx.select().from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE)
+    )).for("update").limit(1);
+    const operation = operationRows[0];
+    if (!operation || operation.status !== "preparing") return "conflict";
+
+    const current = operation.operationData !== null &&
+      typeof operation.operationData === "object" &&
+      !Array.isArray(operation.operationData)
+      ? operation.operationData as Record<string, unknown>
+      : {};
+    if (
+      current.stage === "wrap_pending" ||
+      current.stage === "wrap_failed" ||
+      current.stage === "finalized"
+    ) return "conflict";
+    if (
+      current.feePerTransactionLamports !== undefined &&
+      current.feePerTransactionLamports !== input.feePerTransactionLamports
+    ) return "conflict";
+
+    const existingKeys = Array.isArray(current.feeReservationKeys)
+      ? current.feeReservationKeys
+      : [];
+    const settledCount = typeof current.feeBudgetSettledCount === "number" &&
+      Number.isSafeInteger(current.feeBudgetSettledCount) &&
+      current.feeBudgetSettledCount >= 0
+      ? current.feeBudgetSettledCount
+      : 0;
+    const settledKeys = Array.isArray(current.feeReservationSettledKeys)
+      ? current.feeReservationSettledKeys
+      : existingKeys.slice(0, settledCount);
+    if (
+      existingKeys.length > 1000 ||
+      existingKeys.some((key) => typeof key !== "string" || !validKey(key)) ||
+      new Set(existingKeys).size !== existingKeys.length ||
+      settledCount > existingKeys.length ||
+      settledKeys.some((key) => typeof key !== "string" || !existingKeys.includes(key)) ||
+      new Set(settledKeys).size !== settledKeys.length ||
+      (Array.isArray(current.feeReservationSettledKeys) &&
+        settledKeys.length !== settledCount)
+    ) return "conflict";
+
+    let attemptCount = 0;
+    for (const name of ["preapplyAttempt", "depositAttempt", "applyAttempt"]) {
+      const value = current[name];
+      if (value === undefined) continue;
+      if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 1000) {
+        return "conflict";
+      }
+      attemptCount += value as number;
+    }
+    const activeSubmission = typeof current.stage === "string" && current.stage.endsWith("_submitting")
+      ? 1
+      : 0;
+    const derivedUnreservedCount = Math.max(0, attemptCount - activeSubmission - existingKeys.length);
+    if (current.unreservedFeeOperationCount !== undefined &&
+        (!Number.isSafeInteger(current.unreservedFeeOperationCount) ||
+          (current.unreservedFeeOperationCount as number) < 0 ||
+          (current.unreservedFeeOperationCount as number) > 1000)) return "conflict";
+    const storedUnreservedCount = typeof current.unreservedFeeOperationCount === "number"
+      ? current.unreservedFeeOperationCount
+      : 0;
+    const unreservedFeeOperationCount = Math.max(derivedUnreservedCount, storedUnreservedCount);
+
+    const newKeys = input.reservationKeys.filter((key) => !existingKeys.includes(key));
+    if (newKeys.length === 0) return "duplicate";
+
+    const recent = await tx.select({
+      status: gasTankOperations.status,
+      feeLamports: gasTankOperations.feeLamports,
+      failureCode: gasTankOperations.failureCode,
+      operationData: gasTankOperations.operationData
+    }).from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      or(
+        gte(gasTankOperations.createdAt, input.since),
+        gte(gasTankOperations.updatedAt, input.since)
+      )
+    )).limit(1001);
+    if (recent.length > 1000) return "daily_limit";
+
+    const usage = summarizeGasTankSponsorshipBudget({
+      rows: recent,
+      reservedFeeLamports: input.feePerTransactionLamports,
+      since: input.since
+    });
+    const requestedReservation = BigInt(newKeys.length) * feePerTransaction;
+    const reservedRent = sumPreparedSponsoredRentReservations(recent);
+    const available = BigInt(input.availableBalanceLamports);
+    if (available < usage.reservedFeesLamports + reservedRent + requestedReservation) {
+      return "insufficient_balance";
+    }
+    if (
+      usage.operationCount + newKeys.length > input.maxDailyOperations ||
+      usage.feeLamports + requestedReservation >= BigInt(input.maxDailyFeeLamports)
+    ) return "daily_limit";
+
+    const rowFee = operation.feeLamports !== null && validLamports(operation.feeLamports)
+      ? BigInt(operation.feeLamports)
+      : null;
+    const actualFee = current.actualFeeLamports === undefined
+      ? rowFee ?? 0n
+      : validLamports(String(current.actualFeeLamports))
+        ? BigInt(String(current.actualFeeLamports))
+        : null;
+    const currentReserved = current.feeBudgetReserved === true
+      ? (typeof current.reservedFeeBudgetLamports === "string" &&
+          validLamports(current.reservedFeeBudgetLamports)
+        ? BigInt(current.reservedFeeBudgetLamports)
+        : rowFee)
+      : 0n;
+    if (actualFee === null || currentReserved === null) return "conflict";
+
+    const nextReserved = currentReserved + requestedReservation;
+    const nextTotal = actualFee + nextReserved;
+    if (nextTotal >= (1n << 64n)) return "conflict";
+
+    const updated = await tx.update(gasTankOperations).set({
+      feeLamports: nextReserved.toString(),
+      operationData: {
+        ...current,
+        feeBudgetReserved: true,
+        actualFeeLamports: actualFee.toString(),
+        reservedFeeBudgetLamports: nextReserved.toString(),
+        feePerTransactionLamports: input.feePerTransactionLamports,
+        feeReservationKeys: [...existingKeys, ...newKeys],
+        feeReservationSettledKeys: settledKeys,
+        feeBudgetSettledCount: settledKeys.length,
+        feeBudgetSettledAt: null,
+        unreservedFeeOperationCount
+      },
+      updatedAt: new Date()
+    }).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE),
+      eq(gasTankOperations.status, "preparing")
+    )).returning({ id: gasTankOperations.id });
+    return updated[0] ? "reserved" : "conflict";
+  });
+}
+
 export async function advanceWorkspaceReserveFundingOperation(
   db: Database,
   input: {
@@ -6871,15 +7061,29 @@ export async function advanceWorkspaceReserveFundingOperation(
     nextStage: ReserveFundingOperationStage;
     operationData?: Record<string, unknown>;
     feeLamportsAdded?: string;
+    feeReservationConsumedLamports?: string;
+    feeReservationKey?: string;
   }
 ): Promise<"updated" | "duplicate" | "conflict" | "not_found"> {
+  const validLamports = (value: string) =>
+    /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) < (1n << 64n);
   if (
     !canAdvanceReserveFundingStage(input.expectedStage, input.nextStage) ||
-    (input.feeLamportsAdded !== undefined &&
-      !/^(0|[1-9][0-9]*)$/.test(input.feeLamportsAdded))
+    (input.feeLamportsAdded !== undefined && !validLamports(input.feeLamportsAdded)) ||
+    (input.feeReservationConsumedLamports !== undefined &&
+      !validLamports(input.feeReservationConsumedLamports)) ||
+    (input.feeReservationKey !== undefined &&
+      !/^(preapply|deposit|apply):[1-9][0-9]{0,3}$/.test(input.feeReservationKey))
   ) return "conflict";
 
   return db.transaction(async (tx) => {
+    const tanks = await tx.select({ workspaceId: workspaceGasTanks.workspaceId })
+      .from(workspaceGasTanks)
+      .where(eq(workspaceGasTanks.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!tanks[0]) return "not_found";
+
     const rows = await tx.select().from(gasTankOperations).where(and(
       eq(gasTankOperations.workspaceId, input.workspaceId),
       eq(gasTankOperations.id, input.operationId),
@@ -6894,9 +7098,46 @@ export async function advanceWorkspaceReserveFundingOperation(
       : {};
     if (current.stage === input.nextStage) {
       const patchMatches = Object.entries(input.operationData ?? {}).every(([key, value]) =>
-        JSON.stringify(current[key]) === JSON.stringify(value)
+        key.endsWith("At") || JSON.stringify(current[key]) === JSON.stringify(value)
       );
-      return patchMatches ? "duplicate" : "conflict";
+      const keys = Array.isArray(current.feeReservationKeys) ? current.feeReservationKeys : [];
+      const settledCount = typeof current.feeBudgetSettledCount === "number" &&
+        Number.isSafeInteger(current.feeBudgetSettledCount) &&
+        current.feeBudgetSettledCount >= 0
+        ? current.feeBudgetSettledCount
+        : 0;
+      const settled = Array.isArray(current.feeReservationSettledKeys)
+        ? current.feeReservationSettledKeys
+        : keys.slice(0, settledCount);
+      const perTransaction = typeof current.feePerTransactionLamports === "string" &&
+        validLamports(current.feePerTransactionLamports)
+        ? BigInt(current.feePerTransactionLamports)
+        : null;
+      const consumedAmount = input.feeReservationConsumedLamports === undefined
+        ? null
+        : validLamports(input.feeReservationConsumedLamports)
+          ? BigInt(input.feeReservationConsumedLamports)
+          : null;
+      const actualFee = current.actualFeeLamports === undefined
+        ? null
+        : validLamports(String(current.actualFeeLamports))
+          ? BigInt(String(current.actualFeeLamports))
+          : null;
+      const reservationMatches = input.feeReservationKey === undefined
+        ? input.feeReservationConsumedLamports === undefined
+        : perTransaction !== null &&
+          consumedAmount === perTransaction &&
+          keys.includes(input.feeReservationKey) &&
+          settled.includes(input.feeReservationKey);
+      const settledEvidenceValid = keys.length <= 1000 &&
+        settledCount <= keys.length &&
+        settled.length === settledCount &&
+        settled.every((key) => typeof key === "string" && keys.includes(key));
+      const feeMatches = input.feeLamportsAdded === undefined ||
+        (actualFee !== null && actualFee >= BigInt(input.feeLamportsAdded));
+      return settledEvidenceValid && patchMatches && reservationMatches && feeMatches
+        ? "duplicate"
+        : "conflict";
     }
     if (
       operation.status !== "preparing" ||
@@ -6904,13 +7145,96 @@ export async function advanceWorkspaceReserveFundingOperation(
       !canAdvanceReserveFundingStage(String(current.stage ?? ""), input.nextStage)
     ) return "conflict";
 
-    const currentFee = operation.feeLamports !== null &&
-      /^(0|[1-9][0-9]*)$/.test(operation.feeLamports)
+    const currentFee = operation.feeLamports !== null && validLamports(operation.feeLamports)
       ? BigInt(operation.feeLamports)
       : null;
     if (currentFee === null) return "conflict";
-    const nextFee = currentFee + BigInt(input.feeLamportsAdded ?? "0");
-    if (nextFee >= (1n << 64n)) return "conflict";
+    const feeAdded = BigInt(input.feeLamportsAdded ?? "0");
+    const feeConsumed = BigInt(input.feeReservationConsumedLamports ?? "0");
+    let nextFee = currentFee + feeAdded;
+    let nextOperationData: Record<string, unknown> = {
+      ...current,
+      ...(input.operationData ?? {}),
+      stage: input.nextStage
+    };
+
+    const hasFeeBudget = current.feeBudgetReserved === true ||
+      Array.isArray(current.feeReservationKeys) ||
+      current.actualFeeLamports !== undefined;
+    if (hasFeeBudget) {
+      const keys = Array.isArray(current.feeReservationKeys) ? current.feeReservationKeys : [];
+      if (keys.some((key) => typeof key !== "string") || new Set(keys).size !== keys.length) {
+        return "conflict";
+      }
+      const settledCount = typeof current.feeBudgetSettledCount === "number" &&
+        Number.isSafeInteger(current.feeBudgetSettledCount) &&
+        current.feeBudgetSettledCount >= 0
+        ? current.feeBudgetSettledCount
+        : 0;
+      const settled = Array.isArray(current.feeReservationSettledKeys)
+        ? current.feeReservationSettledKeys
+        : keys.slice(0, settledCount);
+      if (
+        settled.some((key) => typeof key !== "string" || !keys.includes(key)) ||
+        new Set(settled).size !== settled.length
+      ) return "conflict";
+
+      const perTransaction = typeof current.feePerTransactionLamports === "string" &&
+        validLamports(current.feePerTransactionLamports)
+        ? BigInt(current.feePerTransactionLamports)
+        : null;
+      const actualFee = current.actualFeeLamports === undefined
+        ? 0n
+        : validLamports(String(current.actualFeeLamports))
+          ? BigInt(String(current.actualFeeLamports))
+          : null;
+      const reserved = current.feeBudgetReserved === true
+        ? (typeof current.reservedFeeBudgetLamports === "string" &&
+            validLamports(current.reservedFeeBudgetLamports)
+          ? BigInt(current.reservedFeeBudgetLamports)
+          : currentFee)
+        : 0n;
+      if (perTransaction === null || perTransaction === 0n || actualFee === null) {
+        return "conflict";
+      }
+
+      if (feeConsumed > 0n) {
+        const key = input.feeReservationKey ??
+          keys.find((candidate) => !settled.includes(candidate));
+        if (
+          current.feeBudgetReserved !== true ||
+          !key ||
+          !keys.includes(key) ||
+          settled.includes(key) ||
+          feeConsumed !== perTransaction ||
+          reserved < feeConsumed
+        ) return "conflict";
+        settled.push(key);
+      } else if (input.feeReservationKey !== undefined) {
+        return "conflict";
+      }
+
+      const nextActual = actualFee + feeAdded;
+      if (nextActual >= (1n << 64n)) return "conflict";
+      let nextReserved = reserved - feeConsumed;
+      if (input.nextStage === "finalized") nextReserved = 0n;
+      nextFee = nextReserved > 0n ? nextReserved : nextActual;
+      if (nextFee >= (1n << 64n)) return "conflict";
+      nextOperationData = {
+        ...nextOperationData,
+        actualFeeLamports: nextActual.toString(),
+        reservedFeeBudgetLamports: nextReserved.toString(),
+        feeBudgetReserved: nextReserved > 0n,
+        feeReservationSettledKeys: settled,
+        feeBudgetSettledCount: settled.length,
+        ...(nextReserved === 0n
+          ? { feeBudgetSettledAt: new Date().toISOString() }
+          : {})
+      };
+    } else if (feeConsumed > 0n || input.feeReservationKey !== undefined || nextFee >= (1n << 64n)) {
+      return "conflict";
+    }
+
     const updated = await tx.update(gasTankOperations).set({
       status: input.nextStage === "finalized"
         ? "finalized"
@@ -6918,11 +7242,7 @@ export async function advanceWorkspaceReserveFundingOperation(
           ? "failed"
           : "preparing",
       feeLamports: nextFee.toString(),
-      operationData: {
-        ...current,
-        ...(input.operationData ?? {}),
-        stage: input.nextStage
-      },
+      operationData: nextOperationData,
       updatedAt: new Date()
     }).where(and(
       eq(gasTankOperations.workspaceId, input.workspaceId),
@@ -7043,7 +7363,7 @@ export async function beginGasTankOperationAttempt(
     }
     if (
       dailyOperations >= input.maxDailyOperations ||
-      dailyFees + requestedReservation > BigInt(input.maxDailyFeeLamports)
+      dailyFees + requestedReservation >= BigInt(input.maxDailyFeeLamports)
     ) {
       return { status: "gas_tank_daily_sponsorship_limit" as const, operation: existing ?? null };
     }

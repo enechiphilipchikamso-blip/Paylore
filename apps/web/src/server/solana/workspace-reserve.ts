@@ -22,11 +22,18 @@ import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler"
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
   advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,
+  getReserveFundingFeeReservationKeys, getWorkspaceGasTankOperation,
+  reserveWorkspaceReserveFundingFeeBudget,
   getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
   isExactReserveFundingApply, isExactReserveFundingDeposit,
   isExactReserveFundingPreapply, isUnchangedReserveFundingBalance,
   type Database, type ReserveFundingOperationStage
 } from "@paylore/database";
+import {
+  MAX_DAILY_SPONSORED_FEE_LAMPORTS,
+  MAX_DAILY_SPONSORED_OPERATIONS,
+  MAX_SPONSORED_FEE_LAMPORTS
+} from "../gas-tank-sponsorship-policy";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceGasTankKey } from "../gas-tank";
 import { withWorkspaceReserveKey } from "../reserve";
@@ -1046,11 +1053,25 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
         throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
       }
       let stage = String(operationData.stage ?? "");
+      const feeReservationKeyFor = (
+        phase: "preapply" | "deposit" | "apply",
+        attempt: unknown
+      ): string | undefined => {
+        const key = phase + ":" + String(attempt);
+        const keys = Array.isArray(operationData.feeReservationKeys)
+          ? operationData.feeReservationKeys as unknown[]
+          : [];
+        const settled = Array.isArray(operationData.feeReservationSettledKeys)
+          ? operationData.feeReservationSettledKeys as unknown[]
+          : [];
+        return keys.includes(key) && !settled.includes(key) ? key : undefined;
+      };
       const save = async (
         expectedStage: ReserveFundingOperationStage,
         nextStage: ReserveFundingOperationStage,
         patch: Record<string, unknown> = {},
-        feeLamportsAdded = "0"
+        feeLamportsAdded = "0",
+        inputFeeReservationKey?: string
       ) => {
         const saved = await advanceWorkspaceReserveFundingOperation(input.db, {
           workspaceId: input.workspaceId,
@@ -1058,12 +1079,36 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           expectedStage,
           nextStage,
           operationData: patch,
-          feeLamportsAdded
+          feeLamportsAdded,
+          ...(inputFeeReservationKey
+            ? {
+                feeReservationKey: inputFeeReservationKey,
+                feeReservationConsumedLamports: MAX_SPONSORED_FEE_LAMPORTS.toString()
+              }
+            : {})
         });
         if (saved !== "updated" && saved !== "duplicate") {
           throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
         }
         operationData = { ...operationData, ...patch, stage: nextStage };
+        if (Array.isArray(operationData.feeReservationKeys)) {
+          const settled = Array.isArray(operationData.feeReservationSettledKeys)
+            ? operationData.feeReservationSettledKeys as string[]
+            : [];
+          if (inputFeeReservationKey && !settled.includes(inputFeeReservationKey)) {
+            operationData.feeReservationSettledKeys = [...settled, inputFeeReservationKey];
+            operationData.feeBudgetSettledCount = settled.length + 1;
+          }
+          const actual = BigInt(String(operationData.actualFeeLamports ?? "0")) +
+            BigInt(feeLamportsAdded);
+          const reservedBefore = BigInt(String(operationData.reservedFeeBudgetLamports ?? "0"));
+          const reservedAfter = nextStage === "finalized"
+            ? 0n
+            : reservedBefore - (inputFeeReservationKey ? MAX_SPONSORED_FEE_LAMPORTS : 0n);
+          operationData.actualFeeLamports = actual.toString();
+          operationData.reservedFeeBudgetLamports = (reservedAfter > 0n ? reservedAfter : 0n).toString();
+          operationData.feeBudgetReserved = reservedAfter > 0n;
+        }
         stage = nextStage;
       };
       const pendingResult = (): WorkspaceReserveConfidentialFundingResult => ({
@@ -1083,6 +1128,118 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
             : "apply",
         stage: stage as ReserveFundingOperationStage
       });
+
+      let upcomingReservationKeys: string[];
+      try {
+        upcomingReservationKeys = getReserveFundingFeeReservationKeys({
+          stage,
+          pendingBalance: pendingBefore,
+          preapplyAttempt: operationData.preapplyAttempt,
+          depositAttempt: operationData.depositAttempt,
+          applyAttempt: operationData.applyAttempt
+        });
+      } catch (error) {
+        const retryLimit = error instanceof Error &&
+          error.message === "Reserve confidential funding retry limit reached.";
+        throw new WorkspaceReserveInitializationError(
+          retryLimit
+            ? "reserve_confidential_funding_retry_limit"
+            : "reserve_confidential_funding_operation_conflict",
+          409
+        );
+      }
+      const existingReservationKeys = Array.isArray(operationData.feeReservationKeys)
+        ? operationData.feeReservationKeys as string[]
+        : [];
+      const newReservationKeys = upcomingReservationKeys.filter(
+        (key) => !existingReservationKeys.includes(key)
+      );
+      if (newReservationKeys.length > 0) {
+        let liveBalance: bigint;
+        try {
+          const balance = await context.rpc.getBalance(
+            address(context.gasTankAddress),
+            { commitment: "confirmed" }
+          ).send();
+          liveBalance = BigInt(balance.value);
+          if (liveBalance < 0n) throw new Error("Gas Tank balance was negative.");
+        } catch {
+          throw new WorkspaceReserveInitializationError("reserve_gas_tank_balance_unavailable", 503);
+        }
+
+        let reservationStatus: Awaited<ReturnType<typeof reserveWorkspaceReserveFundingFeeBudget>>;
+        try {
+          reservationStatus = await reserveWorkspaceReserveFundingFeeBudget(input.db, {
+            workspaceId: input.workspaceId,
+            operationId: begun.operation.id,
+            reservationKeys: newReservationKeys,
+            feePerTransactionLamports: MAX_SPONSORED_FEE_LAMPORTS.toString(),
+            availableBalanceLamports: liveBalance.toString(),
+            maxDailyFeeLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS.toString(),
+            maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
+            since: new Date(Date.now() - 24 * 60 * 60 * 1000)
+          });
+        } catch {
+          throw new WorkspaceReserveInitializationError("reserve_gas_tank_sponsorship_unavailable", 503);
+        }
+        if (reservationStatus === "insufficient_balance") {
+          throw new WorkspaceReserveInitializationError("reserve_gas_tank_insufficient_funds", 409);
+        }
+        if (reservationStatus === "daily_limit") {
+          throw new WorkspaceReserveInitializationError("reserve_gas_tank_daily_sponsorship_limit", 429);
+        }
+        if (reservationStatus === "gas_tank_not_initialized") {
+          throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
+        }
+        if (reservationStatus !== "reserved" && reservationStatus !== "duplicate") {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
+        }
+        const refreshedOperation = await getWorkspaceGasTankOperation(
+          input.db,
+          input.workspaceId,
+          begun.operation.id
+        );
+        const refreshedData = object(refreshedOperation?.operationData);
+        const refreshedReservationKeys = Array.isArray(refreshedData?.feeReservationKeys)
+          ? refreshedData.feeReservationKeys as string[]
+          : null;
+        if (!refreshedOperation || !refreshedData ||
+            refreshedOperation.status !== "preparing" ||
+            refreshedData.wrapSignature !== input.wrapSignature ||
+            refreshedData.walletAddress !== input.fallbackAuthorityAddress ||
+            refreshedData.stage !== stage ||
+            !refreshedReservationKeys ||
+            newReservationKeys.some((key) => !refreshedReservationKeys.includes(key))) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
+        }
+        operationData = { ...operationData, ...refreshedData };
+
+        const actualFee = typeof operationData.actualFeeLamports === "string" &&
+          /^(0|[1-9][0-9]*)$/.test(operationData.actualFeeLamports)
+          ? BigInt(operationData.actualFeeLamports)
+          : BigInt(begun.operation.feeLamports ?? "0");
+        const currentReserved = operationData.feeBudgetReserved === true &&
+          typeof operationData.reservedFeeBudgetLamports === "string" &&
+          /^(0|[1-9][0-9]*)$/.test(operationData.reservedFeeBudgetLamports)
+          ? BigInt(operationData.reservedFeeBudgetLamports)
+          : 0n;
+        const nextReserved = currentReserved +
+          BigInt(newReservationKeys.length) * MAX_SPONSORED_FEE_LAMPORTS;
+        operationData = {
+          ...operationData,
+          feeBudgetReserved: nextReserved > 0n,
+          actualFeeLamports: actualFee.toString(),
+          reservedFeeBudgetLamports: nextReserved.toString(),
+          feePerTransactionLamports: MAX_SPONSORED_FEE_LAMPORTS.toString(),
+          feeReservationKeys: [...existingReservationKeys, ...newReservationKeys],
+          feeReservationSettledKeys: Array.isArray(operationData.feeReservationSettledKeys)
+            ? operationData.feeReservationSettledKeys
+            : [],
+          feeBudgetSettledCount: typeof operationData.feeBudgetSettledCount === "number"
+            ? operationData.feeBudgetSettledCount
+            : 0
+        };
+      }
       const readBalances = async () => {
         const [token, confidential] = await Promise.all([
           fetchToken(context.rpc, address(context.reserveTokenAddress)),
@@ -1255,7 +1412,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           await save("preapply_submitted", "preapply_failed", {
             preapplyErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
             preapplyFailedAt: new Date().toISOString()
-          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          }, transaction ? await readReserveFundingFee(transaction) : "0",
+            feeReservationKeyFor("preapply", operationData.preapplyAttempt));
           return pendingResult();
         }
         if (!transaction || !isExactReserveFundingPreapply(baseline, balances)) {
@@ -1265,7 +1423,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           publicBeforeDepositBaseUnits: balances.publicBalance.toString(),
           availableBeforeDepositBaseUnits: balances.availableBalance.toString(),
           preapplyFinalizedAt: new Date().toISOString()
-        }, await readReserveFundingFee(transaction));
+        }, await readReserveFundingFee(transaction),
+          feeReservationKeyFor("preapply", operationData.preapplyAttempt));
       }
 
       if (stage === "preapply_finalized" || stage === "deposit_failed") {
@@ -1372,7 +1531,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           await save("deposit_submitted", "deposit_failed", {
             depositErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
             depositFailedAt: new Date().toISOString()
-          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          }, transaction ? await readReserveFundingFee(transaction) : "0",
+            feeReservationKeyFor("deposit", operationData.depositAttempt));
           return pendingResult();
         }
         if (!transaction || !isExactReserveFundingDeposit(before, balances, amount)) {
@@ -1382,7 +1542,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           depositPublicBalanceAfterBaseUnits: balances.publicBalance.toString(),
           depositPendingBalanceAfterBaseUnits: balances.pendingBalance.toString(),
           depositFinalizedAt: new Date().toISOString()
-        }, await readReserveFundingFee(transaction));
+        }, await readReserveFundingFee(transaction),
+          feeReservationKeyFor("deposit", operationData.depositAttempt));
       }
 
       if (stage === "deposit_finalized" || stage === "apply_failed") {
@@ -1487,7 +1648,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           await save("apply_submitted", "apply_failed", {
             applyErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
             applyFailedAt: new Date().toISOString()
-          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          }, transaction ? await readReserveFundingFee(transaction) : "0",
+            feeReservationKeyFor("apply", operationData.applyAttempt));
           return pendingResult();
         }
         if (!transaction || !isExactReserveFundingApply(before, balances, amount)) {
@@ -1497,7 +1659,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           finalPublicBalanceBaseUnits: balances.publicBalance.toString(),
           finalAvailableBalanceBaseUnits: balances.availableBalance.toString(),
           confidentialFundingVerifiedAt: new Date().toISOString()
-        }, await readReserveFundingFee(transaction));
+        }, await readReserveFundingFee(transaction),
+          feeReservationKeyFor("apply", operationData.applyAttempt));
       }
 
       if (stage !== "finalized") return pendingResult();

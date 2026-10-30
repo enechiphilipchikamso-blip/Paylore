@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canAdvanceReserveFundingStage,
+  getReserveFundingFeeReservationKeys,
   isExactReserveFundingApply,
   isExactReserveFundingDeposit,
   isExactReserveFundingPreapply,
@@ -40,6 +41,63 @@ describe("Reserve funding operation state transitions", () => {
   });
 });
 
+
+describe("Reserve confidential funding fee reservations", () => {
+  it("reserves only phases that have not already been submitted", () => {
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "wrap_verified",
+      pendingBalance: 0n
+    })).toEqual(["deposit:1", "apply:1"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "wrap_verified",
+      pendingBalance: 25n
+    })).toEqual(["preapply:1", "deposit:1", "apply:1"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "preapply_submitted",
+      pendingBalance: 25n,
+      preapplyAttempt: 1
+    })).toEqual(["deposit:1", "apply:1"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "deposit_submitted",
+      pendingBalance: 0n,
+      depositAttempt: 1
+    })).toEqual(["apply:1"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "apply_submitted",
+      pendingBalance: 0n,
+      applyAttempt: 1
+    })).toEqual([]);
+  });
+
+  it("allocates new fee reservation keys for finalized-failure retries", () => {
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "preapply_failed",
+      pendingBalance: 10n,
+      preapplyAttempt: 2,
+      depositAttempt: 0,
+      applyAttempt: 0
+    })).toEqual(["preapply:3", "deposit:1", "apply:1"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "deposit_failed",
+      pendingBalance: 0n,
+      depositAttempt: 2,
+      applyAttempt: 1
+    })).toEqual(["deposit:3", "apply:2"]);
+    expect(getReserveFundingFeeReservationKeys({
+      stage: "apply_failed",
+      pendingBalance: 10n,
+      applyAttempt: 2
+    })).toEqual(["apply:3"]);
+  });
+
+  it("rejects retries beyond the operation limit", () => {
+    expect(() => getReserveFundingFeeReservationKeys({
+      stage: "apply_failed",
+      pendingBalance: 0n,
+      applyAttempt: 1000
+    })).toThrow("Reserve confidential funding retry limit reached.");
+  });
+});
 
 describe("Reserve confidential balance transitions", () => {
   const initial = {

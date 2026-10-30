@@ -130,17 +130,60 @@ export function summarizeGasTankSponsorshipBudget(input: {
       (row.status === "failed" && row.failureCode === "finalized_chain_failure");
     if (!billable) continue;
 
+    const data = dataRecord(row.operationData);
+    const hasReserveFeeHistory = Array.isArray(data.feeReservationKeys) ||
+      data.actualFeeLamports !== undefined ||
+      data.feeBudgetReserved !== undefined;
+    if (
+      !hasReserveFeeHistory &&
+      (data.stage === "wrap_pending" || data.stage === "wrap_verified")
+    ) continue;
+
     let fee = readLamports(row.feeLamports);
+    if (hasReserveFeeHistory && fee === null) {
+      throw new Error("Persisted Gas Tank Reserve fee evidence is invalid.");
+    }
     if (fee === null && (row.status === "preparing" || row.status === "prepared")) {
       fee = reservedFee;
     }
     if (fee === null) {
       throw new Error("Persisted Gas Tank operation is missing valid fee evidence.");
     }
-    operationCount += 1;
-    feeLamports += fee;
-    if (row.status === "preparing" || row.status === "prepared") {
-      reservedFeesLamports += fee;
+    if (hasReserveFeeHistory) {
+      const actualFee = data.actualFeeLamports === undefined
+        ? 0n
+        : readLamports(data.actualFeeLamports);
+      const keys = Array.isArray(data.feeReservationKeys) ? data.feeReservationKeys : [];
+      if (
+        actualFee === null ||
+        keys.some((key) => typeof key !== "string") ||
+        new Set(keys).size !== keys.length
+      ) throw new Error("Persisted Gas Tank Reserve fee evidence is invalid.");
+      const reservedFee = data.feeBudgetReserved === true ? fee : 0n;
+      const recordedReserved = data.reservedFeeBudgetLamports === undefined
+        ? reservedFee
+        : readLamports(data.reservedFeeBudgetLamports);
+      if (
+        recordedReserved === null ||
+        recordedReserved !== reservedFee ||
+        (!data.feeBudgetReserved && fee !== actualFee)
+      ) throw new Error("Persisted Gas Tank Reserve fee reservation is invalid.");
+      feeLamports += actualFee + reservedFee;
+      const unreservedCount = typeof data.unreservedFeeOperationCount === "number" &&
+        Number.isSafeInteger(data.unreservedFeeOperationCount) &&
+        data.unreservedFeeOperationCount >= 0
+        ? data.unreservedFeeOperationCount
+        : 0;
+      operationCount += keys.length + unreservedCount;
+      if (row.status === "preparing" || row.status === "prepared") {
+        reservedFeesLamports += reservedFee;
+      }
+    } else {
+      operationCount += 1;
+      feeLamports += fee;
+      if (row.status === "preparing" || row.status === "prepared") {
+        reservedFeesLamports += fee;
+      }
     }
   }
 

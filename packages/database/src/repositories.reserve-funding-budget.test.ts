@@ -232,6 +232,72 @@ describe("workspace Reserve Gas Tank fee reservations", () => {
     });
   });
 
+  it("treats a replay of the exact finalized fee settlement as an idempotent duplicate", async () => {
+    const finalized = {
+      ...operation,
+      status: "finalized",
+      feeLamports: "20000",
+      operationData: {
+        stage: "finalized",
+        feeBudgetReserved: false,
+        actualFeeLamports: "20000",
+        reservedFeeBudgetLamports: "0",
+        feePerTransactionLamports: "100000",
+        feeReservationKeys: ["deposit:1", "apply:1"],
+        feeReservationSettledKeys: ["deposit:1", "apply:1"],
+        feeBudgetSettledCount: 2,
+        finalAvailableBalanceBaseUnits: "1250000"
+      }
+    };
+    const fake = fakeDatabase([
+      [{ workspaceId: "workspace-a" }],
+      [finalized]
+    ]);
+
+    await expect(advanceWorkspaceReserveFundingOperation(fake.db, {
+      workspaceId: "workspace-a",
+      operationId: "reserve-operation",
+      expectedStage: "apply_submitted",
+      nextStage: "finalized",
+      operationData: { finalAvailableBalanceBaseUnits: "1250000" },
+      feeLamportsAdded: "5000",
+      feeReservationConsumedLamports: "100000",
+      feeReservationKey: "apply:1"
+    })).resolves.toBe("duplicate");
+    expect(fake.updateCalls).toHaveLength(0);
+  });
+
+  it("does not consume a Reserve fee reservation key more than once", async () => {
+    const active = {
+      ...operation,
+      feeLamports: "100000",
+      operationData: {
+        stage: "apply_submitted",
+        feeBudgetReserved: true,
+        actualFeeLamports: "15000",
+        reservedFeeBudgetLamports: "100000",
+        feePerTransactionLamports: "100000",
+        feeBudgetSettledCount: 2,
+        feeReservationKeys: ["deposit:1", "apply:1"],
+        feeReservationSettledKeys: ["deposit:1", "apply:1"]
+      }
+    };
+    const fake = fakeDatabase([
+      [{ workspaceId: "workspace-a" }],
+      [active]
+    ]);
+
+    await expect(advanceWorkspaceReserveFundingOperation(fake.db, {
+      workspaceId: "workspace-a",
+      operationId: "reserve-operation",
+      expectedStage: "apply_submitted",
+      nextStage: "finalized",
+      feeReservationConsumedLamports: "100000",
+      feeReservationKey: "apply:1"
+    })).resolves.toBe("conflict");
+    expect(fake.updateCalls).toHaveLength(0);
+  });
+
   it("rejects skipped or unfunded stage attempts without mutating the operation", async () => {
     const fake = fakeDatabase([
       [{ workspaceId: "workspace-a" }],
