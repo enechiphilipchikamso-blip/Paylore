@@ -82,8 +82,10 @@ jobs:
         shell: bash
         run: |
           cargo install --git https://github.com/otter-sec/anchor avm --force
+          # AVM source builds need Rust 1.91; the repository's default compiler stays pinned to 1.89.
+          rustup toolchain install 1.91.0 --profile minimal
           # Source builds avoid relying on release-attestation downloads, which can be denied by GitHub.
-          avm install 1.2.0 --from-source
+          RUSTUP_TOOLCHAIN=1.91.0 avm install 1.2.0 --from-source
           avm use 1.2.0
 
       - name: Report tool versions
