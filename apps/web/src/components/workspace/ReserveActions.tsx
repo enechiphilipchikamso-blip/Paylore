@@ -33,7 +33,7 @@ export function getReserveFundingOutcomeMessage(input: {
     const text = input.phase === "preapply"
       ? "Paylore is reconciling the Reserve's earlier pending confidential balance before depositing this funding. Continue this same operation; do not wrap USDC again."
       : input.phase === "apply"
-        ? "The wrapped USDC is in the Reserve's confidential pending balance. Paylore is waiting for the apply transaction to make it available. Continue this same operation; do not wrap again."
+        ? "The wrapped USDC is in the Reserve's pending confidential balance. Paylore is waiting for the apply transaction to make it available. Continue this same operation; do not wrap again."
         : "The Reserve confidential deposit is awaiting finality. Continue this same operation; do not wrap USDC again.";
     return { state: "partial", text };
   }
