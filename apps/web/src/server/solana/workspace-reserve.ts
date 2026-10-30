@@ -708,14 +708,16 @@ function verifyReserveInstructionInTransaction(
   transaction: NonNullable<ReserveFundingTransaction>,
   expected: SerializedReserveInstruction,
   marker: string,
-  reserveAddress: string
+  reserveAddress: string,
+  allowFailed = false
 ): void {
   const meta = object(transaction.meta);
   const body = object(transaction.transaction);
   const message = object(body?.message);
   const signatures = body?.signatures;
   if (!meta || !message || !Array.isArray(signatures) ||
-      meta.err !== null || !signatures.length || typeof transaction.slot !== "number") {
+      (allowFailed ? meta.err === null : meta.err !== null) ||
+      !signatures.length || typeof transaction.slot !== "number") {
     throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_not_finalized", 202);
   }
   const keys = reserveFundingTransactionKeys(message, meta as NonNullable<ReserveFundingTransaction>["meta"]);
@@ -796,8 +798,9 @@ function assertReservePublicBalanceDelta(input: {
 }
 
 async function readReserveFundingTransaction(
-  signatureText: string
-): Promise<NonNullable<ReserveFundingTransaction>> {
+  signatureText: string,
+  allowFailed = false
+): Promise<NonNullable<ReserveFundingTransaction> | null> {
   let transaction: ReserveFundingTransaction;
   try {
     transaction = await readSolanaRpc<ReserveFundingTransaction>("getTransaction", [
@@ -807,14 +810,46 @@ async function readReserveFundingTransaction(
   } catch {
     throw new WorkspaceReserveInitializationError("reserve_confidential_funding_status_unavailable", 503);
   }
-  if (!transaction || !transaction.meta || !transaction.transaction ||
+  if (transaction === null) return null;
+  if (!transaction.meta || !transaction.transaction ||
       typeof transaction.slot !== "number" || transaction.meta.err === undefined) {
     throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_not_finalized", 202);
   }
-  if (transaction.meta.err !== null) {
-    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_transaction_failed", 409);
+  if (allowFailed ? transaction.meta.err === null : transaction.meta.err !== null) {
+    throw new WorkspaceReserveInitializationError(
+      allowFailed
+        ? "reserve_confidential_funding_failed_transaction_not_verified"
+        : "reserve_confidential_funding_transaction_failed",
+      allowFailed ? 409 : 409
+    );
   }
   return transaction;
+}
+
+async function resolveReserveFundingFinality(input: {
+  rpc: ReturnType<typeof createSolanaRpc>;
+  signatureText: string;
+  lastValidBlockHeight: string;
+}): Promise<"finalized" | "failed" | "pending"> {
+  const transactionSignature = signature(getBase58Decoder().decode(input.signatureText));
+  try {
+    const status = (await input.rpc.getSignatureStatuses(
+      [transactionSignature],
+      { searchTransactionHistory: true }
+    ).send()).value[0];
+    const finality = classifyTransactionFinality(status);
+    if (finality !== "pending") return finality;
+    const currentBlockHeight = await input.rpc.getBlockHeight({ commitment: "finalized" }).send();
+    if (BigInt(currentBlockHeight) <= BigInt(input.lastValidBlockHeight)) return "pending";
+    const transaction = await readReserveFundingTransaction(input.signatureText).catch((error) => {
+      if (error instanceof WorkspaceReserveInitializationError &&
+          error.code === "reserve_confidential_funding_transaction_not_finalized") return null;
+      throw error;
+    });
+    return transaction === null ? "failed" : "finalized";
+  } catch {
+    return "pending";
+  }
 }
 
 async function readReserveFundingFee(transaction: NonNullable<ReserveFundingTransaction>): Promise<string> {
@@ -825,39 +860,6 @@ async function readReserveFundingFee(transaction: NonNullable<ReserveFundingTran
   return String(fee);
 }
 
-async function findReserveFundingSignatureByMemo(
-  tokenAddress: string,
-  marker: string
-): Promise<string | null> {
-  let rows: Array<{ signature?: string }> = [];
-  try {
-    rows = await readSolanaRpc<Array<{ signature?: string }>>("getSignaturesForAddress", [
-      tokenAddress,
-      { commitment: "confirmed", limit: 40 }
-    ]);
-  } catch {
-    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_status_unavailable", 503);
-  }
-  for (const row of rows) {
-    if (typeof row.signature !== "string") continue;
-    let transaction: ReserveFundingTransaction;
-    try {
-      transaction = await readSolanaRpc<ReserveFundingTransaction>("getTransaction", [
-        row.signature,
-        { commitment: "confirmed", encoding: "json", maxSupportedTransactionVersion: 0 }
-      ]);
-    } catch {
-      continue;
-    }
-    const body = object(transaction?.transaction);
-    const message = object(body?.message);
-    if (!message) continue;
-    const meta = object(transaction?.meta);
-    const keys = reserveFundingTransactionKeys(message, meta as NonNullable<ReserveFundingTransaction>["meta"] ?? null);
-    if (hasReserveMemo(message, keys, marker)) return row.signature;
-  }
-  return null;
-}
 
 type WorkspaceReserveConfidentialFundingResult = {
   status: "confidential_balance_verified" | "pending";
@@ -871,8 +873,12 @@ type WorkspaceReserveConfidentialFundingResult = {
 
 const MAX_CONFIDENTIAL_DEPOSIT_BASE_UNITS = (1n << 48n) - 1n;
 
-function reserveFundingMemo(wrapSignature: string, phase: "preapply" | "deposit" | "apply"): string {
-  return "PAYLORE_RESERVE_FUNDING:v1:" + wrapSignature + ":" + phase;
+function reserveFundingMemo(
+  wrapSignature: string,
+  phase: "preapply" | "deposit" | "apply",
+  attempt: number
+): string {
+  return "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":" + phase + ":" + attempt;
 }
 
 /** Converts the verified public Reserve credit into pending and then spendable confidential funds. */
