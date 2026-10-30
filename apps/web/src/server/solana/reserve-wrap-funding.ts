@@ -5,6 +5,7 @@ import {
   fetchMint, fetchToken, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 import {
+  assertWorkspaceReserveFundingGasTankReady,
   getWorkspaceConfidentialReserveSnapshot,
   WorkspaceReserveInitializationError
 } from "./workspace-reserve";
@@ -114,6 +115,9 @@ async function resolveVerifiedContextP4(input: {
     const snapshot = await getWorkspaceConfidentialReserveSnapshot(
       input.db, input.workspaceId, input.walletAddress
     );
+    if (input.requireSufficientSourceBalance) {
+      await assertWorkspaceReserveFundingGasTankReady(input.db, input.workspaceId);
+    }
     if (snapshot.status !== "program_configured" ||
         snapshot.confidentialTransferReady !== true ||
         !snapshot.reserveAddress || !snapshot.tokenAccount) {
