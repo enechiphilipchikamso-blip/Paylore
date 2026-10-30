@@ -36,7 +36,6 @@ const requestSchema = z.object({
 });
 
 async function authenticatedReserveAdmin(
-  request: Request,
   workspaceId: string
 ): Promise<
   | { ok: true; db: ReturnType<typeof getDatabase>; walletAddress: string }
@@ -65,7 +64,7 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const { workspaceId } = await params;
-    const access = await authenticatedReserveAdmin(request, workspaceId);
+    const access = await authenticatedReserveAdmin(workspaceId);
     if (!access.ok) return access.response;
     const operation = await getActiveWorkspaceReserveFundingOperation(access.db, workspaceId);
     if (!operation) {
