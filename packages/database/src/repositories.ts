@@ -6756,6 +6756,162 @@ export async function finalizeGasTankConfidentialAccountSetupForVerifiedAccount(
 }
 
 
+
+import {
+  RESERVE_FUNDING_OPERATION_TYPE,
+  canAdvanceReserveFundingStage,
+  type ReserveFundingOperationStage
+} from "./reserve-funding-operation-policy";
+
+/** Serializes one Reserve confidential funding operation per workspace and keys it to the verified wrap signature. */
+export async function beginWorkspaceReserveFundingOperation(
+  db: Database,
+  input: {
+    workspaceId: string;
+    idempotencyKey: string;
+    requestDigest: string;
+    wrapSignature: string;
+    operationData: Record<string, unknown>;
+  }
+) {
+  if (
+    input.idempotencyKey.length < 24 || input.idempotencyKey.length > 160 ||
+    !/^[0-9a-f]{64}$/.test(input.requestDigest) ||
+    !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.wrapSignature)
+  ) {
+    return { status: "invalid" as const, operation: null };
+  }
+  return db.transaction(async (tx) => {
+    const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
+      .from(workspaceReserves)
+      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!reserveRows[0]) return { status: "reserve_not_found" as const, operation: null };
+
+    const existingRows = await tx.select().from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.idempotencyKey, input.idempotencyKey)
+    )).for("update").limit(1);
+    const existing = existingRows[0];
+    if (existing) {
+      if (
+        existing.operationType !== RESERVE_FUNDING_OPERATION_TYPE ||
+        existing.requestDigest !== input.requestDigest ||
+        existing.transactionSignature !== input.wrapSignature
+      ) {
+        return { status: "conflict" as const, operation: existing };
+      }
+      return {
+        status: existing.status === "finalized" ? "finalized" as const : "existing" as const,
+        operation: existing
+      };
+    }
+
+    const activeRows = await tx.select().from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE),
+      inArray(gasTankOperations.status, ["preparing", "prepared"])
+    )).for("update").limit(1);
+    if (activeRows[0]) return { status: "in_progress" as const, operation: activeRows[0] };
+
+    const now = new Date();
+    const inserted = await tx.insert(gasTankOperations).values({
+      workspaceId: input.workspaceId,
+      idempotencyKey: input.idempotencyKey,
+      operationType: RESERVE_FUNDING_OPERATION_TYPE,
+      requestDigest: input.requestDigest,
+      status: "preparing",
+      transactionSignature: input.wrapSignature,
+      feeLamports: "0",
+      operationData: { ...input.operationData, stage: "wrap_verified" },
+      createdAt: now,
+      updatedAt: now
+    }).onConflictDoNothing({
+      target: [gasTankOperations.workspaceId, gasTankOperations.idempotencyKey]
+    }).returning();
+    if (inserted[0]) return { status: "created" as const, operation: inserted[0] };
+
+    const raced = await tx.select().from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.idempotencyKey, input.idempotencyKey)
+    )).for("update").limit(1);
+    return raced[0] && raced[0].requestDigest === input.requestDigest
+      ? { status: "existing" as const, operation: raced[0] }
+      : { status: "conflict" as const, operation: raced[0] ?? null };
+  });
+}
+
+/** A row lock and legal stage transition prevent two retries from submitting the same Reserve action. */
+export async function advanceWorkspaceReserveFundingOperation(
+  db: Database,
+  input: {
+    workspaceId: string;
+    operationId: string;
+    expectedStage: ReserveFundingOperationStage;
+    nextStage: ReserveFundingOperationStage;
+    operationData?: Record<string, unknown>;
+    feeLamportsAdded?: string;
+  }
+): Promise<"updated" | "duplicate" | "conflict" | "not_found"> {
+  if (
+    !canAdvanceReserveFundingStage(input.expectedStage, input.nextStage) ||
+    (input.feeLamportsAdded !== undefined &&
+      !/^(0|[1-9][0-9]*)$/.test(input.feeLamportsAdded))
+  ) return "conflict";
+
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(gasTankOperations).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE)
+    )).for("update").limit(1);
+    const operation = rows[0];
+    if (!operation) return "not_found";
+    const current = operation.operationData !== null &&
+      typeof operation.operationData === "object" &&
+      !Array.isArray(operation.operationData)
+      ? operation.operationData as Record<string, unknown>
+      : {};
+    if (current.stage === input.nextStage) {
+      const patchMatches = Object.entries(input.operationData ?? {}).every(([key, value]) =>
+        JSON.stringify(current[key]) === JSON.stringify(value)
+      );
+      return patchMatches ? "duplicate" : "conflict";
+    }
+    if (
+      operation.status !== "preparing" ||
+      current.stage !== input.expectedStage ||
+      !canAdvanceReserveFundingStage(String(current.stage ?? ""), input.nextStage)
+    ) return "conflict";
+
+    const currentFee = operation.feeLamports !== null &&
+      /^(0|[1-9][0-9]*)$/.test(operation.feeLamports)
+      ? BigInt(operation.feeLamports)
+      : null;
+    if (currentFee === null) return "conflict";
+    const nextFee = currentFee + BigInt(input.feeLamportsAdded ?? "0");
+    if (nextFee >= (1n << 64n)) return "conflict";
+    const updated = await tx.update(gasTankOperations).set({
+      status: input.nextStage === "finalized" ? "finalized" : "preparing",
+      feeLamports: nextFee.toString(),
+      operationData: {
+        ...current,
+        ...(input.operationData ?? {}),
+        stage: input.nextStage
+      },
+      updatedAt: new Date()
+    }).where(and(
+      eq(gasTankOperations.workspaceId, input.workspaceId),
+      eq(gasTankOperations.id, input.operationId),
+      eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE),
+      eq(gasTankOperations.status, "preparing")
+    )).returning({ id: gasTankOperations.id });
+    return updated[0] ? "updated" : "conflict";
+  });
+}
+
+
 export async function beginGasTankOperationAttempt(
   db: Database,
   input: {
