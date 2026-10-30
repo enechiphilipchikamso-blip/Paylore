@@ -8,6 +8,13 @@ import {
 } from "./reserve-funding-operation-policy";
 
 describe("Reserve funding operation state transitions", () => {
+  it("persists a public wrap before finality and makes a failed wrap terminal", () => {
+    expect(canAdvanceReserveFundingStage("wrap_pending", "wrap_verified")).toBe(true);
+    expect(canAdvanceReserveFundingStage("wrap_pending", "wrap_failed")).toBe(true);
+    expect(canAdvanceReserveFundingStage("wrap_failed", "wrap_verified")).toBe(false);
+    expect(canAdvanceReserveFundingStage("wrap_failed", "preapply_submitting")).toBe(false);
+  });
+
   it("allows only forward progress through pending, deposit and apply stages", () => {
     expect(canAdvanceReserveFundingStage("wrap_verified", "preapply_submitting")).toBe(true);
     expect(canAdvanceReserveFundingStage("wrap_verified", "preapply_finalized")).toBe(true);

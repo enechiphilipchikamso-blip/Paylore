@@ -16,7 +16,7 @@ type GasTankReservePreflight = {
   balanceSol: string | null;
 };
 
-type ReserveFundingPhase = "preapply" | "deposit" | "apply";
+type ReserveFundingPhase = "wrap_pending" | "wrap_verified" | "preapply" | "deposit" | "apply";
 
 export function getReserveFundingOutcomeMessage(input: {
   status: "pending" | "confidential_balance_verified" | "error";
@@ -30,11 +30,15 @@ export function getReserveFundingOutcomeMessage(input: {
     };
   }
   if (input.status === "pending") {
-    const text = input.phase === "preapply"
-      ? "Paylore is reconciling the Reserve's earlier pending confidential balance before depositing this funding. Continue this same operation; do not wrap USDC again."
-      : input.phase === "apply"
-        ? "The wrapped USDC is in the Reserve's pending confidential balance. Paylore is waiting for the apply transaction to make it available. Continue this same operation; do not wrap again."
-        : "The Reserve confidential deposit is awaiting finality. Continue this same operation; do not wrap USDC again.";
+    const text = input.phase === "wrap_pending"
+      ? "Your ordinary-USDC wrap was submitted. Paylore saved its signature and is checking the finalized transaction. Continue this same operation; do not submit another wrap."
+      : input.phase === "wrap_verified"
+        ? "The ordinary-USDC wrap is finalized and verified. Paylore has not yet confirmed a confidential deposit; continue this same operation to deposit and apply the Reserve balance."
+        : input.phase === "preapply"
+          ? "Paylore is reconciling the Reserve's earlier pending confidential balance before depositing this funding. Continue this same operation; do not wrap USDC again."
+          : input.phase === "apply"
+            ? "The wrapped USDC is in the Reserve's pending confidential balance. Paylore is waiting for the apply transaction to make it available. Continue this same operation; do not wrap again."
+            : "The Reserve confidential deposit is awaiting finality. Continue this same operation; do not wrap USDC again.";
     return { state: "partial", text };
   }
   const errors: Record<string, string> = {
@@ -747,15 +751,19 @@ export function ReserveActions({
               {fundingBusy ? (
                 <p className="loading-indicator" role="status" aria-live="polite">
                   <span className="loading-indicator__icon" aria-hidden="true" />
-                  {pendingWrap?.phase === "preapply"
-                    ? "Applying the Reserve's earlier pending confidential balance…"
-                    : pendingWrap?.phase === "deposit"
+                  {pendingWrap?.phase === "wrap_pending"
+                    ? "Checking the finalized ordinary-USDC wrap transaction…"
+                    : pendingWrap?.phase === "wrap_verified"
+                      ? "Preparing the verified wrap for confidential deposit…"
+                      : pendingWrap?.phase === "preapply"
+                        ? "Applying the Reserve's earlier pending confidential balance…"
+                        : pendingWrap?.phase === "deposit"
                       ? "Depositing wrapped USDC into the confidential pending balance…"
-                      : pendingWrap?.phase === "apply"
-                        ? "Applying the new confidential balance…"
-                        : pendingWrap
-                          ? "Verifying and continuing the submitted Reserve funding…"
-                          : "Checking USDC and preparing the wallet transaction…"}
+                        : pendingWrap?.phase === "apply"
+                          ? "Applying the new confidential balance…"
+                          : pendingWrap
+                            ? "Verifying and continuing the submitted Reserve funding…"
+                            : "Checking USDC and preparing the wallet transaction…"}
                 </p>
               ) : null}
               {fundingNotice ? (

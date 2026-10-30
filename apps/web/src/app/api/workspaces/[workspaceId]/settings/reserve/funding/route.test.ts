@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceSubscription: vi.fn(),
   getActiveWorkspaceReserveFundingOperation: vi.fn(),
   prepareReserveWrapFunding: vi.fn(),
+  recordPendingReserveWrapFunding: vi.fn(),
+  markReserveWrapFundingVerified: vi.fn(),
+  markReserveWrapFundingFailed: vi.fn(),
   verifyFinalizedReserveWrapFunding: vi.fn(),
   completeWorkspaceReserveConfidentialFunding: vi.fn(),
   MockReserveWrapFundingError: class extends Error {
@@ -36,6 +39,9 @@ vi.mock("../../../../../../../server/db", () => ({
 }));
 vi.mock("../../../../../../../server/solana/reserve-wrap-funding", () => ({
   prepareReserveWrapFunding: mocks.prepareReserveWrapFunding,
+  recordPendingReserveWrapFunding: mocks.recordPendingReserveWrapFunding,
+  markReserveWrapFundingVerified: mocks.markReserveWrapFundingVerified,
+  markReserveWrapFundingFailed: mocks.markReserveWrapFundingFailed,
   verifyFinalizedReserveWrapFunding: mocks.verifyFinalizedReserveWrapFunding,
   ReserveWrapFundingError: mocks.MockReserveWrapFundingError
 }));
@@ -83,6 +89,12 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
       tokenWrapProgramAddress: "token-wrap-program",
       amountBaseUnits: "1000000"
     });
+    mocks.recordPendingReserveWrapFunding.mockResolvedValue({
+      operationId: "wrap-operation",
+      stage: "wrap_pending"
+    });
+    mocks.markReserveWrapFundingVerified.mockResolvedValue(undefined);
+    mocks.markReserveWrapFundingFailed.mockResolvedValue(undefined);
     mocks.verifyFinalizedReserveWrapFunding.mockResolvedValue({
       status: "wrapped_public_balance_verified",
       signature: "s".repeat(88),
@@ -136,12 +148,35 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
       depositSignature: "d".repeat(88),
       applySignature: "a".repeat(88)
     });
+    expect(mocks.recordPendingReserveWrapFunding).toHaveBeenCalledWith({
+      db: {},
+      workspaceId: "workspace-a",
+      walletAddress: "admin-wallet",
+      amountBaseUnits: "1000000",
+      signature: "s".repeat(88)
+    });
     expect(mocks.verifyFinalizedReserveWrapFunding).toHaveBeenCalledWith({
       db: {},
       workspaceId: "workspace-a",
       walletAddress: "admin-wallet",
       amountBaseUnits: "1000000",
       signature: "s".repeat(88)
+    });
+    expect(mocks.recordPendingReserveWrapFunding.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.verifyFinalizedReserveWrapFunding.mock.invocationCallOrder[0]
+    );
+    expect(mocks.verifyFinalizedReserveWrapFunding.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.markReserveWrapFundingVerified.mock.invocationCallOrder[0]
+    );
+    expect(mocks.markReserveWrapFundingVerified.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.completeWorkspaceReserveConfidentialFunding.mock.invocationCallOrder[0]
+    );
+    expect(mocks.markReserveWrapFundingVerified).toHaveBeenCalledWith({
+      db: {},
+      workspaceId: "workspace-a",
+      walletAddress: "admin-wallet",
+      operationId: "wrap-operation",
+      verification: expect.objectContaining({ status: "wrapped_public_balance_verified" })
     });
     expect(mocks.completeWorkspaceReserveConfidentialFunding).toHaveBeenCalledWith({
       db: {},
@@ -204,10 +239,38 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
     }), { params });
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toMatchObject({
+      status: "pending",
+      phase: "wrap_pending",
+      stage: "wrap_pending",
       error: "reserve_wrap_transaction_not_finalized",
       retryable: true
     });
+    expect(mocks.recordPendingReserveWrapFunding).toHaveBeenCalled();
+    expect(mocks.recordPendingReserveWrapFunding.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.verifyFinalizedReserveWrapFunding.mock.invocationCallOrder[0]
+    );
     expect(mocks.completeWorkspaceReserveConfidentialFunding).not.toHaveBeenCalled();
+  });
+
+  it("restores a submitted public wrap after reload before finality is known", async () => {
+    mocks.getActiveWorkspaceReserveFundingOperation.mockResolvedValue({
+      transactionSignature: "s".repeat(88),
+      status: "preparing",
+      operationData: {
+        walletAddress: "admin-wallet",
+        amountBaseUnits: "1000000",
+        stage: "wrap_pending"
+      }
+    });
+    const response = await GET(getRequest(), { params });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "pending",
+      wrapSignature: "s".repeat(88),
+      amountBaseUnits: "1000000",
+      phase: "wrap_pending",
+      stage: "wrap_pending"
+    });
   });
 
   it("returns the active funding stage for the same administrator after reload", async () => {
@@ -248,6 +311,29 @@ describe("workspace Reserve ordinary-USDC funding route", () => {
     const body = await response.json();
     expect(body).toMatchObject({ status: "another_admin_pending" });
     expect(body).not.toHaveProperty("wrapSignature");
+  });
+
+  it("marks a finalized failed public wrap terminal before allowing a new wrap", async () => {
+    mocks.verifyFinalizedReserveWrapFunding.mockRejectedValue(
+      new mocks.MockReserveWrapFundingError("reserve_wrap_transaction_failed", 409)
+    );
+    const response = await POST(request({
+      action: "verify",
+      amountBaseUnits: "1000000",
+      signature: "s".repeat(88)
+    }), { params });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "reserve_wrap_transaction_failed",
+      retryable: false
+    });
+    expect(mocks.markReserveWrapFundingFailed).toHaveBeenCalledWith({
+      db: {},
+      workspaceId: "workspace-a",
+      operationId: "wrap-operation",
+      signature: "s".repeat(88)
+    });
+    expect(mocks.completeWorkspaceReserveConfidentialFunding).not.toHaveBeenCalled();
   });
 
   it("reports an insufficient Gas Tank balance without claiming funding is complete", async () => {

@@ -1,9 +1,18 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { address, createSolanaRpc, fetchEncodedAccount } from "@solana/kit";
-import { getActiveWorkspaceReserveFundingOperation } from "@paylore/database";
 import {
-  fetchMint, fetchToken, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS
+  advanceWorkspaceReserveFundingOperation,
+  beginWorkspaceReserveFundingOperation,
+  getActiveWorkspaceReserveFundingOperation,
+  getWorkspaceGasTankOperation,
+  getWorkspaceReserve,
+  RESERVE_FUNDING_OPERATION_TYPE
+} from "@paylore/database";
+import {
+  fetchMint, fetchToken, findAssociatedTokenPda,
+  TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 import {
   assertWorkspaceReserveFundingGasTankReady,
@@ -247,6 +256,200 @@ async function resolveVerifiedContextP4(input: {
       throw new ReserveWrapFundingError(error.code, error.statusCode);
     }
     throw new ReserveWrapFundingError("reserve_wrap_preflight_unavailable", 503);
+  }
+}
+
+/**
+ * Persists the wallet-submitted wrap before any RPC finality lookup can fail or time out.
+ * The operation key and digest match the confidential-funding journal so retries resume one record.
+ */
+export async function recordPendingReserveWrapFunding(input: {
+  db: Parameters<typeof getWorkspaceConfidentialReserveSnapshot>[0];
+  workspaceId: string;
+  walletAddress: string;
+  amountBaseUnits: string;
+  signature: string;
+}): Promise<{ operationId: string; stage: string }> {
+  const amount = positiveAmountP4(input.amountBaseUnits);
+  if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(input.signature)) {
+    throw new ReserveWrapFundingError("reserve_wrap_signature_invalid", 400);
+  }
+
+  const config = loadPayloreConfig();
+  if (
+    config.PAYLORE_NETWORK !== "devnet" ||
+    config.TOKEN_WRAP_PROGRAM_ID !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress ||
+    config.PAYLORE_WRAPPED_USDC_MINT !== DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress
+  ) {
+    throw new ReserveWrapFundingError("reserve_wrap_identity_mismatch", 409);
+  }
+  const reserve = await getWorkspaceReserve(input.db, input.workspaceId);
+  if (!reserve) throw new ReserveWrapFundingError("reserve_not_found", 409);
+
+  const reserveAddress = address(reserve.address);
+  const wrappedMintAddress = address(config.PAYLORE_WRAPPED_USDC_MINT);
+  const unwrappedMintAddress = address(DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress);
+  const tokenWrapProgramAddress = address(config.TOKEN_WRAP_PROGRAM_ID);
+  const [reserveTokenAddress] = await findAssociatedTokenPda({
+    owner: reserveAddress,
+    mint: wrappedMintAddress,
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+  });
+  let plan: Awaited<ReturnType<typeof buildWrappedUsdcWrapPlan>>;
+  try {
+    plan = await buildWrappedUsdcWrapPlan({
+      ownerAddress: input.walletAddress,
+      reserveAddress: reserve.address,
+      reserveTokenAccountAddress: reserveTokenAddress,
+      wrappedMintAddress,
+      unwrappedMintAddress,
+      tokenWrapProgramAddress,
+      amount
+    });
+  } catch {
+    throw new ReserveWrapFundingError("reserve_wrap_identity_mismatch", 409);
+  }
+
+  const requestDigest = createHash("sha256").update([
+    input.workspaceId,
+    input.walletAddress,
+    amount.toString(),
+    input.signature,
+    reserve.address,
+    reserveTokenAddress,
+    wrappedMintAddress
+  ].join("|")).digest("hex");
+  const begun = await beginWorkspaceReserveFundingOperation(input.db, {
+    workspaceId: input.workspaceId,
+    idempotencyKey: "reserve_funding:" + input.signature,
+    requestDigest,
+    wrapSignature: input.signature,
+    initialStage: "wrap_pending",
+    operationData: {
+      walletAddress: input.walletAddress,
+      amountBaseUnits: amount.toString(),
+      wrapSignature: input.signature,
+      reserveAddress: reserve.address,
+      reserveTokenAddress,
+      mintAddress: wrappedMintAddress,
+      sourceTokenAccountAddress: plan.sourceTokenAccount,
+      unwrappedEscrowAddress: plan.unwrappedEscrow,
+      wrappedMintAddress,
+      unwrappedMintAddress,
+      tokenWrapProgramAddress,
+      wrapSubmittedAt: new Date().toISOString()
+    }
+  });
+  const operation = begun.operation;
+  if (!operation) {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  if (begun.status === "reserve_not_found") {
+    throw new ReserveWrapFundingError("reserve_not_found", 409);
+  }
+  if (begun.status === "in_progress") {
+    throw new ReserveWrapFundingError("reserve_confidential_funding_in_progress", 409);
+  }
+  if (begun.status === "invalid" || begun.status === "conflict") {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  const data = objectP4(operation.operationData) ?? {};
+  if (
+    operation.operationType !== RESERVE_FUNDING_OPERATION_TYPE ||
+    operation.transactionSignature !== input.signature ||
+    data.walletAddress !== input.walletAddress ||
+    data.amountBaseUnits !== amount.toString() ||
+    data.wrapSignature !== input.signature ||
+    data.reserveAddress !== reserve.address ||
+    data.reserveTokenAddress !== reserveTokenAddress ||
+    data.mintAddress !== wrappedMintAddress
+  ) {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  if (operation.status === "failed" || data.stage === "wrap_failed") {
+    throw new ReserveWrapFundingError("reserve_wrap_transaction_failed", 409);
+  }
+  return { operationId: operation.id, stage: String(data.stage ?? "wrap_pending") };
+}
+
+/** Promotes a saved wallet signature only after the exact Token Wrap instruction and balance deltas finalize. */
+export async function markReserveWrapFundingVerified(input: {
+  db: Parameters<typeof getWorkspaceConfidentialReserveSnapshot>[0];
+  workspaceId: string;
+  walletAddress: string;
+  operationId: string;
+  verification: Awaited<ReturnType<typeof verifyFinalizedReserveWrapFunding>>;
+}): Promise<void> {
+  const operation = await getWorkspaceGasTankOperation(input.db, input.workspaceId, input.operationId);
+  const data = objectP4(operation?.operationData) ?? {};
+  if (
+    !operation ||
+    operation.operationType !== RESERVE_FUNDING_OPERATION_TYPE ||
+    operation.transactionSignature !== input.verification.signature ||
+    data.walletAddress !== input.walletAddress ||
+    data.amountBaseUnits !== input.verification.amountBaseUnits ||
+    data.wrapSignature !== input.verification.signature
+  ) {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  if (data.stage === "wrap_failed" || operation.status === "failed") {
+    throw new ReserveWrapFundingError("reserve_wrap_transaction_failed", 409);
+  }
+  if (data.stage !== "wrap_pending") {
+    if (data.stage === "wrap_verified" || [
+      "preapply_submitting", "preapply_submitted", "preapply_finalized", "preapply_failed",
+      "deposit_submitting", "deposit_submitted", "deposit_finalized", "deposit_failed",
+      "apply_submitting", "apply_submitted", "apply_failed", "finalized"
+    ].includes(String(data.stage))) return;
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  const saved = await advanceWorkspaceReserveFundingOperation(input.db, {
+    workspaceId: input.workspaceId,
+    operationId: input.operationId,
+    expectedStage: "wrap_pending",
+    nextStage: "wrap_verified",
+    operationData: {
+      wrapVerificationSlot: input.verification.slot,
+      sourceTokenAccountAddress: input.verification.sourceTokenAccount,
+      unwrappedEscrowAddress: input.verification.escrowTokenAccount,
+      reserveTokenAddress: input.verification.destinationTokenAccount
+    }
+  });
+  if (saved !== "updated" && saved !== "duplicate") {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+}
+
+/** Releases a submitted wrap only when finalized metadata proves that the on-chain transaction failed. */
+export async function markReserveWrapFundingFailed(input: {
+  db: Parameters<typeof getWorkspaceConfidentialReserveSnapshot>[0];
+  workspaceId: string;
+  operationId: string;
+  signature: string;
+}): Promise<void> {
+  const operation = await getWorkspaceGasTankOperation(input.db, input.workspaceId, input.operationId);
+  const data = objectP4(operation?.operationData) ?? {};
+  if (
+    !operation ||
+    operation.operationType !== RESERVE_FUNDING_OPERATION_TYPE ||
+    operation.transactionSignature !== input.signature ||
+    data.wrapSignature !== input.signature
+  ) throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  if (data.stage === "wrap_failed" && operation.status === "failed") return;
+  if (data.stage !== "wrap_pending" || operation.status !== "preparing") {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
+  }
+  const saved = await advanceWorkspaceReserveFundingOperation(input.db, {
+    workspaceId: input.workspaceId,
+    operationId: input.operationId,
+    expectedStage: "wrap_pending",
+    nextStage: "wrap_failed",
+    operationData: {
+      wrapFailureCode: "reserve_wrap_transaction_failed"
+    }
+  });
+  if (saved !== "updated" && saved !== "duplicate") {
+    throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
   }
 }
 

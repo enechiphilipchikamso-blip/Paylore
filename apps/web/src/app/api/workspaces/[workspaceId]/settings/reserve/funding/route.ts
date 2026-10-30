@@ -9,7 +9,10 @@ import { clearSessionCookie, getSessionState } from "../../../../../../../server
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
 import { getDatabase } from "../../../../../../../server/db";
 import {
+  markReserveWrapFundingFailed,
+  markReserveWrapFundingVerified,
   prepareReserveWrapFunding,
+  recordPendingReserveWrapFunding,
   ReserveWrapFundingError,
   verifyFinalizedReserveWrapFunding
 } from "../../../../../../../server/solana/reserve-wrap-funding";
@@ -94,11 +97,15 @@ export async function GET(
       });
     }
     const stage = typeof data.stage === "string" ? data.stage : "wrap_verified";
-    const phase = stage.startsWith("preapply")
-      ? "preapply"
-      : stage.startsWith("deposit")
-        ? "deposit"
-        : "apply";
+    const phase = stage === "wrap_pending"
+      ? "wrap_pending"
+      : stage === "wrap_verified"
+        ? "wrap_verified"
+        : stage.startsWith("preapply")
+          ? "preapply"
+          : stage.startsWith("deposit")
+            ? "deposit"
+            : "apply";
     return NextResponse.json({
       status: "pending",
       wrapSignature,
@@ -125,6 +132,12 @@ export async function POST(
   { params }: { params: Promise<{ workspaceId: string }> }
 ): Promise<NextResponse> {
   let action: "prepare" | "verify" | "unknown" = "unknown";
+  let pendingWrapOperation: {
+    db: ReturnType<typeof getDatabase>;
+    workspaceId: string;
+    operationId: string;
+    signature: string;
+  } | null = null;
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
@@ -153,12 +166,33 @@ export async function POST(
       return NextResponse.json(prepared, { headers: { "Cache-Control": "no-store" } });
     }
 
-    await verifyFinalizedReserveWrapFunding({
+    const signature = parsed.data.signature!;
+    const recorded = await recordPendingReserveWrapFunding({
       db: access.db,
       workspaceId,
       walletAddress: access.walletAddress,
       amountBaseUnits: parsed.data.amountBaseUnits,
-      signature: parsed.data.signature!
+      signature
+    });
+    pendingWrapOperation = {
+      db: access.db,
+      workspaceId,
+      operationId: recorded.operationId,
+      signature
+    };
+    const verification = await verifyFinalizedReserveWrapFunding({
+      db: access.db,
+      workspaceId,
+      walletAddress: access.walletAddress,
+      amountBaseUnits: parsed.data.amountBaseUnits,
+      signature
+    });
+    await markReserveWrapFundingVerified({
+      db: access.db,
+      workspaceId,
+      walletAddress: access.walletAddress,
+      operationId: recorded.operationId,
+      verification
     });
     const result = await completeWorkspaceReserveConfidentialFunding({
       db: access.db,
@@ -176,13 +210,32 @@ export async function POST(
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
     if (error instanceof ReserveWrapFundingError) {
+      if (error.code === "reserve_wrap_transaction_failed" && pendingWrapOperation) {
+        try {
+          await markReserveWrapFundingFailed(pendingWrapOperation);
+        } catch {
+          console.error(JSON.stringify({
+            event: "workspace_reserve_wrap_failure_reconciliation_failed",
+            code: "failed_wrap_operation_not_reconciled"
+          }));
+          return NextResponse.json({
+            error: "reserve_wrap_failure_reconciliation_unavailable",
+            retryable: true
+          }, { status: 503, headers: { "Cache-Control": "no-store" } });
+        }
+      }
       console.error(JSON.stringify({
         event: "workspace_reserve_wrap_funding_reconciliation_failed",
         action,
         code: error.code,
         status: error.statusCode
       }));
+      const wrapFinalityPending = error.code === "reserve_wrap_transaction_not_finalized" ||
+        error.code === "reserve_wrap_transaction_status_unavailable";
       return NextResponse.json({
+        ...(wrapFinalityPending
+          ? { status: "pending", phase: "wrap_pending", stage: "wrap_pending" }
+          : {}),
         error: error.code,
         retryable: error.statusCode === 202 || error.statusCode >= 500
       }, { status: error.statusCode, headers: { "Cache-Control": "no-store" } });

@@ -1,7 +1,9 @@
 export const RESERVE_FUNDING_OPERATION_TYPE = "reserve_ordinary_usdc_confidential_funding";
 
 export type ReserveFundingOperationStage =
+  | "wrap_pending"
   | "wrap_verified"
+  | "wrap_failed"
   | "preapply_submitting"
   | "preapply_submitted"
   | "preapply_finalized"
@@ -16,7 +18,9 @@ export type ReserveFundingOperationStage =
   | "finalized";
 
 const transitions: Record<ReserveFundingOperationStage, readonly ReserveFundingOperationStage[]> = {
+  wrap_pending: ["wrap_verified", "wrap_failed"],
   wrap_verified: ["preapply_submitting", "preapply_finalized"],
+  wrap_failed: [],
   preapply_submitting: ["preapply_submitted"],
   preapply_submitted: ["preapply_finalized", "preapply_failed"],
   preapply_finalized: ["deposit_submitting"],

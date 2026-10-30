@@ -6790,6 +6790,7 @@ export async function beginWorkspaceReserveFundingOperation(
     requestDigest: string;
     wrapSignature: string;
     operationData: Record<string, unknown>;
+    initialStage?: ReserveFundingOperationStage;
   }
 ) {
   if (
@@ -6842,7 +6843,7 @@ export async function beginWorkspaceReserveFundingOperation(
       status: "preparing",
       transactionSignature: input.wrapSignature,
       feeLamports: "0",
-      operationData: { ...input.operationData, stage: "wrap_verified" },
+      operationData: { ...input.operationData, stage: input.initialStage ?? "wrap_verified" },
       createdAt: now,
       updatedAt: now
     }).onConflictDoNothing({
@@ -6911,7 +6912,11 @@ export async function advanceWorkspaceReserveFundingOperation(
     const nextFee = currentFee + BigInt(input.feeLamportsAdded ?? "0");
     if (nextFee >= (1n << 64n)) return "conflict";
     const updated = await tx.update(gasTankOperations).set({
-      status: input.nextStage === "finalized" ? "finalized" : "preparing",
+      status: input.nextStage === "finalized"
+        ? "finalized"
+        : input.nextStage === "wrap_failed"
+          ? "failed"
+          : "preparing",
       feeLamports: nextFee.toString(),
       operationData: {
         ...current,

@@ -42,6 +42,27 @@ describe("ReserveActions ordinary-USDC funding gate", () => {
 });
 
 describe("ReserveActions confidential funding outcomes", () => {
+  it("shows a distinct recoverable status while the public wrap is awaiting finality", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "pending",
+      phase: "wrap_pending"
+    });
+    expect(notice.state).toBe("partial");
+    expect(notice.text).toContain("ordinary-USDC wrap was submitted");
+    expect(notice.text).toContain("saved its signature");
+    expect(notice.text).toContain("do not submit another wrap");
+  });
+
+  it("distinguishes a verified public wrap from an unfinished confidential deposit", () => {
+    const notice = getReserveFundingOutcomeMessage({
+      status: "pending",
+      phase: "wrap_verified"
+    });
+    expect(notice.state).toBe("partial");
+    expect(notice.text).toContain("wrap is finalized and verified");
+    expect(notice.text).toContain("has not yet confirmed a confidential deposit");
+  });
+
   it("keeps an unfinished apply operation resumable without asking for another wrap", () => {
     const notice = getReserveFundingOutcomeMessage({
       status: "pending",
