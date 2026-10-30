@@ -5,7 +5,7 @@ import {
   AccountRole, addSignersToTransactionMessage, address, appendTransactionMessageInstruction, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
-  getBase64EncodedWireTransaction, getBase58Decoder, getProgramDerivedAddress,
+  getBase64EncodedWireTransaction, getProgramDerivedAddress,
   partiallySignTransactionMessageWithSigners, setTransactionMessageFeePayerSigner, signature,
   setTransactionMessageLifetimeUsingBlockhash, singleInstructionPlan,
   type Instruction, type InstructionPlan, type Signature
@@ -653,7 +653,7 @@ type ReserveFundingTransaction = {
 function serializeReserveInstruction(instruction: Instruction): SerializedReserveInstruction {
   return {
     programAddress: instruction.programAddress,
-    dataBase64: Buffer.from(instruction.data).toString("base64"),
+    dataBase64: Buffer.from(Array.from(instruction.data)).toString("base64"),
     accountAddresses: (instruction.accounts ?? []).map((account) => account.address)
   };
 }
@@ -862,7 +862,7 @@ async function resolveReserveFundingFinality(input: {
   signatureText: string;
   lastValidBlockHeight: string;
 }): Promise<"finalized" | "failed" | "pending"> {
-  const transactionSignature = signature(getBase58Decoder().decode(input.signatureText));
+  const transactionSignature = signature(input.signatureText);
   try {
     const status = (await input.rpc.getSignatureStatuses(
       [transactionSignature],
