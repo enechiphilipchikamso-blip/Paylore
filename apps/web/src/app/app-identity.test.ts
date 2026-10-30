@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { APP_IDENTITY, createRootMetadata } from "./app-identity";
-import { manifest } from "./manifest";
+import manifest from "./manifest";
 import { createPublicMetadata, metadataBase, siteConfig } from "./site";
 
 const pngSignature = Buffer.from([
@@ -9,8 +9,9 @@ const pngSignature = Buffer.from([
 ]);
 
 async function readPublicAsset(path: string): Promise<Buffer> {
+  const relativePath = path.startsWith("/") ? path.slice(1) : path;
   return readFile(
-    new URL(`../../../../public/${path.replace(/^\\//, "")}`, import.meta.url)
+    new URL(\`../../../../public/\${relativePath}\`, import.meta.url)
   );
 }
 
@@ -75,23 +76,20 @@ describe("Paylore public dApp identity", () => {
     expect(siteConfig.icon).toBe(APP_IDENTITY.icons.png512);
   });
 
-  it("keeps page metadata canonical and absolute on the configured production origin", () => {
+  it("keeps page metadata canonical and absolute on the selected site origin", () => {
     const metadata = createPublicMetadata({
       title: "Pricing",
       description: "Paylore workspace pricing.",
       path: "/pricing"
     });
-    const canonical = metadata.alternates?.canonical;
-    const openGraphUrl = metadata.openGraph &&
-      "url" in metadata.openGraph
-      ? metadata.openGraph.url
-      : undefined;
+    const canonicalUrl = new URL(String(metadata.alternates?.canonical));
+    const openGraphUrl = new URL(
+      String((metadata.openGraph as { url?: string | URL }).url)
+    );
 
-    expect(canonical).toBeInstanceOf(URL);
-    expect(openGraphUrl).toBeInstanceOf(URL);
-    expect((canonical as URL).pathname).toBe("/pricing");
-    expect((canonical as URL).origin).toBe(metadataBase.origin);
-    expect((openGraphUrl as URL).origin).toBe(metadataBase.origin);
+    expect(canonicalUrl.pathname).toBe("/pricing");
+    expect(canonicalUrl.origin).toBe(metadataBase.origin);
+    expect(openGraphUrl.origin).toBe(metadataBase.origin);
   });
 
   it("serves real PNG assets with their declared square dimensions", async () => {
@@ -140,11 +138,18 @@ describe("Paylore public dApp identity", () => {
       new URL("../../../../netlify.toml", import.meta.url),
       "utf8"
     );
-    const headerSections = [
-      ...netlifyConfig.matchAll(
-        /\\[\\[headers\\]\\]\\s*for\\s*=\\s*"([^"]+)"\\s*\\[headers\\.values\\]([\\s\\S]*?)(?=\\[\\[headers\\]\\]|$)/g
-      )
-    ];
+    const headerSections = netlifyConfig
+      .split("[[headers]]")
+      .slice(1)
+      .map((content) => {
+        const pathLine = content
+          .split("\n")
+          .find((line) => line.trim().startsWith("for = "));
+        return {
+          path: pathLine?.split('"')[1],
+          content
+        };
+      });
 
     const expectedPaths = [
       APP_IDENTITY.icons.faviconIco,
@@ -155,12 +160,12 @@ describe("Paylore public dApp identity", () => {
     ];
 
     for (const path of expectedPaths) {
-      const section = headerSections.find((match) => match[1] === path);
-      expect(section, `Missing public header rule for ${path}`).toBeTruthy();
-      expect(section?.[2]).toContain(
+      const section = headerSections.find((match) => match.path === path);
+      expect(section, \`Missing public header rule for \${path}\`).toBeTruthy();
+      expect(section?.content).toContain(
         'Cache-Control = "public, max-age=0, must-revalidate"'
       );
-      expect(section?.[2]).toContain('X-Content-Type-Options = "nosniff"');
+      expect(section?.content).toContain('X-Content-Type-Options = "nosniff"');
     }
   });
 });

@@ -41,9 +41,6 @@ export const siteOrigin =
 
 export const metadataBase = new URL(siteOrigin);
 
-const canonicalSiteOrigin =
-  configuredSiteOrigin ?? productionFallback;
-
 export const publicRoutes = [
   "/",
   "/product",
@@ -76,26 +73,20 @@ export function createPublicMetadata({
   description,
   path
 }: PublicMetadataInput): Metadata {
-  const canonicalUrl = canonicalSiteOrigin
-    ? new URL(path, canonicalSiteOrigin).toString()
-    : undefined;
+  const canonicalUrl = new URL(path, metadataBase).toString();
 
   return {
     title,
     description,
-    ...(canonicalUrl
-      ? {
-          alternates: {
-            canonical: canonicalUrl
-          }
-        }
-      : {}),
+    alternates: {
+      canonical: canonicalUrl
+    },
     openGraph: {
       type: "website",
       siteName: siteConfig.name,
       title,
       description,
-      ...(canonicalUrl ? { url: canonicalUrl } : {}),
+      url: canonicalUrl,
       images: [
         {
           url: siteConfig.ogImage,

@@ -46,20 +46,25 @@ test("wallet identity icon and manifest URLs are public, direct, and correctly t
   request
 }) => {
   const assets = [
-    { path: "/apple-touch-icon.png", type: /^image\\/png/ },
-    { path: "/favicon.ico", type: /^image\\/(?:x-icon|vnd\\.microsoft\\.icon)/ },
-    { path: "/favicon.svg", type: /^image\\/svg\\+xml/ },
-    { path: "/icons/paylore-180x180.png", type: /^image\\/png/ },
-    { path: "/icons/paylore-192x192.png", type: /^image\\/png/ },
-    { path: "/icons/paylore-512x512.png", type: /^image\\/png/ },
-    { path: "/manifest.webmanifest", type: /^application\\/(?:manifest\\+)?json/ }
+    { path: "/apple-touch-icon.png", type: "image/png" },
+    { path: "/favicon.ico", types: ["image/x-icon", "image/vnd.microsoft.icon"] },
+    { path: "/favicon.svg", type: "image/svg+xml" },
+    { path: "/icons/paylore-180x180.png", type: "image/png" },
+    { path: "/icons/paylore-192x192.png", type: "image/png" },
+    { path: "/icons/paylore-512x512.png", type: "image/png" },
+    { path: "/manifest.webmanifest", type: "application/manifest+json" }
   ];
 
   for (const asset of assets) {
     const response = await request.get(asset.path, { maxRedirects: 0 });
     expect(response.status(), asset.path).toBe(200);
     expect(new URL(response.url()).pathname, asset.path).toBe(asset.path);
-    expect(response.headers()["content-type"], asset.path).toMatch(asset.type);
+    const contentType = response.headers()["content-type"].split(";")[0];
+    if ("types" in asset) {
+      expect(asset.types).toContain(contentType);
+    } else {
+      expect(contentType, asset.path).toBe(asset.type);
+    }
 
     if (asset.path.endsWith(".png")) {
       const body = await response.body();
