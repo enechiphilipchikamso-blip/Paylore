@@ -651,6 +651,9 @@ type ReserveFundingTransaction = {
 } | null;
 
 function serializeReserveInstruction(instruction: Instruction): SerializedReserveInstruction {
+  if (!instruction.data) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_instruction_data_missing", 409);
+  }
   return {
     programAddress: instruction.programAddress,
     dataBase64: Buffer.from(Array.from(instruction.data)).toString("base64"),
