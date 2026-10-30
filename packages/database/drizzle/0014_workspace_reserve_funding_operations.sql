@@ -14,6 +14,8 @@ CREATE TABLE "workspace_reserve_funding_operations" (
   "apply_signature" text,
   "apply_blockhash" text,
   "apply_last_valid_block_height" text,
+  "apply_instruction_data" text,
+  "apply_instruction_accounts" jsonb DEFAULT '[]'::jsonb NOT NULL,
   "public_balance_before" text,
   "public_balance_after" text,
   "pending_balance_before" text,
