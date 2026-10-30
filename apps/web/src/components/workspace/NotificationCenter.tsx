@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 
 type Notification = {
   id: string;
@@ -25,12 +26,15 @@ export function NotificationCenter({
 }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    state: "success" | "error";
+    text: string;
+  } | null>(null);
 
   async function markRead(notificationId: string) {
     if (busyId) return;
     setBusyId(notificationId);
-    setError(null);
+    setNotice(null);
     try {
       const response = await fetch(
         workspaceId
@@ -44,12 +48,13 @@ export function NotificationCenter({
         }
       );
       if (!response.ok) {
-        setError("The notification could not be marked as read. Refresh and try again.");
+        setNotice({ state: "error", text: "The notification could not be marked as read. Refresh and try again." });
         return;
       }
+      setNotice({ state: "success", text: "Notification marked as read." });
       router.refresh();
     } catch {
-      setError("The notification could not be updated. Check your connection and retry.");
+      setNotice({ state: "error", text: "The notification could not be updated. Check your connection and retry." });
     } finally {
       setBusyId(null);
     }
@@ -58,7 +63,7 @@ export function NotificationCenter({
   async function markAllRead() {
     if (busyId) return;
     setBusyId("all");
-    setError(null);
+    setNotice(null);
     try {
       const response = await fetch(
         workspaceId
@@ -72,12 +77,13 @@ export function NotificationCenter({
         }
       );
       if (!response.ok) {
-        setError("Notifications could not be updated. Refresh and try again.");
+        setNotice({ state: "error", text: "Notifications could not be updated. Refresh and try again." });
         return;
       }
+      setNotice({ state: "success", text: "All notifications marked as read." });
       router.refresh();
     } catch {
-      setError("Notifications could not be updated. Check your connection and retry.");
+      setNotice({ state: "error", text: "Notifications could not be updated. Check your connection and retry." });
     } finally {
       setBusyId(null);
     }
@@ -87,23 +93,32 @@ export function NotificationCenter({
     <section className="surface-card" aria-labelledby="notifications-title">
       <h2 id="notifications-title">Notifications</h2>
       {notifications.some((notification) => !notification.readAt) ? (
-        <button
+        <BusyActionButton
+          busy={busyId === "all"}
           className="button button--secondary"
-          disabled={busyId !== null}
+          disabled={busyId !== null && busyId !== "all"}
           onClick={() => void markAllRead()}
           type="button"
         >
           {busyId === "all" ? "Updating…" : "Mark all as read"}
-        </button>
+        </BusyActionButton>
       ) : null}
-      {error ? (
-        <div className="state-callout" data-state="error" role="alert">
+      {notice ? (
+        <div
+          className="state-callout"
+          data-state={notice.state}
+          role={notice.state === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>{error}</p>
+          <p>{notice.text}</p>
         </div>
       ) : null}
       {notifications.length === 0 ? (
-        <p>You&apos;re all caught up. New workspace notifications will appear here.</p>
+        <div className="workspace-empty-state">
+          <h3>No notifications yet</h3>
+          <p>You&apos;re all caught up. New workspace notifications will appear here.</p>
+        </div>
       ) : (
         <ul className="notification-list">
           {notifications.map((notification) => (
@@ -137,14 +152,15 @@ export function NotificationCenter({
                   </p>
                 ) : null}
                 {!notification.readAt ? (
-                  <button
+                  <BusyActionButton
+                    busy={busyId === notification.id}
                     className="button button--secondary"
-                    disabled={busyId !== null}
+                    disabled={busyId !== null && busyId !== notification.id}
                     onClick={() => void markRead(notification.id)}
                     type="button"
                   >
                     {busyId === notification.id ? "Updating…" : "Mark as read"}
-                  </button>
+                  </BusyActionButton>
                 ) : null}
               </article>
             </li>

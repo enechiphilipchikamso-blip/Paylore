@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 import type { ContributorImportResult } from "../../server/contributors-parser";
 
 export function ContributorImportForm({
@@ -113,9 +114,15 @@ export function ContributorImportForm({
           type="file"
         />
       </label>
-      <button className="button" disabled={!file || busy} onClick={() => void createPreview()} type="button">
+      <BusyActionButton
+        busy={busy}
+        className="button"
+        disabled={!file}
+        onClick={() => void createPreview()}
+        type="button"
+      >
         {busy ? "Preparing preview…" : "Preview import"}
-      </button>
+      </BusyActionButton>
 
       {notice ? (
         <div className="state-callout" data-state={notice.state} role={notice.state === "error" ? "alert" : "status"}>
@@ -160,9 +167,15 @@ export function ContributorImportForm({
           <p className="notice">
             The effective payout address must match the verified identity wallet. Finance/Auditor is read-only. Uploaded spreadsheet files are not retained by default.
           </p>
-          <button className="button" disabled={preview.validCount === 0 || busy} onClick={() => void commit()} type="button">
+          <BusyActionButton
+            busy={busy}
+            className="button"
+            disabled={preview.validCount === 0}
+            onClick={() => void commit()}
+            type="button"
+          >
             Commit contributors
-          </button>
+          </BusyActionButton>
         </div>
       ) : null}
 

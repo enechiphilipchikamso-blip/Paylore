@@ -54,7 +54,7 @@ export default async function PayrollRunDetailPage({
     ["commit_pending", "submitting"].includes(payrollRun.run.status);
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -188,6 +188,6 @@ export default async function PayrollRunDetailPage({
         Back to payroll runs
       </Link>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

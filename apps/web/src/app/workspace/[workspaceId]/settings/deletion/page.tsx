@@ -28,7 +28,7 @@ export default async function WorkspaceDeletionPage({
   if (context.workspace.role !== "organization_admin") notFound();
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -45,6 +45,6 @@ export default async function WorkspaceDeletionPage({
       </header>
       <WorkspaceDeletionActions workspaceId={workspaceId} />
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

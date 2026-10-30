@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 
 type RetentionNotification = {
   id: string;
@@ -19,6 +20,7 @@ export function WorkspaceRetentionBanner({
     useState<RetentionNotification | null>(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -48,7 +50,7 @@ export function WorkspaceRetentionBanner({
   }, [workspaceId]);
 
   async function acknowledge() {
-    if (!notification) return;
+    if (!notification || busy) return;
     setBusy(true);
     setError(false);
     try {
@@ -67,6 +69,7 @@ export function WorkspaceRetentionBanner({
         throw new Error("The retention notice could not be acknowledged.");
       }
       setNotification(null);
+      setAcknowledged(true);
     } catch {
       setError(true);
     } finally {
@@ -74,7 +77,7 @@ export function WorkspaceRetentionBanner({
     }
   }
 
-  if (!notification && !error) return null;
+  if (!notification && !error && !acknowledged) return null;
   return (
     <aside
       className="state-callout"
@@ -91,16 +94,18 @@ export function WorkspaceRetentionBanner({
             {notification.destination ? (
               <Link href={notification.destination}>Review retention</Link>
             ) : null}
-            <button
-              type="button"
+            <BusyActionButton
+              busy={busy}
               className="button-secondary"
-              disabled={busy}
               onClick={() => void acknowledge()}
+              type="button"
             >
               {busy ? "Updating…" : "Acknowledge"}
-            </button>
+            </BusyActionButton>
           </div>
         </>
+      ) : acknowledged ? (
+        <p>Retention notice marked as read.</p>
       ) : (
         <p>
           Retention notices could not be loaded. Review{" "}

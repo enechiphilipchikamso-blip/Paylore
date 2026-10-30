@@ -77,7 +77,7 @@ export default async function WorkspaceRecoveryDetailPage({
   const chainStatusLabel = finalizedClaimState ? stateLabel(finalizedClaimState) : "Unable to verify";
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -153,6 +153,6 @@ export default async function WorkspaceRecoveryDetailPage({
         Back to recovery queue
       </Link>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

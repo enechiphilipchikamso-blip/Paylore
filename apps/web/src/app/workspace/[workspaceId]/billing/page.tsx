@@ -80,7 +80,7 @@ export default async function WorkspaceBillingPage({
   }[status];
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={workspace.workspaceName}
@@ -128,6 +128,6 @@ export default async function WorkspaceBillingPage({
         />
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

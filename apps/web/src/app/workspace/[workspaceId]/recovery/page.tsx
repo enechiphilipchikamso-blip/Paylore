@@ -37,7 +37,7 @@ export default async function WorkspaceRecoveryQueuePage({
   const recoveryQueue = await getWorkspacePayrollRecoveryQueue(context.db, workspaceId);
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -98,6 +98,6 @@ export default async function WorkspaceRecoveryQueuePage({
         )}
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

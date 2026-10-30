@@ -145,7 +145,7 @@ export default async function WorkspaceLedgerPage({
       : undefined;
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -281,6 +281,6 @@ export default async function WorkspaceLedgerPage({
         </nav>
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

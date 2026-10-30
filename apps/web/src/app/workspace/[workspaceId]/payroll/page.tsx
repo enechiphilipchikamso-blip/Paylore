@@ -78,7 +78,7 @@ export default async function WorkspacePayrollPage({
       subscription?.status === "cancel_scheduled");
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -211,6 +211,6 @@ export default async function WorkspacePayrollPage({
         )}
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

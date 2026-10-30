@@ -93,7 +93,7 @@ export default async function WorkspaceGasTankPage({
   );
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -131,6 +131,6 @@ export default async function WorkspaceGasTankPage({
         />
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }
