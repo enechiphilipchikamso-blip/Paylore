@@ -40,8 +40,6 @@ export function getReserveFundingOutcomeMessage(input: {
   const errors: Record<string, string> = {
     reserve_gas_tank_insufficient_funds:
       "The workspace Gas Tank does not have enough SOL to pay for the confidential Reserve transaction. Fund the Gas Tank, then continue this same operation; do not wrap USDC again.",
-    reserve_gas_tank_not_initialized:
-      "Initialize and fund the workspace Gas Tank before approving this USDC wrap. No wrap transaction was submitted.",
     reserve_gas_tank_balance_unavailable:
       "Paylore could not verify the Gas Tank's current SOL balance. No USDC wrap was submitted. Check the Gas Tank and try again.",
     reserve_gas_tank_key_mismatch:
