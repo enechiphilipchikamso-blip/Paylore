@@ -63,7 +63,7 @@ export default async function ContributorCompensationPage({
   ]);
   const config = loadPayloreConfig();
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -104,6 +104,6 @@ export default async function ContributorCompensationPage({
         offboardingRequested={offboarding?.status === "requested"}
       />
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

@@ -272,6 +272,69 @@ export default async function WorkspacePage({
         </section>
       ) : null}
 
+      {workspace.role === "finance_auditor" ? (
+        <section className="workspace-quick-links" aria-labelledby="finance-overview-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Finance &amp; audit</p>
+              <h2 id="finance-overview-heading">Workspace records</h2>
+              <p>Review payroll, contributor records and operational activity. These views do not include administrator controls.</p>
+            </div>
+          </header>
+          <p className="notice" role="note">
+            Your Finance/Auditor access is read-only. Subscription changes, contributor administration, reserve management and payroll recovery remain with the workspace administrator.
+          </p>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/payroll`}>
+              <span><strong>Payroll history</strong><small>Review payroll runs, allocations and their recorded states.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/contributors`}>
+              <span><strong>Contributor directory</strong><small>Review contributor roles, wallet associations and onboarding status.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/ledger`}>
+              <span><strong>Workspace ledger</strong><small>Filter and export finalized financial and operational records.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/billing`}>
+              <span><strong>Billing history</strong><small>Review subscription status and verified payments.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/gas-tank`}>
+              <span><strong>Gas Tank activity</strong><small>Inspect the sponsored-fee balance and operation history.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Notifications</strong><small>Review workspace updates and operational notices.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {workspace.role === "contributor" ? (
+        <section className="workspace-quick-links" aria-labelledby="contributor-overview-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Contributor workspace</p>
+              <h2 id="contributor-overview-heading">Your payroll</h2>
+              <p>Review compensation assigned to your authenticated wallet and manage your contributor-controlled confidential account.</p>
+            </div>
+          </header>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/compensation`}>
+              <span><strong>Your compensation</strong><small>Review payroll allocations, claim status and confidential balances.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Your notifications</strong><small>Read workspace updates and notices addressed to your account.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
       <section className="invite-state">
         {query.created === "1" ? (
           <div

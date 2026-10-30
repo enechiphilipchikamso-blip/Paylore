@@ -15,13 +15,15 @@ export function getWorkspaceNavigationGroups(
   if (role === "contributor") {
     groups.push({
       label: "Your workspace",
-      items: [{ label: "Your compensation", href: `${base}/compensation` }]
-    });
+      items: [
+        { label: "Your compensation", href: `${base}/compensation` },
+        { label: "Notifications", href: `${base}/notifications` }
+      ]    });
     return groups;
   }
 
   groups.push({
-    label: "Operations",
+    label: role === "finance_auditor" ? "Finance" : "Operations",
     items: [
       { label: "Payroll", href: `${base}/payroll` },
       { label: "Contributors", href: `${base}/contributors` },

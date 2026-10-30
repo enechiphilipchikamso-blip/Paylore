@@ -137,6 +137,48 @@ describe("active workspace setup checklist", () => {
     expect(html).not.toContain("Finish setting up this workspace");
   });
 
+  it("gives Finance/Auditor a read-only dashboard to the workspace records", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue({
+      ...workspace,
+      role: "finance_auditor"
+    });
+    const page = await WorkspacePage({
+      params: Promise.resolve({ workspaceId: "workspace-a" }),
+      searchParams: Promise.resolve({})
+    });
+    const html = renderToStaticMarkup(page);
+
+    expect(html).toContain("Finance &amp; audit");
+    expect(html).toContain("Workspace records");
+    expect(html).toContain("Your Finance/Auditor access is read-only.");
+    expect(html).toContain('href="/workspace/workspace-a/payroll"');
+    expect(html).toContain('href="/workspace/workspace-a/contributors"');
+    expect(html).toContain('href="/workspace/workspace-a/ledger"');
+    expect(html).toContain('href="/workspace/workspace-a/billing"');
+    expect(html).not.toContain('href="/workspace/workspace-a/recovery"');
+    expect(html).not.toContain('href="/workspace/workspace-a/settings/reserve"');
+    expect(html).not.toContain('href="/workspace/workspace-a/contributors/invitations"');
+    expect(mocks.getWorkspaceSetupProgress).not.toHaveBeenCalled();
+  });
+
+  it("gives contributors a direct compensation destination without administrator controls", async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue({
+      ...workspace,
+      role: "contributor"
+    });
+    const page = await WorkspacePage({
+      params: Promise.resolve({ workspaceId: "workspace-a" }),
+      searchParams: Promise.resolve({})
+    });
+    const html = renderToStaticMarkup(page);
+
+    expect(html).toContain("Your payroll");
+    expect(html).toContain('href="/workspace/workspace-a/compensation"');
+    expect(html).not.toContain("Workspace tools");
+    expect(html).not.toContain("Confidential reserve setup");
+    expect(mocks.getWorkspaceSetupProgress).not.toHaveBeenCalled();
+  });
+
   it("does not show administrator setup steps or call setup reconciliation for the auditor role", async () => {
     mocks.getWorkspaceForUser.mockResolvedValue({
       ...workspace,

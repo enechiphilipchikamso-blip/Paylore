@@ -17,8 +17,10 @@ describe("workspace navigation policy", () => {
     expect(items).toContain("/workspace/workspace-a/settings/deletion");
   });
 
-  it("keeps finance navigation away from administrator-only destinations", () => {
-    const items = hrefs("finance_auditor");
+  it("labels Finance/Auditor destinations as finance navigation and keeps administrator-only links out", () => {
+    const groups = getWorkspaceNavigationGroups("workspace-a", "finance_auditor");
+    const items = groups.flatMap((group) => group.items.map((item) => item.href));
+    expect(groups.map((group) => group.label)).toEqual(["Overview", "Finance", "Workspace"]);
     expect(items).toContain("/workspace/workspace-a/billing");
     expect(items).toContain("/workspace/workspace-a/ledger");
     expect(items).not.toContain("/workspace/workspace-a/contributors/invitations");
@@ -27,10 +29,11 @@ describe("workspace navigation policy", () => {
     expect(items).not.toContain("/workspace/workspace-a/settings/deletion");
   });
 
-  it("limits contributor navigation to home and compensation", () => {
+  it("limits contributor navigation to home, compensation and personal notifications", () => {
     expect(hrefs("contributor")).toEqual([
       "/workspace/workspace-a",
-      "/workspace/workspace-a/compensation"
+      "/workspace/workspace-a/compensation",
+      "/workspace/workspace-a/notifications"
     ]);
   });
 

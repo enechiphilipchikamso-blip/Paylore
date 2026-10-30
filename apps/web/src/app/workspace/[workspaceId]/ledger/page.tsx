@@ -211,7 +211,11 @@ export default async function WorkspaceLedgerPage({
             <section className="surface-card" aria-labelledby="ledger-entries-title">
         <h2 id="ledger-entries-title">Entries</h2>
         {entries.length === 0 ? (
-          <p>No ledger entries match these filters.</p>
+          <div className="workspace-empty-state">
+            <h3>No ledger entries match</h3>
+            <p>Try changing the category, status or date range, or clear the filters to review all available workspace records.</p>
+            <Link className="button button--secondary" href={`/workspace/${workspaceId}/ledger`}>Clear filters</Link>
+          </div>
         ) : (
           <div className="table-scroll">
             <table>

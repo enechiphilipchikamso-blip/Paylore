@@ -39,7 +39,11 @@ export default async function ContributorsPage({
       <header className="protected-header">
         <p className="eyebrow">Workspace</p>
         <h2>Contributors</h2>
-        <p>Manage workspace contributor records, onboarding, and invitation status.</p>
+        <p>
+          {canManage
+            ? "Manage workspace contributor records, onboarding, and invitation status."
+            : "Review contributor roles, wallet associations and onboarding status. This Finance/Auditor view is read-only."}
+        </p>
       </header>
       <section className="surface-card">
         <ContributorDirectory

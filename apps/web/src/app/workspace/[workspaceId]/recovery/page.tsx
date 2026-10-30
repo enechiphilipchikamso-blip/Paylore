@@ -61,7 +61,10 @@ export default async function WorkspaceRecoveryQueuePage({
           change its claim state.
         </p>
         {recoveryQueue.length === 0 ? (
-          <p>No unclaimed payroll allocations are currently in the recovery queue.</p>
+          <div className="workspace-empty-state">
+            <h3>No unclaimed allocations to review</h3>
+            <p>When the workspace has payroll allocations that remain unclaimed, they will appear here with their Claim PDA status.</p>
+          </div>
         ) : (
           <div className="table-scroll">
             <table>

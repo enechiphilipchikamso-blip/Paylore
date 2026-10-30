@@ -459,7 +459,10 @@ export function GasTankActions({
             </table>
           </div>
         ) : (
-          <p>No sponsored operations have been recorded.</p>
+          <div className="workspace-empty-state">
+            <h4>No sponsored operations yet</h4>
+            <p>Approved workspace operations that use the Gas Tank will appear here with their finalized status and network fee.</p>
+          </div>
         )}
         <p className="notice">
           Only approved workspace-scoped payroll Claim PDA creation is eligible for sponsorship.
