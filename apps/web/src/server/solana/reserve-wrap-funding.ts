@@ -350,7 +350,7 @@ export async function recordPendingReserveWrapFunding(input: {
   if (begun.status === "in_progress") {
     throw new ReserveWrapFundingError("reserve_confidential_funding_in_progress", 409);
   }
-  if (begun.status === "invalid" || begun.status === "conflict") {
+  if (begun.status === "conflict") {
     throw new ReserveWrapFundingError("reserve_wrap_operation_conflict", 409);
   }
   const data = objectP4(operation.operationData) ?? {};
