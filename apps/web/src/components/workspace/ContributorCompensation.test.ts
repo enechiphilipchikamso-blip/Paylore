@@ -139,6 +139,13 @@ describe("ContributorCompensation rendered settlement states", () => {
     expect(html).not.toContain("finalized-settlement-signature");
   });
 
+  it("explains when confidential account setup is blocked by missing mint configuration", () => {
+    const html = render({ ...baseProps, mint: null });
+
+    expect(html).toContain("Confidential account setup is unavailable because the wrapped-USDC mint is not configured.");
+    expect(html).toContain("No account setup or claim transaction can be submitted.");
+  });
+
   it("does not offer a claim action when no allocation is present", () => {
     const html = render({ ...baseProps, allocations: [], hasOpenAllocations: false });
 

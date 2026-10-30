@@ -839,6 +839,12 @@ export function ContributorCompensation({
         </section>
       ) : null}
 
+      {!mint ? (
+        <p className="notice" role="status">
+          Confidential account setup is unavailable because the wrapped-USDC mint is not configured. No account setup or claim transaction can be submitted.
+        </p>
+      ) : null}
+
       <section className="surface-card contributor-compensation__departure" aria-labelledby="workspace-departure-heading">
         <h2 id="workspace-departure-heading">Workspace departure</h2>
         <p>Leaving removes your membership. It does not transfer ownership of your confidential account to the organization.</p>
