@@ -54,7 +54,6 @@ import {
   subscriptionPayments,
   subscriptionPaymentAttempts,
   workspaceGasTanks,
-  workspaceReserveFundingOperations,
   gasTankOperations,
   workspaceLedgerEntries,
   workspaceReserves,
@@ -2766,147 +2765,6 @@ export async function restoreWorkspaceReserve(
 }
 
 
-export type WorkspaceReserveFundingStatus =
-  | "wrap_verified"
-  | "deposit_building"
-  | "deposit_pending"
-  | "deposit_finalized"
-  | "apply_building"
-  | "apply_pending"
-  | "completed"
-  | "failed";
-
-export type WorkspaceReserveFundingOperation = typeof workspaceReserveFundingOperations.$inferSelect;
-
-const WORKSPACE_RESERVE_FUNDING_TERMINAL_STATUSES: WorkspaceReserveFundingStatus[] = ["completed", "failed"];
-
-export async function beginWorkspaceReserveFundingOperation(
-  db: Database,
-  input: {
-    workspaceId: string;
-    walletAddress: string;
-    wrapSignature: string;
-    amountBaseUnits: string;
-    wrapPublicBalanceBefore: string;
-    wrapPublicBalanceAfter: string;
-  }
-): Promise<{
-  status: "created" | "duplicate" | "busy" | "conflict" | "reserve_not_found";
-  operation?: WorkspaceReserveFundingOperation;
-}> {
-  const numericFields = [
-    input.amountBaseUnits, input.wrapPublicBalanceBefore, input.wrapPublicBalanceAfter
-  ];
-  if (
-    !input.walletAddress || !input.wrapSignature || input.wrapSignature.length > 128 ||
-    !numericFields.every((value) => /^(0|[1-9][0-9]*)$/.test(value)) ||
-    BigInt(input.amountBaseUnits) <= 0n ||
-    BigInt(input.wrapPublicBalanceAfter) - BigInt(input.wrapPublicBalanceBefore) !== BigInt(input.amountBaseUnits)
-  ) return { status: "conflict" };
-
-  return db.transaction(async (tx) => {
-    const reserve = await tx.select({ workspaceId: workspaceReserves.workspaceId })
-      .from(workspaceReserves)
-      .where(eq(workspaceReserves.workspaceId, input.workspaceId))
-      .for("update")
-      .limit(1);
-    if (!reserve[0]) return { status: "reserve_not_found" as const };
-
-    const duplicate = await tx.select().from(workspaceReserveFundingOperations)
-      .where(eq(workspaceReserveFundingOperations.wrapSignature, input.wrapSignature))
-      .for("update")
-      .limit(1);
-    if (duplicate[0]) {
-      const row = duplicate[0];
-      return row.workspaceId === input.workspaceId &&
-        row.walletAddress === input.walletAddress &&
-        row.amountBaseUnits === input.amountBaseUnits
-        ? { status: "duplicate" as const, operation: row }
-        : { status: "conflict" as const };
-    }
-
-    const active = await tx.select().from(workspaceReserveFundingOperations)
-      .where(eq(workspaceReserveFundingOperations.activeWorkspaceId, input.workspaceId))
-      .for("update")
-      .limit(1);
-    if (active[0]) return { status: "busy" as const, operation: active[0] };
-
-    const inserted = await tx.insert(workspaceReserveFundingOperations).values({
-      workspaceId: input.workspaceId,
-      activeWorkspaceId: input.workspaceId,
-      walletAddress: input.walletAddress,
-      wrapSignature: input.wrapSignature,
-      amountBaseUnits: input.amountBaseUnits,
-      status: "wrap_verified",
-      wrapPublicBalanceBefore: input.wrapPublicBalanceBefore,
-      wrapPublicBalanceAfter: input.wrapPublicBalanceAfter
-    }).onConflictDoNothing().returning();
-    if (inserted[0]) return { status: "created" as const, operation: inserted[0] };
-
-    const replay = await tx.select().from(workspaceReserveFundingOperations)
-      .where(eq(workspaceReserveFundingOperations.wrapSignature, input.wrapSignature))
-      .limit(1);
-    if (!replay[0]) return { status: "conflict" as const };
-    return replay[0].workspaceId === input.workspaceId &&
-      replay[0].walletAddress === input.walletAddress &&
-      replay[0].amountBaseUnits === input.amountBaseUnits
-      ? { status: "duplicate" as const, operation: replay[0] }
-      : { status: "conflict" as const };
-  });
-}
-
-export async function getWorkspaceReserveFundingOperation(
-  db: Database, workspaceId: string, wrapSignature: string
-): Promise<WorkspaceReserveFundingOperation | null> {
-  const rows = await db.select().from(workspaceReserveFundingOperations).where(and(
-    eq(workspaceReserveFundingOperations.workspaceId, workspaceId),
-    eq(workspaceReserveFundingOperations.wrapSignature, wrapSignature)
-  )).limit(1);
-  return rows[0] ?? null;
-}
-
-export async function getLatestWorkspaceReserveFundingOperation(
-  db: Database, workspaceId: string
-): Promise<WorkspaceReserveFundingOperation | null> {
-  const rows = await db.select().from(workspaceReserveFundingOperations)
-    .where(eq(workspaceReserveFundingOperations.workspaceId, workspaceId))
-    .orderBy(desc(workspaceReserveFundingOperations.createdAt))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-export async function getActiveWorkspaceReserveFundingOperation(
-  db: Database, workspaceId: string
-): Promise<WorkspaceReserveFundingOperation | null> {
-  const rows = await db.select().from(workspaceReserveFundingOperations)
-    .where(eq(workspaceReserveFundingOperations.activeWorkspaceId, workspaceId))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-export async function updateWorkspaceReserveFundingOperation(
-  db: Database,
-  input: {
-    workspaceId: string;
-    id: string;
-    expectedStatuses: WorkspaceReserveFundingStatus[];
-    values: Partial<typeof workspaceReserveFundingOperations.$inferInsert>;
-  }
-): Promise<WorkspaceReserveFundingOperation | null> {
-  if (input.expectedStatuses.length === 0) return null;
-  const terminal = input.values.status === "completed" || input.values.status === "failed";
-  const rows = await db.update(workspaceReserveFundingOperations).set({
-    ...input.values,
-    ...(terminal ? { activeWorkspaceId: null } : {}),
-    updatedAt: new Date()
-  }).where(and(
-    eq(workspaceReserveFundingOperations.workspaceId, input.workspaceId),
-    eq(workspaceReserveFundingOperations.id, input.id),
-    inArray(workspaceReserveFundingOperations.status, input.expectedStatuses)
-  )).returning();
-  return rows[0] ?? null;
-}
-
 export async function getWorkspaceGasTank(
   db: Database,
   workspaceId: string
@@ -5119,13 +4977,6 @@ export async function beginPayrollSettlementAttempt(
     const reserveRows = await tx.select({ workspaceId: workspaceReserves.workspaceId })
       .from(workspaceReserves).where(eq(workspaceReserves.workspaceId, input.workspaceId)).for("update").limit(1);
     if (!reserveRows[0]) return { status: "reserve_not_found" as const };
-    const activeReserveFunding = await tx.select({ id: workspaceReserveFundingOperations.id })
-      .from(workspaceReserveFundingOperations)
-      .where(eq(workspaceReserveFundingOperations.activeWorkspaceId, input.workspaceId))
-      .for("update")
-      .limit(1);
-    if (activeReserveFunding[0]) return { status: "workspace_busy" as const };
-
     const rows = await tx.select({
       id: payrollAllocations.id,
       claimAddress: payrollAllocations.claimAddress,
@@ -7715,13 +7566,6 @@ export async function beginPayrollRecoveryAttempt(
       .for("update")
       .limit(1);
     if (!reserveRows[0]) return { status: "reserve_not_found" as const };
-    const activeReserveFunding = await tx.select({ id: workspaceReserveFundingOperations.id })
-      .from(workspaceReserveFundingOperations)
-      .where(eq(workspaceReserveFundingOperations.activeWorkspaceId, input.workspaceId))
-      .for("update")
-      .limit(1);
-    if (activeReserveFunding[0]) return { status: "workspace_busy" as const };
-
     const pendingRows = await tx.select({ id: payrollAllocations.id })
       .from(payrollAllocations)
       .where(and(
