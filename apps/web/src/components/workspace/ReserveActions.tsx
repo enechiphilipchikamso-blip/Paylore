@@ -780,13 +780,13 @@ export function ReserveActions({
                 </div>
               ) : null}
               <button className="button" type="button"
-                disabled={busy || fundingBusy || checkingOnChain}
+                disabled={busy || fundingBusy || checkingOnChain} aria-busy={fundingBusy}
                 onClick={() => void fundReserveWithOrdinaryUsdc()}>
                 {fundingBusy ? "Working…" : pendingWrap ? "Continue confidential funding" : "Wrap USDC and fund Reserve"}
               </button>
             </section>
           ) : null}
-          <button className="button button--secondary" disabled={checkingOnChain || busy || fundingBusy} onClick={() => {
+          <button className="button button--secondary" disabled={checkingOnChain || busy || fundingBusy} aria-busy={checkingOnChain} onClick={() => {
             setCheckingOnChain(true);
             void refreshOnChainState();
           }} type="button">
@@ -794,7 +794,7 @@ export function ReserveActions({
           </button>
           {canInitialize ? (
             <>
-              <button className="button button--secondary" disabled={busy || fundingBusy} onClick={() => void run("restore")} type="button">
+              <button className="button button--secondary" disabled={busy || fundingBusy} aria-busy={busy} onClick={() => void run("restore")} type="button">
                 Verify encrypted backup
               </button>
               <button
@@ -805,6 +805,7 @@ export function ReserveActions({
                   checkingOnChain ||
                   !gasTankAllowsReserveInitialization(gasTankPreflight.status)
                 }
+                aria-busy={busy}
                 onClick={() => void run("initialize_confidential")}
                 type="button"
               >
@@ -818,7 +819,7 @@ export function ReserveActions({
           <h2>Reserve key custody not configured</h2>
           <p>Configure encrypted custody for the reserve signing key. This action does not create or fund an on-chain confidential reserve.</p>
           {canInitialize ? (
-            <button className="button" disabled={busy || fundingBusy} onClick={() => void run("initialize")} type="button">
+            <button className="button" disabled={busy || fundingBusy} aria-busy={busy} onClick={() => void run("initialize")} type="button">
               Configure reserve key custody
             </button>
           ) : null}

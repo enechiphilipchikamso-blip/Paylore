@@ -278,6 +278,7 @@ export function PayrollRecoveryAction({
       <button
         className="button button--secondary"
         disabled={busy}
+        aria-busy={busy}
         onClick={() => void submitRecovery()}
         type="button"
       >

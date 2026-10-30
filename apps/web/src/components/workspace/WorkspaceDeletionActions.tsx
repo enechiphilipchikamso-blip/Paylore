@@ -114,6 +114,20 @@ export function WorkspaceDeletionActions({
     };
   }, [endpoint]);
 
+  async function refreshChecks() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await refresh();
+      setMessage("Workspace deletion checks refreshed.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Workspace deletion status could not be loaded.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function perform(action: "request" | "cancel" | "finalize") {
     if (
       action === "finalize" &&
@@ -284,6 +298,7 @@ export function WorkspaceDeletionActions({
             <button
               type="button"
               disabled={busy}
+              aria-busy={busy}
               onClick={() => void perform("request")}
             >
               {busy ? "Please wait…" : "Request deletion"}
@@ -295,6 +310,7 @@ export function WorkspaceDeletionActions({
                   type="button"
                   className="button-secondary"
                   disabled={busy}
+                  aria-busy={busy}
                   onClick={() => void perform("cancel")}
                 >
                   Cancel deletion request
@@ -305,13 +321,8 @@ export function WorkspaceDeletionActions({
                   type="button"
                   className="button-secondary"
                   disabled={busy}
-                  onClick={() => void refresh().catch((error: unknown) => {
-                    setMessage(
-                      error instanceof Error
-                        ? error.message
-                        : "Workspace deletion status could not be loaded."
-                    );
-                  })}
+                  aria-busy={busy}
+                  onClick={() => void refreshChecks()}
                 >
                   Refresh deletion checks
                 </button>
@@ -321,6 +332,7 @@ export function WorkspaceDeletionActions({
                   type="button"
                   className="button-danger"
                   disabled={busy}
+                  aria-busy={busy}
                   onClick={() => void perform("finalize")}
                 >
                   {busy ? "Deleting application data…" : "Delete workspace data"}

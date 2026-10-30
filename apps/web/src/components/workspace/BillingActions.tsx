@@ -152,6 +152,7 @@ export function BillingActions({
                   <button
                     className="button button--secondary"
                     disabled={busy}
+                    aria-busy={busy}
                     onClick={() => void updateCancellation("cancel")}
                     type="button"
                   >
@@ -171,6 +172,7 @@ export function BillingActions({
             <button
               className="button button--secondary"
               disabled={busy}
+              aria-busy={busy}
               onClick={() => void updateCancellation("keep-active")}
               type="button"
             >

@@ -69,6 +69,7 @@ export function GasTankActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [copyingAddress, setCopyingAddress] = useState(false);
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pendingFunding, setPendingFunding] = useState<{
@@ -253,6 +254,7 @@ export function GasTankActions({
               className="button"
               type="button"
               disabled={busy}
+              aria-busy={busy}
               onClick={() => void configure("initialize")}
             >
               Set up Gas Tank
@@ -289,9 +291,15 @@ export function GasTankActions({
               <button
                 className="button button--secondary"
                 type="button"
-                onClick={() => void navigator.clipboard.writeText(gasTank.address)
-                  .then(() => setNotice({ state: "success", text: "Gas Tank address copied." }))
-                  .catch(() => setNotice({ state: "error", text: "Could not copy the Gas Tank address. Select and copy it manually." }))}
+                disabled={copyingAddress}
+                aria-busy={copyingAddress}
+                onClick={() => {
+                  setCopyingAddress(true);
+                  void navigator.clipboard.writeText(gasTank.address)
+                    .then(() => setNotice({ state: "success", text: "Gas Tank address copied." }))
+                    .catch(() => setNotice({ state: "error", text: "Could not copy the Gas Tank address. Select and copy it manually." }))
+                    .finally(() => setCopyingAddress(false));
+                }}
               >
                 Copy address
               </button>
@@ -300,6 +308,7 @@ export function GasTankActions({
                   className="button button--secondary"
                   type="button"
                   disabled={busy}
+                  aria-busy={busy}
                   onClick={() => void configure("restore")}
                 >
                   Verify encrypted backup
@@ -338,6 +347,7 @@ export function GasTankActions({
                 className="button"
                 type="button"
                 disabled={busy || !walletAddress}
+                aria-busy={busy}
                 onClick={() => void fund()}
               >
                 Fund Gas Tank
@@ -351,6 +361,7 @@ export function GasTankActions({
           className="button button--secondary"
           type="button"
           disabled={busy}
+          aria-busy={busy}
           onClick={() => {
             setBusy(true);
             void verifyFunding(

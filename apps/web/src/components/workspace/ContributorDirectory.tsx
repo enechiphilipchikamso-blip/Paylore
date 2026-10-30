@@ -206,7 +206,7 @@ export function ContributorDirectory({
                           Edit profile details
                         </button>
                         {record.role === "contributor" && record.lifecycle === "active" ? (
-                          <button className="button button--secondary" disabled={busyId !== null} onClick={() => void requestOffboarding(record)} type="button">
+                          <button className="button button--secondary" disabled={busyId !== null} aria-busy={busyId === record.id} onClick={() => void requestOffboarding(record)} type="button">
                             Request offboarding review
                           </button>
                         ) : null}
@@ -233,7 +233,7 @@ export function ContributorDirectory({
                             <textarea id={`admin-note-${record.id}`} maxLength={2000} onChange={(event) => setNoteDraft(event.target.value)} rows={3} value={noteDraft} />
                           </label>
                           <div className="hero__actions">
-                            <button className="button" disabled={busyId !== null} type="submit">{busyId === record.id ? "Saving…" : "Save profile details"}</button>
+                            <button className="button" disabled={busyId !== null} aria-busy={busyId === record.id} type="submit">{busyId === record.id ? "Saving…" : "Save profile details"}</button>
                             <button className="button button--secondary" disabled={busyId !== null} onClick={() => setEditingId(null)} type="button">Cancel</button>
                           </div>
                         </form>

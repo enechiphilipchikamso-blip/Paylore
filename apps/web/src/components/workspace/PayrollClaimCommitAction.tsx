@@ -244,6 +244,7 @@ export function PayrollClaimCommitAction({
           !allocationCommitment ||
           claims.length === 0
         }
+        aria-busy={busy}
         onClick={() => void submitClaims()}
         type="button"
       >

@@ -51,11 +51,13 @@ export default async function WorkspaceSettingsPage({
           <p>Review subscription status and payment history.</p>
           <Link href={`/workspace/${workspaceId}/billing`}>Manage billing</Link>
         </article>
-        <article className="card">
-          <h3>Reserve</h3>
-          <p>Manage this workspace’s confidential payroll reserve.</p>
-          <Link href={`/workspace/${workspaceId}/settings/reserve`}>Manage confidential reserve</Link>
-        </article>
+        {context.workspace.role === "organization_admin" ? (
+          <article className="card">
+            <h3>Reserve</h3>
+            <p>Manage this workspace’s confidential payroll reserve.</p>
+            <Link href={`/workspace/${workspaceId}/settings/reserve`}>Manage confidential reserve</Link>
+          </article>
+        ) : null}
         {context.workspace.role === "organization_admin" ? (
           <article className="card">
             <h3>Data retention</h3>

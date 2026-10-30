@@ -8,9 +8,6 @@ import {
   SignOutButton
 } from "../../../components/auth/SignOutButton";
 import {
-  WORKSPACE_ROLE_LABELS
-} from "../../../server/authorization-policy";
-import {
   getDatabase
 } from "../../../server/db";
 import {
@@ -22,10 +19,13 @@ import {
   listWorkspaceMemberships
 } from "@paylore/database";
 import { WorkspaceActivation } from "../../../components/workspace/WorkspaceActivation";
-import { WorkspaceRetentionBanner } from "../../../components/workspace/WorkspaceRetentionBanner";
 import { loadPayloreConfig } from "../../../server/config";
 import { isValidSolanaAddress } from "../../../server/security";
 import { getWorkspaceSetupProgress } from "../../../server/workspace-setup-progress";
+import {
+  WorkspaceLegalFooter,
+  WorkspaceNavigation
+} from "../../../components/workspace/WorkspaceNavigation";
 
 export const metadata: Metadata = {
   title: "Workspace",
@@ -142,7 +142,17 @@ export default async function WorkspacePage({
       : null;
 
   return (
-    <div className="protected-wrap workspace-page">
+    <main className="protected-wrap workspace-page">
+      <WorkspaceNavigation
+        workspaceId={workspaceId}
+        workspaceName={workspace.workspaceName}
+        role={workspace.role}
+        memberships={memberships.map((membership) => ({
+          workspaceId: membership.workspaceId,
+          workspaceName: membership.workspaceName,
+          role: membership.role
+        }))}
+      />
       {query.activated === "1" ? (
         <div className="state-callout" data-state="success" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
@@ -152,102 +162,16 @@ export default async function WorkspacePage({
           ) : null}
         </div>
       ) : null}
-      <nav
-        className="workspace-navigation"
-        aria-label="Workspace navigation"
-      >
-        <Link
-          className="workspace-navigation__all"
-          href="/app"
-        >
-          All workspaces
-        </Link>
-
-        <details className="workspace-switcher">
-          <summary>
-            <span>Current workspace</span>
-            <strong>
-              {workspace.workspaceName}
-            </strong>
-          </summary>
-
-          <div className="workspace-switcher__menu">
-            <p>Switch workspace</p>
-            {memberships.map(
-              (membership) => (
-                <Link
-                  className="workspace-switcher__option"
-                  href={`/workspace/${membership.workspaceId}`}
-                  key={membership.workspaceId}
-                  aria-current={
-                    membership.workspaceId === workspace.workspaceId
-                      ? "page"
-                      : undefined
-                  }
-                >
-                  <span>
-                    {membership.workspaceName}
-                  </span>
-                  <small>
-                    {
-                      WORKSPACE_ROLE_LABELS[
-                        membership.role
-                      ]
-                    }
-                  </small>
-                </Link>
-              )
-            )}
-            <Link
-              className="workspace-switcher__create"
-              href="/app#create-workspace"
-            >
-              Create workspace
-            </Link>
-          </div>
-        </details>
-      </nav>
-
-      <WorkspaceRetentionBanner workspaceId={workspaceId} />
-
-      {workspace.role === "contributor" ? (
-        <nav className="workspace-main-nav" aria-label="Workspace features">
-          <Link href={`/workspace/${workspaceId}/compensation`}>Your compensation</Link>
-        </nav>
-      ) : null}
-
-      {workspace.role !== "contributor" ? (
-        <nav className="workspace-main-nav" aria-label="Workspace features">
-          <Link href={`/workspace/${workspaceId}/billing`}>Billing</Link>
-          <Link href={`/workspace/${workspaceId}/contributors`}>Contributor Directory</Link>
-          <Link href={`/workspace/${workspaceId}/contributors/invitations`}>Invitations</Link>
-          <Link href={`/workspace/${workspaceId}/settings`}>Settings</Link>
-          <Link href={`/workspace/${workspaceId}/gas-tank`}>Gas Tank</Link>
-          {workspace.role === "organization_admin" ? (
-            <Link href={`/workspace/${workspaceId}/settings/reserve`}>Confidential reserve</Link>
-          ) : null}
-        </nav>
-      ) : null}
-
-      <header className="protected-header">
-        <p className="eyebrow">
-          Workspace
-        </p>
-
-        <h1>
-          {workspace.workspaceName}
-        </h1>
-
+      <header className="protected-header workspace-home-heading">
+        <p className="eyebrow">Workspace home</p>
+        <h2>Workspace overview</h2>
         <p>
-          Your role:{" "}
-          <strong>
-            {
-              WORKSPACE_ROLE_LABELS[
-                workspace.role
-              ]
-            }
-          </strong>
-          .
+          A clear view of workspace status and the actions available to
+          {workspace.role === "organization_admin"
+            ? " your administrator team."
+            : workspace.role === "finance_auditor"
+              ? " your finance and audit role."
+              : " you as a contributor."}
         </p>
       </header>
 
@@ -307,6 +231,44 @@ export default async function WorkspacePage({
               </li>
             </ol>
           </section>
+        </section>
+      ) : null}
+
+      {workspace.role === "organization_admin" ? (
+        <section className="workspace-quick-links" aria-labelledby="workspace-tools-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Workspace controls</p>
+              <h2 id="workspace-tools-heading">Workspace tools</h2>
+              <p>Open the workspace area you need without leaving this dashboard.</p>
+            </div>
+          </header>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/contributors`}>
+              <span><strong>Contributors</strong><small>Review the directory and onboarding status.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/payroll`}>
+              <span><strong>Payroll</strong><small>Prepare runs and review contributor allocations.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/gas-tank`}>
+              <span><strong>Gas Tank</strong><small>Check the sponsored network-fee balance and activity.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/billing`}>
+              <span><strong>Billing</strong><small>Review the subscription and payment history.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/ledger`}>
+              <span><strong>Workspace ledger</strong><small>Review workspace-scoped financial and operational entries.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Notifications</strong><small>Review durable workspace updates.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
         </section>
       ) : null}
 
@@ -395,11 +357,7 @@ export default async function WorkspacePage({
           <SignOutButton />
         </div>
       </section>
-      <footer className="workspace-legal-footer">
-        <Link href="/terms">Terms</Link>
-        <Link href="/privacy">Privacy</Link>
-        <Link href="/security">Security</Link>
-      </footer>
-    </div>
+      <WorkspaceLegalFooter />
+    </main>
   );
 }

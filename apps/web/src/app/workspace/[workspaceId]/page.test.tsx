@@ -47,8 +47,9 @@ vi.mock("../../../components/auth/SignOutButton", () => ({
 vi.mock("../../../components/workspace/WorkspaceActivation", () => ({
   WorkspaceActivation: () => <div>Activation screen</div>
 }));
-vi.mock("../../../components/workspace/WorkspaceRetentionBanner", () => ({
-  WorkspaceRetentionBanner: () => null
+vi.mock("../../../components/workspace/WorkspaceNavigation", () => ({
+  WorkspaceNavigation: () => null,
+  WorkspaceLegalFooter: () => null
 }));
 
 import WorkspacePage from "./page";
