@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  assertWorkspaceReserveFundingGasTankReady,
   getWorkspaceConfidentialReserveSnapshot,
   initializeWorkspaceConfidentialReserveAccount,
   WorkspaceReserveInitializationError
@@ -376,6 +377,49 @@ vi.mock("../gas-tank", () => ({
 }));
 
 import { attachWorkspaceReserveSetupSignature } from "@paylore/database";
+
+describe("ordinary-USDC Reserve funding Gas Tank preflight", () => {
+  it("requires a live balance and the stored Gas Tank signer before the wrap wallet prompt", async () => {
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).resolves.toBeUndefined();
+    expect(h.gasTankBalanceCalls).toBe(1);
+  });
+
+  it("blocks before wallet approval when the Gas Tank has no SOL reserve for the confidential transactions", async () => {
+    h.gasTankBalanceLamports = 1n;
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+  });
+
+  it("fails closed when the Gas Tank balance cannot be read", async () => {
+    h.gasTankBalanceError = new Error("RPC unavailable");
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+  });
+
+  it("requires Gas Tank signing-key custody before inviting the administrator to wrap USDC", async () => {
+    h.gasTankExists = false;
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_not_initialized",
+      statusCode: 409
+    });
+    expect(h.gasTankBalanceCalls).toBe(0);
+  });
+});
 
 describe("workspace confidential reserve initialization", () => {
   it("configures a reserve only after the workspace PDA and confidential token account are verified", async () => {
