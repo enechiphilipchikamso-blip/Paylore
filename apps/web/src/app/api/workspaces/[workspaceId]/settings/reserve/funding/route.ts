@@ -128,7 +128,7 @@ export async function POST(
   try {
     assertSameOrigin(request);
     const { workspaceId } = await params;
-    const access = await authenticatedReserveAdmin(request, workspaceId);
+    const access = await authenticatedReserveAdmin(workspaceId);
     if (!access.ok) return access.response;
 
     let rawBody: unknown;
