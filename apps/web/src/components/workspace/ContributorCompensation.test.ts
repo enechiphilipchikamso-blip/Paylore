@@ -142,7 +142,9 @@ describe("ContributorCompensation rendered settlement states", () => {
   it("does not offer a claim action when no allocation is present", () => {
     const html = render({ ...baseProps, allocations: [], hasOpenAllocations: false });
 
-    expect(html).toContain("No finalized payroll claim commitments are recorded for you.");
+    expect(html).toContain("No payroll allocations yet");
+    expect(html).toContain("When your workspace administrator records payroll for your wallet");
+    expect(html).toContain("workspace-empty-state");
     expect(html).not.toContain("Claim &amp; Cash Out");
   });
 });

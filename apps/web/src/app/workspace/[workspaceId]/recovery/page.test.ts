@@ -79,7 +79,9 @@ describe("workspace payroll recovery queue", () => {
     });
     const html = renderToStaticMarkup(page);
 
-    expect(html).toContain("No unclaimed payroll allocations are currently in the recovery queue.");
+    expect(html).toContain("No unclaimed allocations to review");
+    expect(html).toContain("When the workspace has payroll allocations that remain unclaimed");
+    expect(html).toContain("workspace-empty-state");
     expect(html).not.toContain("Review allocation");
   });
 
