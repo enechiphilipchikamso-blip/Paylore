@@ -421,6 +421,27 @@ vi.mock("@solana/zk-sdk/bundler", () => {
 });
 
 vi.mock("@paylore/database", () => ({
+  isExactReserveFundingPreapply: (before: any, after: any) =>
+    before.pendingBalance > 0n &&
+    after.publicBalance === before.publicBalance &&
+    after.pendingBalance === 0n &&
+    after.availableBalance === before.availableBalance + before.pendingBalance,
+  isExactReserveFundingDeposit: (before: any, after: any, amount: bigint) =>
+    amount > 0n && amount <= (1n << 48n) - 1n &&
+    before.pendingBalance === 0n &&
+    before.publicBalance - after.publicBalance === amount &&
+    after.pendingBalance - before.pendingBalance === amount &&
+    after.availableBalance === before.availableBalance,
+  isExactReserveFundingApply: (before: any, after: any, amount: bigint) =>
+    amount > 0n && amount <= (1n << 48n) - 1n &&
+    before.pendingBalance === amount &&
+    after.publicBalance === before.publicBalance &&
+    after.pendingBalance === 0n &&
+    after.availableBalance - before.availableBalance === amount,
+  isUnchangedReserveFundingBalance: (expected: any, current: any) =>
+    current.publicBalance === expected.publicBalance &&
+    current.pendingBalance === expected.pendingBalance &&
+    current.availableBalance === expected.availableBalance,
   getWorkspacePayrollProgramAuthority: vi.fn(async () => ({ authorityAddress: h.authority })),
   getWorkspaceGasTank: vi.fn(async () => h.gasTankExists ? ({ address: h.gasTank }) : null),
   getWorkspaceReserve: vi.fn(async () => ({
