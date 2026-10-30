@@ -826,6 +826,8 @@ export const workspaceReserveFundingOperations = pgTable(
     applySignature: text("apply_signature"),
     applyBlockhash: text("apply_blockhash"),
     applyLastValidBlockHeight: text("apply_last_valid_block_height"),
+    applyInstructionData: text("apply_instruction_data"),
+    applyInstructionAccounts: jsonb("apply_instruction_accounts").$type<string[]>().notNull().default([]),
     publicBalanceBefore: text("public_balance_before"),
     publicBalanceAfter: text("public_balance_after"),
     pendingBalanceBefore: text("pending_balance_before"),
