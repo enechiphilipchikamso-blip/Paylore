@@ -23,6 +23,8 @@ import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
   advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,
   getWorkspaceGasTank, getWorkspacePayrollProgramAuthority, getWorkspaceReserve,
+  isExactReserveFundingApply, isExactReserveFundingDeposit,
+  isExactReserveFundingPreapply, isUnchangedReserveFundingBalance,
   type Database, type ReserveFundingOperationStage
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
@@ -869,8 +871,9 @@ type WorkspaceReserveConfidentialFundingResult = {
   amountBaseUnits: string;
   publicBalanceBaseUnits?: string;
   availableBalanceBaseUnits?: string;
+  phase?: "preapply" | "deposit" | "apply";
+  stage?: ReserveFundingOperationStage;
 };
-
 const MAX_CONFIDENTIAL_DEPOSIT_BASE_UNITS = (1n << 48n) - 1n;
 
 function reserveFundingMemo(
@@ -881,7 +884,22 @@ function reserveFundingMemo(
   return "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":" + phase + ":" + attempt;
 }
 
-/** Converts the verified public Reserve credit into pending and then spendable confidential funds. */
+function nextReserveFundingAttempt(value: unknown): number {
+  const current = typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+  if (current >= 1000) {
+    throw new WorkspaceReserveInitializationError("reserve_confidential_funding_retry_limit", 409);
+  }
+  return current + 1;
+}
+
+function storedReserveFundingBalance(value: unknown, fallback: bigint): bigint {
+  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) return fallback;
+  return BigInt(value);
+}
+
+/** Converts a verified public Reserve credit into pending and then spendable confidential funds. */
 export async function completeWorkspaceReserveConfidentialFunding(input: {
   db: Database;
   workspaceId: string;
@@ -917,9 +935,9 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
         account.status !== "account_ready" ||
         !account.confidentialTransferReady ||
         account.tokenAccount !== context.reserveTokenAddress ||
-        !account.publicBalanceBaseUnits ||
-        !account.availableBalanceBaseUnits ||
-        !account.pendingBalanceBaseUnits
+        account.publicBalanceBaseUnits === undefined ||
+        account.availableBalanceBaseUnits === undefined ||
+        account.pendingBalanceBaseUnits === undefined
       ) {
         throw new WorkspaceReserveInitializationError("reserve_confidential_account_not_ready", 409);
       }
@@ -950,9 +968,6 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
       const publicBefore = BigInt(account.publicBalanceBaseUnits);
       const availableBefore = BigInt(account.availableBalanceBaseUnits);
       const pendingBefore = BigInt(account.pendingBalanceBaseUnits);
-      if (publicBefore < amount) {
-        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_public_balance_insufficient", 409);
-      }
       const idempotencyKey = "reserve_funding:" + input.wrapSignature;
       const requestDigest = createHash("sha256").update([
         input.workspaceId, input.fallbackAuthorityAddress, input.amountBaseUnits,
@@ -978,7 +993,8 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
       if (begun.status === "reserve_not_found") {
         throw new WorkspaceReserveInitializationError("reserve_not_found", 409);
       }
-      if (begun.status === "in_progress" || begun.status === "conflict" || begun.status === "invalid" || !begun.operation) {
+      if (begun.status === "in_progress" || begun.status === "conflict" ||
+          begun.status === "invalid" || !begun.operation) {
         throw new WorkspaceReserveInitializationError("reserve_confidential_funding_in_progress", 409);
       }
       let operationData = object(begun.operation.operationData) ?? {};
@@ -1013,13 +1029,51 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
         operationData = { ...operationData, ...patch, stage: nextStage };
         stage = nextStage;
       };
-      const pending = (): WorkspaceReserveConfidentialFundingResult => ({
+      const pendingResult = (): WorkspaceReserveConfidentialFundingResult => ({
         status: "pending",
         wrapSignature: input.wrapSignature,
-        depositSignature: typeof operationData.depositSignature === "string" ? operationData.depositSignature : undefined,
-        applySignature: typeof operationData.applySignature === "string" ? operationData.applySignature : undefined,
-        amountBaseUnits: input.amountBaseUnits
+        depositSignature: typeof operationData.depositSignature === "string"
+          ? operationData.depositSignature
+          : undefined,
+        applySignature: typeof operationData.applySignature === "string"
+          ? operationData.applySignature
+          : undefined,
+        amountBaseUnits: input.amountBaseUnits,
+        phase: stage.startsWith("preapply")
+          ? "preapply"
+          : stage.startsWith("deposit")
+            ? "deposit"
+            : "apply",
+        stage: stage as ReserveFundingOperationStage
       });
+      const readBalances = async () => {
+        const [token, confidential] = await Promise.all([
+          fetchToken(context.rpc, address(context.reserveTokenAddress)),
+          fetchConfidentialTransferBalance({
+            token: address(context.reserveTokenAddress),
+            rpc: context.rpc,
+            elgamalSecretKey: context.secret,
+            aesKey: context.aesKey
+          })
+        ]);
+        return {
+          publicBalance: token.data.amount,
+          pendingBalance: confidential.pendingBalance,
+          availableBalance: confidential.availableBalance
+        };
+      };
+      const verifiedOperationBaseline = {
+        publicBalance: storedReserveFundingBalance(
+          operationData.initialPublicBalanceBaseUnits, publicBefore
+        ),
+        pendingBalance: storedReserveFundingBalance(
+          operationData.initialPendingBalanceBaseUnits, pendingBefore
+        ),
+        availableBalance: storedReserveFundingBalance(
+          operationData.initialAvailableBalanceBaseUnits, availableBefore
+        )
+      };
+
       if (begun.status === "finalized" || stage === "finalized") {
         return {
           status: "confidential_balance_verified",
@@ -1031,7 +1085,47 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           availableBalanceBaseUnits: String(operationData.finalAvailableBalanceBaseUnits ?? "")
         };
       }
-      if (stage === "wrap_verified" && pendingBefore > 0n) {
+      if (stage === "wrap_verified") {
+        if (publicBefore < amount) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_public_balance_insufficient", 409);
+        }
+        if (pendingBefore > 0n) {
+          const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
+          const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
+            token: address(context.reserveTokenAddress),
+            tokenAccount: token,
+            authority: context.signer,
+            elgamalSecretKey: context.secret,
+            aesKey: context.aesKey
+          });
+          const attempt = nextReserveFundingAttempt(operationData.preapplyAttempt);
+          await save("wrap_verified", "preapply_submitting", {
+            preapplyInstruction: serializeReserveInstruction(instruction),
+            preapplyAttempt: attempt,
+            preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply", attempt),
+            preapplyPublicBeforeBaseUnits: publicBefore.toString(),
+            preapplyPendingBeforeBaseUnits: pendingBefore.toString(),
+            preapplyAvailableBeforeBaseUnits: availableBefore.toString(),
+            preapplyStartedAt: new Date().toISOString()
+          });
+        } else {
+          await save("wrap_verified", "preapply_finalized", {
+            publicBeforeDepositBaseUnits: publicBefore.toString(),
+            availableBeforeDepositBaseUnits: availableBefore.toString()
+          });
+        }
+      }
+
+      if (stage === "preapply_failed") {
+        const balances = await readBalances();
+        const baseline = {
+          publicBalance: storedReserveFundingBalance(operationData.preapplyPublicBeforeBaseUnits, publicBefore),
+          pendingBalance: storedReserveFundingBalance(operationData.preapplyPendingBeforeBaseUnits, pendingBefore),
+          availableBalance: storedReserveFundingBalance(operationData.preapplyAvailableBeforeBaseUnits, availableBefore)
+        };
+        if (!isUnchangedReserveFundingBalance(baseline, balances) || baseline.pendingBalance <= 0n) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_balance_mismatch", 409);
+        }
         const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
         const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(context.reserveTokenAddress),
@@ -1040,83 +1134,117 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        const expected = serializeReserveInstruction(instruction);
-        await save("wrap_verified", "preapply_submitting", {
-          preapplyInstruction: expected,
-          preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply"),
+        const attempt = nextReserveFundingAttempt(operationData.preapplyAttempt);
+        await save("preapply_failed", "preapply_submitting", {
+          preapplyInstruction: serializeReserveInstruction(instruction),
+          preapplySignature: null,
+          preapplyLastValidBlockHeight: null,
+          preapplyAttempt: attempt,
+          preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply", attempt),
+          preapplyPublicBeforeBaseUnits: balances.publicBalance.toString(),
+          preapplyPendingBeforeBaseUnits: balances.pendingBalance.toString(),
+          preapplyAvailableBeforeBaseUnits: balances.availableBalance.toString(),
           preapplyStartedAt: new Date().toISOString()
-        });
-      } else if (stage === "wrap_verified") {
-        await save("wrap_verified", "preapply_finalized", {
-          availableBeforeDepositBaseUnits: account.availableBalanceBaseUnits,
-          publicBeforeDepositBaseUnits: account.publicBalanceBaseUnits
         });
       }
 
       if (stage === "preapply_submitting") {
-        const marker = String(operationData.preapplyMarker ?? reserveFundingMemo(input.wrapSignature, "preapply"));
-        let txSignature = typeof operationData.preapplySignature === "string" ? operationData.preapplySignature : null;
-        if (!txSignature) {
-          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
-          if (!txSignature) return pending();
-          await save("preapply_submitting", "preapply_submitted", { preapplySignature: txSignature });
-        }
-        stage = "preapply_submitted";
-      }
-      if (stage === "preapply_submitted") {
-        const txSignature = String(operationData.preapplySignature);
-        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
-        if (finality === "pending") return pending();
-        const transaction = await readReserveFundingTransaction(txSignature);
-        const expected = object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction;
-        verifyReserveInstructionInTransaction(
-          transaction, expected, String(operationData.preapplyMarker), context.reserveAddress
-        );
-        assertReservePublicBalanceDelta({
-          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
-          reserveAddress: context.reserveAddress, deltaBaseUnits: 0n
-        });
-        const balances = await deriveConfidentialBalanceSnapshot(
-          context.rpc, context.reserveTokenAddress, context.secret, context.aesKey
-        );
-        if (
-          finality !== "finalized" ||
-          BigInt(balances.pendingBalanceBaseUnits) !== 0n ||
-          BigInt(balances.availableBalanceBaseUnits) !== availableBefore + pendingBefore
-        ) {
-          throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_balance_mismatch", 409);
-        }
-        await save("preapply_submitted", "preapply_finalized", {
-          availableBeforeDepositBaseUnits: balances.availableBalanceBaseUnits,
-          publicBeforeDepositBaseUnits: account.publicBalanceBaseUnits,
-          preapplyFinalizedAt: new Date().toISOString()
-        }, await readReserveFundingFee(transaction));
-      }
-      if (stage === "preapply_failed") {
-        await save("preapply_failed", "preapply_submitting", {
-          preapplyInstruction: undefined,
-          preapplySignature: undefined,
-          preapplyMarker: reserveFundingMemo(input.wrapSignature, "preapply"),
-          preapplyStartedAt: new Date().toISOString()
-        });
-      }
-
-      if (stage === "preapply_finalized" || stage === "deposit_failed") {
         const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
-        const balance = await fetchConfidentialTransferBalance({
+        const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(context.reserveTokenAddress),
-          rpc: context.rpc,
+          tokenAccount: token,
+          authority: context.signer,
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        if (balance.pendingBalance !== 0n) {
-          throw new WorkspaceReserveInitializationError("reserve_confidential_pending_balance_not_cleared", 409);
+        const expected = object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction;
+        const actual = serializeReserveInstruction(instruction);
+        if (!expected || JSON.stringify(expected) !== JSON.stringify(actual)) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_instruction_changed", 409);
         }
-        const publicNow = BigInt(token.amount);
-        const availableNow = balance.availableBalance;
-        const expectedPublicBefore = BigInt(String(operationData.publicBeforeDepositBaseUnits ?? publicBefore.toString()));
-        const expectedAvailableBefore = BigInt(String(operationData.availableBeforeDepositBaseUnits ?? availableBefore.toString()));
-        if (publicNow !== expectedPublicBefore || availableNow !== expectedAvailableBefore) {
+        const marker = String(operationData.preapplyMarker);
+        if (typeof operationData.preapplySignature !== "string") {
+          const submission = await executePlan(
+            context.rpc,
+            context.feePayerSigner,
+            singleInstructionPlan(instruction),
+            undefined,
+            [context.signer],
+            marker,
+            async (signatureText, lastValidBlockHeight) => {
+              await save("preapply_submitting", "preapply_submitted", {
+                preapplySignature: signatureText,
+                preapplyLastValidBlockHeight: lastValidBlockHeight
+              });
+            }
+          );
+          if (submission.pending) return pendingResult();
+          if (!submission.signatures.length && stage === "preapply_submitting") return pendingResult();
+        }
+      }
+
+      if (stage === "preapply_submitted") {
+        const txSignature = String(operationData.preapplySignature ?? "");
+        const finality = await resolveReserveFundingFinality({
+          rpc: context.rpc,
+          signatureText: txSignature,
+          lastValidBlockHeight: String(operationData.preapplyLastValidBlockHeight ?? "0")
+        });
+        if (finality === "pending") return pendingResult();
+        const transaction = await readReserveFundingTransaction(txSignature, finality === "failed");
+        if (transaction) {
+          const expected = object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction;
+          verifyReserveInstructionInTransaction(
+            transaction, expected, String(operationData.preapplyMarker), context.reserveAddress, finality === "failed"
+          );
+          assertReservePublicBalanceDelta({
+            transaction,
+            tokenAddress: context.reserveTokenAddress,
+            mintAddress: context.mintAddress,
+            reserveAddress: context.reserveAddress,
+            deltaBaseUnits: 0n
+          });
+        }
+        const balances = await readBalances();
+        const baseline = {
+          publicBalance: storedReserveFundingBalance(operationData.preapplyPublicBeforeBaseUnits, publicBefore),
+          pendingBalance: storedReserveFundingBalance(operationData.preapplyPendingBeforeBaseUnits, pendingBefore),
+          availableBalance: storedReserveFundingBalance(operationData.preapplyAvailableBeforeBaseUnits, availableBefore)
+        };
+        if (finality === "failed") {
+          if (!isUnchangedReserveFundingBalance(baseline, balances)) {
+            throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_balance_mismatch", 409);
+          }
+          await save("preapply_submitted", "preapply_failed", {
+            preapplyErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
+            preapplyFailedAt: new Date().toISOString()
+          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          return pendingResult();
+        }
+        if (!transaction || !isExactReserveFundingPreapply(baseline, balances)) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_balance_mismatch", 409);
+        }
+        await save("preapply_submitted", "preapply_finalized", {
+          publicBeforeDepositBaseUnits: balances.publicBalance.toString(),
+          availableBeforeDepositBaseUnits: balances.availableBalance.toString(),
+          preapplyFinalizedAt: new Date().toISOString()
+        }, await readReserveFundingFee(transaction));
+      }
+
+      if (stage === "preapply_finalized" || stage === "deposit_failed") {
+        const balances = await readBalances();
+        const publicBeforeDeposit = storedReserveFundingBalance(
+          operationData.publicBeforeDepositBaseUnits, publicBefore
+        );
+        const availableBeforeDeposit = storedReserveFundingBalance(
+          operationData.availableBeforeDepositBaseUnits, availableBefore
+        );
+        if (
+          balances.pendingBalance !== 0n ||
+          balances.publicBalance !== publicBeforeDeposit ||
+          balances.availableBalance !== availableBeforeDeposit ||
+          balances.publicBalance < amount
+        ) {
           throw new WorkspaceReserveInitializationError("reserve_confidential_funding_balance_changed", 409);
         }
         const instruction = getConfidentialDepositInstruction({
@@ -1126,81 +1254,112 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           amount,
           decimals: 6
         });
-        const expected = serializeReserveInstruction(instruction);
-        const marker = reserveFundingMemo(input.wrapSignature, "deposit");
+        const attempt = nextReserveFundingAttempt(operationData.depositAttempt);
         const expectedStage = stage as "preapply_finalized" | "deposit_failed";
         await save(expectedStage, "deposit_submitting", {
-          depositInstruction: expected,
-          depositMarker: marker,
-          depositStartedAt: new Date().toISOString()
-        });
-      }
-      if (stage === "deposit_submitting") {
-        const marker = String(operationData.depositMarker ?? reserveFundingMemo(input.wrapSignature, "deposit"));
-        let txSignature = typeof operationData.depositSignature === "string" ? operationData.depositSignature : null;
-        if (!txSignature) {
-          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
-          if (!txSignature) return pending();
-          await save("deposit_submitting", "deposit_submitted", { depositSignature: txSignature });
-        }
-        stage = "deposit_submitted";
-      }
-      if (stage === "deposit_submitted") {
-        const txSignature = String(operationData.depositSignature);
-        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
-        if (finality === "pending") return pending();
-        const transaction = await readReserveFundingTransaction(txSignature);
-        const expected = object(operationData.depositInstruction) as unknown as SerializedReserveInstruction;
-        verifyReserveInstructionInTransaction(
-          transaction, expected, String(operationData.depositMarker), context.reserveAddress
-        );
-        assertReservePublicBalanceDelta({
-          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
-          reserveAddress: context.reserveAddress, deltaBaseUnits: amount
-        });
-        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
-        const balance = await fetchConfidentialTransferBalance({
-          token: address(context.reserveTokenAddress),
-          rpc: context.rpc,
-          elgamalSecretKey: context.secret,
-          aesKey: context.aesKey
-        });
-        const publicBeforeDeposit = BigInt(String(operationData.publicBeforeDepositBaseUnits));
-        const availableBeforeDeposit = BigInt(String(operationData.availableBeforeDepositBaseUnits));
-        if (
-          finality !== "finalized" ||
-          BigInt(token.amount) !== publicBeforeDeposit - amount ||
-          balance.pendingBalance !== amount ||
-          balance.availableBalance !== availableBeforeDeposit
-        ) {
-          throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_balance_mismatch", 409);
-        }
-        await save("deposit_submitted", "deposit_finalized", {
-          depositPublicBalanceAfterBaseUnits: token.amount.toString(),
-          depositPendingBalanceAfterBaseUnits: balance.pendingBalance.toString(),
-          depositFinalizedAt: new Date().toISOString()
-        }, await readReserveFundingFee(transaction));
-      }
-      if (stage === "deposit_failed") {
-        await save("deposit_failed", "deposit_submitting", {
-          depositInstruction: undefined,
-          depositSignature: undefined,
-          depositMarker: reserveFundingMemo(input.wrapSignature, "deposit"),
+          depositInstruction: serializeReserveInstruction(instruction),
+          depositSignature: null,
+          depositLastValidBlockHeight: null,
+          depositAttempt: attempt,
+          depositMarker: reserveFundingMemo(input.wrapSignature, "deposit", attempt),
+          publicBeforeDepositBaseUnits: balances.publicBalance.toString(),
+          availableBeforeDepositBaseUnits: balances.availableBalance.toString(),
           depositStartedAt: new Date().toISOString()
         });
       }
 
-      if (stage === "deposit_finalized" || stage === "apply_failed") {
-        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
-        const balance = await fetchConfidentialTransferBalance({
+      if (stage === "deposit_submitting") {
+        const instruction = getConfidentialDepositInstruction({
           token: address(context.reserveTokenAddress),
-          rpc: context.rpc,
-          elgamalSecretKey: context.secret,
-          aesKey: context.aesKey
+          mint: address(context.mintAddress),
+          authority: context.signer,
+          amount,
+          decimals: 6
         });
-        if (balance.pendingBalance !== amount) {
+        const expected = object(operationData.depositInstruction) as unknown as SerializedReserveInstruction;
+        if (!expected || JSON.stringify(expected) !== JSON.stringify(serializeReserveInstruction(instruction))) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_instruction_changed", 409);
+        }
+        if (typeof operationData.depositSignature !== "string") {
+          const submission = await executePlan(
+            context.rpc,
+            context.feePayerSigner,
+            singleInstructionPlan(instruction),
+            undefined,
+            [context.signer],
+            String(operationData.depositMarker),
+            async (signatureText, lastValidBlockHeight) => {
+              await save("deposit_submitting", "deposit_submitted", {
+                depositSignature: signatureText,
+                depositLastValidBlockHeight: lastValidBlockHeight
+              });
+            }
+          );
+          if (submission.pending) return pendingResult();
+          if (!submission.signatures.length && stage === "deposit_submitting") return pendingResult();
+        }
+      }
+
+      if (stage === "deposit_submitted") {
+        const txSignature = String(operationData.depositSignature ?? "");
+        const finality = await resolveReserveFundingFinality({
+          rpc: context.rpc,
+          signatureText: txSignature,
+          lastValidBlockHeight: String(operationData.depositLastValidBlockHeight ?? "0")
+        });
+        if (finality === "pending") return pendingResult();
+        const transaction = await readReserveFundingTransaction(txSignature, finality === "failed");
+        if (transaction) {
+          const expected = object(operationData.depositInstruction) as unknown as SerializedReserveInstruction;
+          verifyReserveInstructionInTransaction(
+            transaction, expected, String(operationData.depositMarker), context.reserveAddress, finality === "failed"
+          );
+          assertReservePublicBalanceDelta({
+            transaction,
+            tokenAddress: context.reserveTokenAddress,
+            mintAddress: context.mintAddress,
+            reserveAddress: context.reserveAddress,
+            deltaBaseUnits: finality === "failed" ? 0n : amount
+          });
+        }
+        const balances = await readBalances();
+        const before = {
+          publicBalance: BigInt(String(operationData.publicBeforeDepositBaseUnits)),
+          pendingBalance: 0n,
+          availableBalance: BigInt(String(operationData.availableBeforeDepositBaseUnits))
+        };
+        if (finality === "failed") {
+          if (!isUnchangedReserveFundingBalance(before, balances)) {
+            throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_balance_mismatch", 409);
+          }
+          await save("deposit_submitted", "deposit_failed", {
+            depositErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
+            depositFailedAt: new Date().toISOString()
+          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          return pendingResult();
+        }
+        if (!transaction || !isExactReserveFundingDeposit(before, balances, amount)) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_deposit_balance_mismatch", 409);
+        }
+        await save("deposit_submitted", "deposit_finalized", {
+          depositPublicBalanceAfterBaseUnits: balances.publicBalance.toString(),
+          depositPendingBalanceAfterBaseUnits: balances.pendingBalance.toString(),
+          depositFinalizedAt: new Date().toISOString()
+        }, await readReserveFundingFee(transaction));
+      }
+
+      if (stage === "deposit_finalized" || stage === "apply_failed") {
+        const balances = await readBalances();
+        const publicAfterDeposit = BigInt(String(operationData.depositPublicBalanceAfterBaseUnits));
+        const availableBeforeDeposit = BigInt(String(operationData.availableBeforeDepositBaseUnits));
+        if (
+          balances.publicBalance !== publicAfterDeposit ||
+          balances.pendingBalance !== amount ||
+          balances.availableBalance !== availableBeforeDeposit
+        ) {
           throw new WorkspaceReserveInitializationError("reserve_confidential_pending_balance_mismatch", 409);
         }
+        const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
         const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(context.reserveTokenAddress),
           tokenAccount: token,
@@ -1208,62 +1367,103 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        const expected = serializeReserveInstruction(instruction);
-        const marker = reserveFundingMemo(input.wrapSignature, "apply");
+        const attempt = nextReserveFundingAttempt(operationData.applyAttempt);
         const expectedStage = stage as "deposit_finalized" | "apply_failed";
         await save(expectedStage, "apply_submitting", {
-          applyInstruction: expected,
-          applyMarker: marker,
+          applyInstruction: serializeReserveInstruction(instruction),
+          applySignature: null,
+          applyLastValidBlockHeight: null,
+          applyAttempt: attempt,
+          applyMarker: reserveFundingMemo(input.wrapSignature, "apply", attempt),
+          applyPublicBeforeBaseUnits: balances.publicBalance.toString(),
+          applyPendingBeforeBaseUnits: balances.pendingBalance.toString(),
+          applyAvailableBeforeBaseUnits: balances.availableBalance.toString(),
           applyStartedAt: new Date().toISOString()
         });
       }
+
       if (stage === "apply_submitting") {
-        const marker = String(operationData.applyMarker ?? reserveFundingMemo(input.wrapSignature, "apply"));
-        let txSignature = typeof operationData.applySignature === "string" ? operationData.applySignature : null;
-        if (!txSignature) {
-          txSignature = await findReserveFundingSignatureByMemo(context.reserveTokenAddress, marker);
-          if (!txSignature) return pending();
-          await save("apply_submitting", "apply_submitted", { applySignature: txSignature });
-        }
-        stage = "apply_submitted";
-      }
-      if (stage === "apply_submitted") {
-        const txSignature = String(operationData.applySignature);
-        const finality = await waitForFinality(context.rpc, signature(getBase58Decoder().decode(txSignature)));
-        if (finality === "pending") return pending();
-        const transaction = await readReserveFundingTransaction(txSignature);
-        const expected = object(operationData.applyInstruction) as unknown as SerializedReserveInstruction;
-        verifyReserveInstructionInTransaction(
-          transaction, expected, String(operationData.applyMarker), context.reserveAddress
-        );
-        assertReservePublicBalanceDelta({
-          transaction, tokenAddress: context.reserveTokenAddress, mintAddress: context.mintAddress,
-          reserveAddress: context.reserveAddress, deltaBaseUnits: 0n
-        });
         const token = (await fetchToken(context.rpc, address(context.reserveTokenAddress))).data;
-        const balance = await fetchConfidentialTransferBalance({
+        const instruction = getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(context.reserveTokenAddress),
-          rpc: context.rpc,
+          tokenAccount: token,
+          authority: context.signer,
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        const availableBeforeDeposit = BigInt(String(operationData.availableBeforeDepositBaseUnits));
-        const publicAfterDeposit = BigInt(String(operationData.depositPublicBalanceAfterBaseUnits));
-        if (
-          finality !== "finalized" ||
-          BigInt(token.amount) !== publicAfterDeposit ||
-          balance.pendingBalance !== 0n ||
-          balance.availableBalance !== availableBeforeDeposit + amount
-        ) {
+        const expected = object(operationData.applyInstruction) as unknown as SerializedReserveInstruction;
+        if (!expected || JSON.stringify(expected) !== JSON.stringify(serializeReserveInstruction(instruction))) {
+          throw new WorkspaceReserveInitializationError("reserve_confidential_apply_instruction_changed", 409);
+        }
+        if (typeof operationData.applySignature !== "string") {
+          const submission = await executePlan(
+            context.rpc,
+            context.feePayerSigner,
+            singleInstructionPlan(instruction),
+            undefined,
+            [context.signer],
+            String(operationData.applyMarker),
+            async (signatureText, lastValidBlockHeight) => {
+              await save("apply_submitting", "apply_submitted", {
+                applySignature: signatureText,
+                applyLastValidBlockHeight: lastValidBlockHeight
+              });
+            }
+          );
+          if (submission.pending) return pendingResult();
+          if (!submission.signatures.length && stage === "apply_submitting") return pendingResult();
+        }
+      }
+
+      if (stage === "apply_submitted") {
+        const txSignature = String(operationData.applySignature ?? "");
+        const finality = await resolveReserveFundingFinality({
+          rpc: context.rpc,
+          signatureText: txSignature,
+          lastValidBlockHeight: String(operationData.applyLastValidBlockHeight ?? "0")
+        });
+        if (finality === "pending") return pendingResult();
+        const transaction = await readReserveFundingTransaction(txSignature, finality === "failed");
+        if (transaction) {
+          const expected = object(operationData.applyInstruction) as unknown as SerializedReserveInstruction;
+          verifyReserveInstructionInTransaction(
+            transaction, expected, String(operationData.applyMarker), context.reserveAddress, finality === "failed"
+          );
+          assertReservePublicBalanceDelta({
+            transaction,
+            tokenAddress: context.reserveTokenAddress,
+            mintAddress: context.mintAddress,
+            reserveAddress: context.reserveAddress,
+            deltaBaseUnits: 0n
+          });
+        }
+        const balances = await readBalances();
+        const before = {
+          publicBalance: BigInt(String(operationData.applyPublicBeforeBaseUnits)),
+          pendingBalance: amount,
+          availableBalance: BigInt(String(operationData.applyAvailableBeforeBaseUnits))
+        };
+        if (finality === "failed") {
+          if (!isUnchangedReserveFundingBalance(before, balances)) {
+            throw new WorkspaceReserveInitializationError("reserve_confidential_apply_balance_mismatch", 409);
+          }
+          await save("apply_submitted", "apply_failed", {
+            applyErrorCode: transaction ? "finalized_transaction_failed" : "blockhash_expired_without_landing",
+            applyFailedAt: new Date().toISOString()
+          }, transaction ? await readReserveFundingFee(transaction) : "0");
+          return pendingResult();
+        }
+        if (!transaction || !isExactReserveFundingApply(before, balances, amount)) {
           throw new WorkspaceReserveInitializationError("reserve_confidential_apply_balance_mismatch", 409);
         }
         await save("apply_submitted", "finalized", {
-          finalPublicBalanceBaseUnits: token.amount.toString(),
-          finalAvailableBalanceBaseUnits: balance.availableBalance.toString(),
+          finalPublicBalanceBaseUnits: balances.publicBalance.toString(),
+          finalAvailableBalanceBaseUnits: balances.availableBalance.toString(),
           confidentialFundingVerifiedAt: new Date().toISOString()
         }, await readReserveFundingFee(transaction));
       }
-      if (stage !== "finalized") return pending();
+
+      if (stage !== "finalized") return pendingResult();
       return {
         status: "confidential_balance_verified",
         wrapSignature: input.wrapSignature,
