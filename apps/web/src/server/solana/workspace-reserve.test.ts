@@ -167,6 +167,7 @@ vi.mock("@solana/kit", () => ({
   address: (value: string) => value,
   isSome: (value: { __option?: string } | null | undefined) => value?.__option === "Some",
   blockhash: (value: string) => value,
+  signature: (value: string) => value,
   createKeyPairSignerFromBytes: vi.fn(async (bytes: Uint8Array) => ({
     address: bytes[0] === 10 ? h.gasTank : h.reserve
   })),
