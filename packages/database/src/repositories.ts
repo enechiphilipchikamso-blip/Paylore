@@ -6926,6 +6926,18 @@ export async function advanceWorkspaceReserveFundingOperation(
 }
 
 
+export async function getActiveWorkspaceReserveFundingOperation(
+  db: Database,
+  workspaceId: string
+) {
+  const rows = await db.select().from(gasTankOperations).where(and(
+    eq(gasTankOperations.workspaceId, workspaceId),
+    eq(gasTankOperations.operationType, RESERVE_FUNDING_OPERATION_TYPE),
+    inArray(gasTankOperations.status, ["preparing", "prepared"])
+  )).orderBy(desc(gasTankOperations.createdAt)).limit(1);
+  return rows[0] ?? null;
+}
+
 export async function beginGasTankOperationAttempt(
   db: Database,
   input: {
