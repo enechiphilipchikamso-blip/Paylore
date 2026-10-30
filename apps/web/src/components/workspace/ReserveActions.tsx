@@ -55,7 +55,27 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_confidential_account_not_ready:
       "The Reserve confidential account is not ready for a deposit. Complete Reserve setup and refresh its on-chain status.",
     reserve_confidential_pending_balance_not_cleared:
-      "The Reserve has an earlier confidential pending balance that has not been applied. Paylore stopped before making another deposit."
+      "The Reserve has an earlier confidential pending balance that has not been applied. Paylore stopped before making another deposit.",
+    reserve_confidential_funding_operation_conflict:
+      "Another funding attempt changed the Reserve operation state. Refresh its status and continue the existing operation; do not wrap USDC again.",
+    reserve_confidential_deposit_amount_invalid:
+      "The amount is outside the confidential Token-2022 deposit limit. Enter a smaller USDC amount and retry.",
+    reserve_wrap_source_usdc_missing:
+      "Your wallet has no ordinary Circle Devnet USDC token account. Fund it with Circle Devnet USDC before trying again.",
+    reserve_wrap_source_usdc_insufficient:
+      "Your wallet does not have enough ordinary Circle Devnet USDC for this amount.",
+    reserve_wrap_identity_mismatch:
+      "The configured Token Wrap program or USDC mint does not match the approved Devnet identity. No transaction was submitted.",
+    reserve_wrap_program_unavailable:
+      "Paylore could not verify the approved Token Wrap program as deployed and executable. No wallet transaction was submitted.",
+    reserve_wrap_devnet_rpc_required:
+      "Paylore could not verify the configured Devnet RPC. No wallet transaction was submitted.",
+    reserve_wrap_preflight_unavailable:
+      "Paylore could not verify the wallet USDC and Reserve accounts. No wallet transaction was submitted.",
+    reserve_wrap_destination_account_mismatch:
+      "The Reserve wrapped-USDC token account owner or mint did not match the configured Reserve. No wallet transaction was submitted.",
+    reserve_wrap_source_account_mismatch:
+      "Your ordinary-USDC token account owner or mint did not match the connected wallet. No wallet transaction was submitted."
   };
   return {
     state: "error",
@@ -583,10 +603,13 @@ export function ReserveActions({
           text: "The wallet did not confirm whether it submitted the wrap. Check wallet activity before retrying; do not submit a duplicate."
         });
       } else {
-        setFundingNotice({
-          state: "error",
-          text: message || "The Reserve wrap could not be completed. No success has been recorded."
-        });
+        const codedFailure = /^[a-z][a-z0-9_]+$/.test(message);
+        setFundingNotice(codedFailure
+          ? getReserveFundingOutcomeMessage({ status: "error", errorCode: message })
+          : {
+              state: "error",
+              text: message || "The Reserve wrap could not be completed. No success has been recorded."
+            });
       }
     } finally {
       setFundingBusy(false);
