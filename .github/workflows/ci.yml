@@ -82,7 +82,8 @@ jobs:
         shell: bash
         run: |
           cargo install --git https://github.com/otter-sec/anchor avm --force
-          avm install 1.2.0
+          # Source builds avoid relying on release-attestation downloads, which can be denied by GitHub.
+          avm install 1.2.0 --from-source
           avm use 1.2.0
 
       - name: Report tool versions
