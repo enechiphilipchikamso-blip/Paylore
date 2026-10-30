@@ -8,7 +8,7 @@ test("wallet-facing page metadata names Paylore and advertises the canonical ico
 }) => {
   await page.goto("/");
 
-  await expect(page).toHaveTitle("Paylore | Private on-chain payroll");
+  await expect(page).toHaveTitle("Private on-chain payroll | Paylore");
   await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
     "content",
     "Paylore | Private on-chain payroll"

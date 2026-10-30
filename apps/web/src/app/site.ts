@@ -74,9 +74,10 @@ export function createPublicMetadata({
   path
 }: PublicMetadataInput): Metadata {
   const canonicalUrl = new URL(path, metadataBase).toString();
+  const brandedTitle = `${title} | ${siteConfig.name}`;
 
   return {
-    title,
+    title: brandedTitle,
     description,
     alternates: {
       canonical: canonicalUrl
@@ -84,7 +85,7 @@ export function createPublicMetadata({
     openGraph: {
       type: "website",
       siteName: siteConfig.name,
-      title,
+      title: brandedTitle,
       description,
       url: canonicalUrl,
       images: [
@@ -98,7 +99,7 @@ export function createPublicMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title,
+      title: brandedTitle,
       description,
       images: [siteConfig.twitterImage]
     }
