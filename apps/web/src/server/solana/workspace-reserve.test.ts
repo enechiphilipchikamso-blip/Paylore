@@ -48,6 +48,14 @@ const h = vi.hoisted(() => ({
   signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">,
   feeReservationCalls: [] as unknown[],
   feeReservationResult: "reserved" as string,
+  beginBarrierEnabled: false,
+  beginBarrierCalls: 0,
+  beginBarrier: null as Promise<void> | null,
+  releaseBeginBarrier: null as (() => void) | null,
+  feeReservationBarrierEnabled: false,
+  feeReservationBarrierCalls: 0,
+  feeReservationBarrier: null as Promise<void> | null,
+  releaseFeeReservationBarrier: null as (() => void) | null,
   currentFeeReservationOperationData: null as Record<string, unknown> | null,
   transactionPublicBalanceBefore: 0n,
   transactionAmount: 0n,
@@ -154,6 +162,14 @@ function reset(): void {
     signatureFinality: {},
     feeReservationCalls: [],
     feeReservationResult: "reserved",
+    beginBarrierEnabled: false,
+    beginBarrierCalls: 0,
+    beginBarrier: null,
+    releaseBeginBarrier: null,
+    feeReservationBarrierEnabled: false,
+    feeReservationBarrierCalls: 0,
+    feeReservationBarrier: null,
+    releaseFeeReservationBarrier: null,
     currentFeeReservationOperationData: null,
     transactionPublicBalanceBefore: 0n,
     transactionAmount: 0n,
@@ -464,6 +480,11 @@ vi.mock("@paylore/database", () => ({
       };
       h.transactionAmount = BigInt(String(input.operationData.amountBaseUnits));
     }
+    if (h.beginBarrierEnabled && h.beginBarrier) {
+      h.beginBarrierCalls++;
+      if (h.beginBarrierCalls === 2) h.releaseBeginBarrier?.();
+      await h.beginBarrier;
+    }
     return {
       status: "existing",
       operation: {
@@ -531,7 +552,16 @@ vi.mock("@paylore/database", () => ({
         feeBudgetSettledCount: Number(current.feeBudgetSettledCount ?? 0)
       };
     }
-    return h.feeReservationResult;
+    let reservationResult = h.feeReservationResult;
+    if (newKeys.length === 0 && reservationResult === "reserved") {
+      reservationResult = "duplicate";
+    }
+    if (h.feeReservationBarrierEnabled && h.feeReservationBarrier) {
+      h.feeReservationBarrierCalls++;
+      if (h.feeReservationBarrierCalls === 2) h.releaseFeeReservationBarrier?.();
+      await h.feeReservationBarrier;
+    }
+    return reservationResult;
   }),
   getWorkspaceGasTankOperation: vi.fn(async () => h.currentFeeReservationOperationData
     ? ({
@@ -1006,72 +1036,55 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
     expect(h.feePayerAddresses).toEqual([]);
   });
 
-  it("does not resubmit confidential transactions when two requests resume the same pending operation", async () => {
-    const wrapSignature = "s".repeat(88);
-    const depositSignature = "1".repeat(64);
-    const amount = 1_000_000n;
-    const depositData = Buffer.alloc(9);
-    depositData[0] = 201;
-    depositData.writeBigUInt64LE(amount, 1);
+  it("serializes concurrent full-operation retries before either request can submit a duplicate confidential transaction", async () => {
     h.reserveConfigured = true;
     h.publicBalanceBaseUnits = 5_000_000n;
     h.availableBalanceBaseUnits = 250_000n;
-    h.currentBlockHeight = 500n;
-    h.signatureFinality[depositSignature] = "pending";
-    h.currentFeeReservationOperationData = {
-      walletAddress: h.authority,
-      amountBaseUnits: amount.toString(),
-      wrapSignature,
-      reserveAddress: h.reserve,
-      reserveTokenAddress: h.reserveToken,
-      mintAddress: h.mint,
-      initialPublicBalanceBaseUnits: "5000000",
-      initialAvailableBalanceBaseUnits: "250000",
-      initialPendingBalanceBaseUnits: "0",
-      stage: "deposit_submitted",
-      depositSignature,
-      depositLastValidBlockHeight: "500",
-      depositAttempt: 1,
-      depositInstruction: {
-        programAddress: h.tokenProgram,
-        dataBase64: depositData.toString("base64"),
-        accountAddresses: [h.reserveToken, h.reserve]
-      },
-      depositMarker: "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":deposit:1",
-      publicBeforeDepositBaseUnits: "5000000",
-      availableBeforeDepositBaseUnits: "250000",
-      feeBudgetReserved: true,
-      actualFeeLamports: "0",
-      reservedFeeBudgetLamports: "200000",
-      feePerTransactionLamports: "100000",
-      feeReservationKeys: ["deposit:1", "apply:1"],
-      feeReservationSettledKeys: [],
-      feeBudgetSettledCount: 0
-    };
+    h.beginBarrierEnabled = true;
+    h.beginBarrier = new Promise<void>((resolve) => { h.releaseBeginBarrier = resolve; });
+    h.feeReservationBarrierEnabled = true;
+    h.feeReservationBarrier = new Promise<void>((resolve) => { h.releaseFeeReservationBarrier = resolve; });
 
-    const resume = () => completeWorkspaceReserveConfidentialFunding({
+    const request = () => completeWorkspaceReserveConfidentialFunding({
       db: {} as any,
       workspaceId: "workspace-a",
       fallbackAuthorityAddress: h.authority,
-      amountBaseUnits: amount.toString(),
-      wrapSignature
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
     });
-    const results = await Promise.all([resume(), resume()]);
+    const results = await Promise.allSettled([request(), request()]);
+    const completed = results.find((result) => result.status === "fulfilled");
+    const rejected = results.find((result) => result.status === "rejected");
 
     expect(results).toHaveLength(2);
-    expect(results.every((result) =>
-      result.status === "pending" && result.stage === "deposit_submitted"
-    )).toBe(true);
-    expect(h.currentFeeReservationOperationData).toMatchObject({
-      stage: "deposit_submitted",
-      feeReservationKeys: ["deposit:1", "apply:1"],
-      feeReservationSettledKeys: [],
-      reservedFeeBudgetLamports: "200000",
-      feeBudgetReserved: true
+    expect(completed?.status).toBe("fulfilled");
+    expect(rejected?.status).toBe("rejected");
+    if (completed?.status !== "fulfilled" || rejected?.status !== "rejected") {
+      throw new Error("The concurrent Reserve funding requests did not resolve as a single owner and one conflict.");
+    }
+    expect(completed.value).toMatchObject({
+      status: "confidential_balance_verified",
+      amountBaseUnits: "1000000",
+      publicBalanceBaseUnits: "4000000",
+      availableBalanceBaseUnits: "1250000"
     });
-    expect(h.feeReservationCalls).toHaveLength(0);
-    expect(h.submittedSteps).toEqual([]);
-    expect(h.feePayerAddresses).toEqual([]);
+    expect(rejected.reason).toMatchObject({
+      code: "reserve_confidential_funding_operation_conflict",
+      statusCode: 409
+    });
+    expect(h.submittedSteps).toEqual(["deposit", "apply"]);
+    expect(h.submittedSteps.filter((step) => step === "deposit")).toHaveLength(1);
+    expect(h.submittedSteps.filter((step) => step === "apply")).toHaveLength(1);
+    expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "finalized",
+      feeBudgetReserved: false,
+      actualFeeLamports: "10000",
+      reservedFeeBudgetLamports: "0",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: ["deposit:1", "apply:1"],
+      feeBudgetSettledCount: 2
+    });
   });
 });
 

@@ -12,12 +12,16 @@ type BeginInput = {
   operationData: Record<string, unknown>;
 };
 
-type StoredOperation = BeginInput & {
+type StoredOperation = {
   id: string;
+  workspaceId: string;
+  idempotencyKey: string;
+  requestDigest: string;
   operationType: string;
   status: string;
   transactionSignature: string;
   feeLamports: string;
+  operationData: Record<string, unknown>;
 };
 
 function createRepositoryDatabase() {
@@ -110,7 +114,7 @@ function createRepositoryDatabase() {
               id: "reserve-operation-" + (++operationSequence),
               operationType: RESERVE_FUNDING_OPERATION_TYPE,
               status: "preparing",
-              transactionSignature: request.wrapSignature,
+              transactionSignature: String(values.transactionSignature),
               feeLamports: "0"
             } as StoredOperation;
             operations.push(row);
@@ -205,6 +209,23 @@ describe("beginWorkspaceReserveFundingOperation repository idempotency", () => {
     expect(replay.status).toBe("conflict");
     expect(replay.operation?.workspaceId).toBe("workspace-a");
     expect(fake.operations).toHaveLength(1);
+  });
+
+  it("rejects a competing wrap signature while another Reserve funding operation is active", async () => {
+    const fake = createRepositoryDatabase();
+    const firstInput = request();
+    await fake.run(firstInput);
+    const competingSignature = "t".repeat(88);
+
+    const competing = await fake.run(request({
+      wrapSignature: competingSignature,
+      idempotencyKey: "reserve_funding:" + competingSignature,
+      requestDigest: "c".repeat(64)
+    }));
+
+    expect(competing.status).toBe("in_progress");
+    expect(fake.operations).toHaveLength(1);
+    expect(fake.operations[0]?.transactionSignature).toBe(firstInput.wrapSignature);
   });
 
   it("serializes simultaneous creates so one transaction creates and the other reuses the same operation", async () => {

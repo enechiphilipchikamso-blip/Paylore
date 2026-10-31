@@ -1094,7 +1094,7 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
               }
             : {})
         });
-        if (saved !== "updated" && saved !== "duplicate") {
+        if (saved !== "updated") {
           throw new WorkspaceReserveInitializationError("reserve_confidential_funding_operation_conflict", 409);
         }
         operationData = { ...operationData, ...patch, stage: nextStage };
