@@ -522,6 +522,9 @@ vi.mock("@paylore/database", () => ({
           ? ["preapply:1", "deposit:1", "apply:1"]
           : ["deposit:1", "apply:1"];
     }
+    if (h.feeReservationBarrierEnabled && input.stage === "wrap_verified") {
+      return keys;
+    }
     const used = Array.isArray(current.feeReservationKeys)
       ? current.feeReservationKeys as string[]
       : [];
@@ -529,6 +532,7 @@ vi.mock("@paylore/database", () => ({
   }),
   reserveWorkspaceReserveFundingFeeBudget: vi.fn(async (_db: unknown, input: unknown) => {
     h.feeReservationCalls.push(input);
+    let reservationResult = h.feeReservationResult;
     if (h.feeReservationResult === "reserved" || h.feeReservationResult === "duplicate") {
       const payload = input as { reservationKeys: string[] };
       const current = h.currentFeeReservationOperationData ?? {};
@@ -536,6 +540,9 @@ vi.mock("@paylore/database", () => ({
         ? current.feeReservationKeys as string[]
         : [];
       const newKeys = payload.reservationKeys.filter((key) => !currentKeys.includes(key));
+      if (newKeys.length === 0 && reservationResult === "reserved") {
+        reservationResult = "duplicate";
+      }
       const currentReserved = BigInt(String(current.reservedFeeBudgetLamports ?? "0"));
       h.currentFeeReservationOperationData = {
         ...current,
@@ -551,10 +558,6 @@ vi.mock("@paylore/database", () => ({
           : [],
         feeBudgetSettledCount: Number(current.feeBudgetSettledCount ?? 0)
       };
-    }
-    let reservationResult = h.feeReservationResult;
-    if (newKeys.length === 0 && reservationResult === "reserved") {
-      reservationResult = "duplicate";
     }
     if (h.feeReservationBarrierEnabled && h.feeReservationBarrier) {
       h.feeReservationBarrierCalls++;
