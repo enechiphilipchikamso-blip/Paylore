@@ -14,7 +14,8 @@ import type {
   SolanaSignInOutput
 } from "@solana/wallet-standard-features";
 import {
-  solanaSignInInputSchema
+  solanaSignInInputSchema,
+  type SolanaWalletChainId
 } from "./protocol";
 
 export type WalletProof = {
@@ -70,7 +71,7 @@ export async function verifyWalletProof(
     challengeInput: SolanaSignInInput;
     expectedAuthUrl: string;
     expectedMessage: string;
-    expectedChainId: string;
+    expectedChainId: SolanaWalletChainId;
   },
   proof: WalletProof
 ): Promise<boolean> {

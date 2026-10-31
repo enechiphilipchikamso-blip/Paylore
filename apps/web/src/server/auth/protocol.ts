@@ -12,8 +12,9 @@ export const AUTH_CHALLENGE_TTL_MS =
   5 * 60 * 1000;
 
 export type PayloreNetwork = "devnet" | "mainnet";
+export type SolanaWalletChainId = `solana:${string}`;
 
-export function getSolanaWalletChainId(network: PayloreNetwork): string {
+export function getSolanaWalletChainId(network: PayloreNetwork): SolanaWalletChainId {
   return network === "mainnet" ? "solana:mainnet" : "solana:devnet";
 }
 
@@ -42,7 +43,7 @@ export const solanaSignInInputSchema =
 
 export function buildSignInInput(input: {
   walletAddress: string;
-  chainId: string;
+  chainId: SolanaWalletChainId;
   nonce: string;
   issuedAt: Date;
   expirationTime: Date;
