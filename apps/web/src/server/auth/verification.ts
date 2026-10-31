@@ -71,7 +71,7 @@ export async function verifyWalletProof(
     challengeInput: SolanaSignInInput;
     expectedAuthUrl: string;
     expectedMessage: string;
-    expectedChainId: SolanaWalletChainId;
+    expectedChainId: string;
   },
   proof: WalletProof
 ): Promise<boolean> {
@@ -114,7 +114,7 @@ export async function verifyWalletProof(
     !proof.account.features.every(
       isWalletIdentifier
     ) ||
-    !proof.account.chains.includes(input.expectedChainId) ||
+    !proof.account.chains.includes(input.expectedChainId as SolanaWalletChainId) ||
     (proof.authMethod === "siws" &&
       !proof.account.features.includes("solana:signIn")) ||
     (proof.authMethod === "message" &&
