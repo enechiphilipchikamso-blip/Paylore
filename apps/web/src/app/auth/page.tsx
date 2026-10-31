@@ -9,7 +9,10 @@ import {
   isSafeReturnTo
 } from "../../server/security";
 import { loadPayloreConfig } from "../../server/config";
-import { getSolanaWalletDeepLinkCluster } from "../../server/auth/protocol";
+import {
+  getSolanaWalletDeepLinkCluster,
+  isBackpackMobileDeepLinkEnabled
+} from "../../server/auth/protocol";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -58,9 +61,10 @@ export default async function AuthPage({
         nextPath={nextPath}
         reason={reason}
         walletCluster={walletCluster}
-        backpackDeepLinkEnabled={
+        backpackDeepLinkEnabled={isBackpackMobileDeepLinkEnabled(
+          config.PAYLORE_NETWORK,
           config.PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED === "true"
-        }
+        )}
       />
     </PublicPage>
   );

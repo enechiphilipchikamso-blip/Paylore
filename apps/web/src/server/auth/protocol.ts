@@ -22,6 +22,13 @@ export function getSolanaWalletDeepLinkCluster(network: PayloreNetwork): string 
   return network === "mainnet" ? "mainnet-beta" : network;
 }
 
+export function isBackpackMobileDeepLinkEnabled(
+  network: PayloreNetwork,
+  featureFlagEnabled: boolean
+): boolean {
+  return network === "mainnet" && featureFlagEnabled;
+}
+
 export const AUTH_STATEMENT =
   "Sign in to Paylore. This signature authorizes your wallet to access your Paylore account.";
 

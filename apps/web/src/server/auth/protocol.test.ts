@@ -7,7 +7,8 @@ import {
   buildChallenge,
   challengeIsUsable,
   getSolanaWalletChainId,
-  getSolanaWalletDeepLinkCluster
+  getSolanaWalletDeepLinkCluster,
+  isBackpackMobileDeepLinkEnabled
 } from "./protocol";
 import {
   isSafeReturnTo
@@ -81,6 +82,13 @@ describe(
       expect(getSolanaWalletChainId("mainnet")).toBe("solana:mainnet");
       expect(getSolanaWalletDeepLinkCluster("devnet")).toBe("devnet");
       expect(getSolanaWalletDeepLinkCluster("mainnet")).toBe("mainnet-beta");
+    });
+
+    it("enables the Backpack app link only when the feature flag and supported deployment are both selected", () => {
+      expect(isBackpackMobileDeepLinkEnabled("devnet", true)).toBe(false);
+      expect(isBackpackMobileDeepLinkEnabled("devnet", false)).toBe(false);
+      expect(isBackpackMobileDeepLinkEnabled("mainnet", false)).toBe(false);
+      expect(isBackpackMobileDeepLinkEnabled("mainnet", true)).toBe(true);
     });
 
     it(
