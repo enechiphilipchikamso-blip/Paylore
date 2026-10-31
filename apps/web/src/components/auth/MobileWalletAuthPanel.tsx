@@ -683,6 +683,9 @@ export function MobileWalletAuthPanel({
         connection options do not list Devnet, so Paylore will not send a request
         that could default to Mainnet.
       </p>
+      <p className="auth-security-note">
+        Signing in is an authentication action. It does not send payroll funds.
+      </p>
       <p id="backpack-devnet-note" className="auth-security-note">
         Use a supported desktop Wallet Standard extension with Backpack, or use
         Solflare on mobile for Devnet sign-in.

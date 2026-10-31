@@ -33,7 +33,7 @@ test("mobile browser builds a Solflare connect request with the real app and ret
     name: "Backpack unavailable on Devnet"
   });
   await expect(backpackButton).toBeDisabled();
-  await expect(page.locator("#backpack-devnet-note")).toContainText(
+  await expect(page.locator(".auth-mobile-note")).toContainText(
     "Backpack's published connection options do not list Devnet"
   );
 

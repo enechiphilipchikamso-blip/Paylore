@@ -100,6 +100,28 @@ describe("Solana mobile wallet deeplinks", () => {
     );
   });
 
+  it("builds the Backpack URL with app_url and redirect_link when a supported mainnet cluster is selected", () => {
+    const keyPair = createWalletEncryptionKeyPair();
+    const url = new URL(
+      buildWalletConnectDeepLink({
+        provider: "backpack",
+        appUrl: APP_URL,
+        redirectLink: REDIRECT_URL,
+        dappEncryptionPublicKey: keyPair.publicKey,
+        cluster: "mainnet-beta"
+      })
+    );
+
+    expect(url.origin).toBe("https://backpack.app");
+    expect(url.pathname).toBe("/ul/v1/connect");
+    expect(url.searchParams.get("app_url")).toBe(APP_URL);
+    expect(url.searchParams.get("redirect_link")).toBe(REDIRECT_URL);
+    expect(url.searchParams.get("cluster")).toBe("mainnet-beta");
+    expect(
+      decodeBase58(url.searchParams.get("dapp_encryption_public_key")!)
+    ).toEqual(keyPair.publicKey);
+  });
+
   it("decrypts a provider response with the documented X25519 shared-key flow", () => {
     const dapp = createWalletEncryptionKeyPair();
     const wallet = createWalletEncryptionKeyPair();
