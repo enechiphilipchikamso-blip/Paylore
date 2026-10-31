@@ -431,7 +431,10 @@ export function MobileWalletAuthPanel({
     };
   }, [nextPath, router]);
 
-  async function connectMobileWallet(provider: MobileDeepLinkWallet): Promise<void> {
+  async function connectMobileWallet(
+    provider: MobileDeepLinkWallet,
+    createdAt: number
+  ): Promise<void> {
     if (provider === "backpack" && !backpackDeepLinkEnabled) {
       setError("The Backpack app link is turned off for this deployment. Open Paylore inside Backpack to connect through its browser.");
       return;
@@ -456,7 +459,7 @@ export function MobileWalletAuthPanel({
         appUrl,
         dappPublicKey: encodeBase58(keyPair.publicKey),
         dappSecretKey: encodeBase58(keyPair.secretKey),
-        createdAt: Date.now()
+        createdAt
       };
       getSessionStorage().setItem(
         MOBILE_PENDING_PREFIX + state,
@@ -481,7 +484,10 @@ export function MobileWalletAuthPanel({
     }
   }
 
-  async function signInWithMobileWallet(provider: MobileDeepLinkWallet): Promise<void> {
+  async function signInWithMobileWallet(
+    provider: MobileDeepLinkWallet,
+    createdAt: number
+  ): Promise<void> {
     const connection = readMobileConnection();
     if (!connection || connection.provider !== provider || !account || account.provider !== provider) {
       setAccount(null);
@@ -542,7 +548,7 @@ export function MobileWalletAuthPanel({
         action: "sign_message",
         provider,
         state,
-        createdAt: Date.now(),
+        createdAt,
         challengeNonce: challenge.nonce,
         challengeMessage: challenge.message,
         chainId: challenge.input.chainId,
@@ -648,7 +654,7 @@ export function MobileWalletAuthPanel({
                 }
                 onClick={() => {
                   if (!account && !disabledBySetting) {
-                    void connectMobileWallet(option.provider);
+                    void connectMobileWallet(option.provider, Date.now());
                   }
                 }}
                 aria-label={
@@ -700,7 +706,7 @@ export function MobileWalletAuthPanel({
           <button
             className="button"
             type="button"
-            onClick={() => void signInWithMobileWallet(account.provider)}
+            onClick={() => void signInWithMobileWallet(account.provider, Date.now())}
             disabled={status === "signing" || status === "success"}
           >
             {status === "signing" ? (
