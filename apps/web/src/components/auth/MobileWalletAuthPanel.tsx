@@ -731,10 +731,6 @@ export function MobileWalletAuthPanel({
         </div>
       ) : null}
 
-      <p className="auth-security-note">
-        Signing in is an authentication action. It does not send payroll funds.
-      </p>
-
       {error ? (
         <div className="error-box" role="alert" aria-live="assertive">
           {error}
