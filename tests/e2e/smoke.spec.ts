@@ -124,7 +124,12 @@ test.describe("public experience", () => {
       .locator('meta[property="og:title"]')
       .getAttribute("content");
 
-    expect(ogTitle).toContain("Pricing");
+    expect(ogTitle).toBe("Paylore");
+
+    const twitterTitle = await page
+      .locator('meta[name="twitter:title"]')
+      .getAttribute("content");
+    expect(twitterTitle).toContain("Pricing");
 
     const twitterCard = await page
       .locator('meta[name="twitter:card"]')
