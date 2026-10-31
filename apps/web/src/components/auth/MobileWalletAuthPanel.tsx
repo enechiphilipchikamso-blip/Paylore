@@ -584,7 +584,7 @@ export function MobileWalletAuthPanel({
       <div className="auth-card__header">
         <h2>Sign in to Paylore</h2>
         <p>
-          Connect to a mobile wallet and approve Paylore's separate sign-in
+          Connect to a mobile wallet and approve Paylore&apos;s separate sign-in
           message. Signing in proves wallet control; it does not send payroll
           funds or a payroll transaction.
         </p>
@@ -678,8 +678,8 @@ export function MobileWalletAuthPanel({
       </div>
 
       <p className="auth-mobile-note">
-        Paylore currently authenticates on Solana Devnet. Solflare's published
-        deep-link connection flow supports Devnet. Backpack's published
+        Paylore currently authenticates on Solana Devnet. Solflare&apos;s published
+        deep-link connection flow supports Devnet. Backpack&apos;s published
         connection options do not list Devnet, so Paylore will not send a request
         that could default to Mainnet.
       </p>
