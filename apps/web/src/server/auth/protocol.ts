@@ -11,8 +11,16 @@ import {
 export const AUTH_CHALLENGE_TTL_MS =
   5 * 60 * 1000;
 
-export const DEVNET_CHAIN_ID =
-  "solana:devnet";
+export type PayloreNetwork = "devnet" | "mainnet";
+export type SolanaWalletChainId = `solana:${string}`;
+
+export function getSolanaWalletChainId(network: PayloreNetwork): SolanaWalletChainId {
+  return network === "mainnet" ? "solana:mainnet" : "solana:devnet";
+}
+
+export function getSolanaWalletDeepLinkCluster(network: PayloreNetwork): string {
+  return network === "mainnet" ? "mainnet-beta" : network;
+}
 
 export const AUTH_STATEMENT =
   "Sign in to Paylore. This signature authorizes your wallet to access your Paylore account.";
@@ -23,7 +31,7 @@ export const solanaSignInInputSchema =
     address: z.string().min(32).max(64),
     statement: z.string().min(1),
     version: z.literal("1"),
-    chainId: z.literal(DEVNET_CHAIN_ID),
+    chainId: z.string().regex(/^solana:[a-zA-Z0-9:._-]+$/),
     nonce: z.string().regex(
       /^[a-f0-9]{64}$/
     ),
@@ -35,6 +43,7 @@ export const solanaSignInInputSchema =
 
 export function buildSignInInput(input: {
   walletAddress: string;
+  chainId: SolanaWalletChainId;
   nonce: string;
   issuedAt: Date;
   expirationTime: Date;
@@ -53,7 +62,7 @@ export function buildSignInInput(input: {
     address: input.walletAddress,
     statement: AUTH_STATEMENT,
     version: "1",
-    chainId: DEVNET_CHAIN_ID,
+    chainId: input.chainId,
     nonce: input.nonce,
     issuedAt:
       input.issuedAt.toISOString(),

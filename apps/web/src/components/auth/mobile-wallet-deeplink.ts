@@ -9,19 +9,12 @@ const NONCE_BYTES = 24;
 const BOX_PUBLIC_KEY_BYTES = 32;
 
 export type MobileDeepLinkWallet = "solflare" | "backpack";
-export type MobileDeepLinkCluster = "devnet" | "mainnet-beta" | "testnet";
+export type MobileDeepLinkCluster = string;
 
 export type WalletEncryptionKeyPair = {
   publicKey: Uint8Array;
   secretKey: Uint8Array;
 };
-
-export function shouldUseMobileWalletDeepLinks(
-  isMobileUserAgent: boolean,
-  hasSupportedWalletStandard: boolean
-): boolean {
-  return isMobileUserAgent || !hasSupportedWalletStandard;
-}
 
 export function encodeBase58(bytes: Uint8Array): string {
   if (bytes.length === 0) return "";
@@ -181,17 +174,9 @@ export function buildWalletConnectDeepLink(input: {
     input;
   const { app, redirect } = validateAppAndRedirectUrls(appUrl, redirectLink);
 
-  // Backpack's published Solana cluster choices do not document Devnet.
-  // Omitting cluster would silently target mainnet-beta, so fail closed.
-  if (provider === "backpack" && cluster === "devnet") {
-    throw new Error(
-      "Backpack's published deeplink connection options do not include Solana Devnet."
-    );
-  }
-
   if (
     dappEncryptionPublicKey.length !== BOX_PUBLIC_KEY_BYTES ||
-    (provider === "backpack" && cluster === "testnet")
+    !/^[a-zA-Z0-9:._-]+$/.test(cluster)
   ) {
     throw new Error("The wallet connection settings are not supported.");
   }
@@ -207,9 +192,7 @@ export function buildWalletConnectDeepLink(input: {
     encodeBase58(dappEncryptionPublicKey)
   );
   url.searchParams.set("redirect_link", redirect.toString());
-  if (provider === "solflare" || cluster === "mainnet-beta") {
-    url.searchParams.set("cluster", cluster);
-  }
+  url.searchParams.set("cluster", cluster);
 
   return url.toString();
 }
