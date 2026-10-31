@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
-import { createRootMetadata } from "./app-identity";
+import { APP_IDENTITY, createRootMetadata } from "./app-identity";
 import { metadataBase } from "./site";
 import "./globals.css";
 
@@ -64,6 +64,34 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <link
+          rel="apple-touch-icon"
+          sizes="180x180"
+          type="image/png"
+          href={APP_IDENTITY.icons.appleTouch}
+        />
+        <link
+          rel="shortcut icon"
+          type="image/x-icon"
+          href={APP_IDENTITY.icons.faviconIco}
+        />
+        <link
+          rel="icon"
+          sizes="32x32"
+          type="image/x-icon"
+          href={APP_IDENTITY.icons.faviconIco}
+        />
+        <link
+          rel="icon"
+          sizes="192x192"
+          type="image/png"
+          href={APP_IDENTITY.icons.png192}
+        />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href={APP_IDENTITY.icons.faviconSvg}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: themeBootstrapScript

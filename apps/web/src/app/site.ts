@@ -85,7 +85,7 @@ export function createPublicMetadata({
     openGraph: {
       type: "website",
       siteName: siteConfig.name,
-      title: brandedTitle,
+      title: siteConfig.name,
       description,
       url: canonicalUrl,
       images: [

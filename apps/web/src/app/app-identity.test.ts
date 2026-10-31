@@ -28,12 +28,6 @@ function expectPngDimensions(
 describe("Paylore public dApp identity", () => {
   it("publishes one canonical name, URL, favicon, and Apple touch icon", () => {
     const metadata = createRootMetadata(metadataBase);
-    const icons = metadata.icons as {
-      icon: Array<{ url: string; type?: string; sizes?: string }>;
-      shortcut: Array<{ url: string; type?: string }>;
-      apple: Array<{ url: string; type?: string; sizes?: string }>;
-    };
-
     expect(metadata.applicationName).toBe(APP_IDENTITY.name);
     expect(metadata.metadataBase).toEqual(metadataBase);
     expect(metadata.manifest).toBe(APP_IDENTITY.manifestPath);
@@ -43,36 +37,10 @@ describe("Paylore public dApp identity", () => {
     });
     expect(metadata.openGraph).toMatchObject({
       siteName: APP_IDENTITY.name,
-      title: "Paylore | Private on-chain payroll"
+      title: APP_IDENTITY.name
     });
-    expect(icons.icon).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          url: APP_IDENTITY.icons.faviconIco,
-          type: "image/x-icon"
-        }),
-        expect.objectContaining({
-          url: APP_IDENTITY.icons.png192,
-          sizes: "192x192",
-          type: "image/png"
-        }),
-        expect.objectContaining({
-          url: APP_IDENTITY.icons.png512,
-          sizes: "512x512",
-          type: "image/png"
-        })
-      ])
-    );
-    expect(icons.shortcut).toContainEqual(
-      expect.objectContaining({ url: APP_IDENTITY.icons.faviconIco })
-    );
-    expect(icons.apple).toContainEqual(
-      expect.objectContaining({
-        url: APP_IDENTITY.icons.appleTouch,
-        sizes: "180x180",
-        type: "image/png"
-      })
-    );
+    // The layout owns deterministic link order: Apple touch icon first, then favicons.
+    expect(metadata.icons).toBeUndefined();
     expect(siteConfig.icon).toBe(APP_IDENTITY.icons.png512);
   });
 
@@ -90,6 +58,11 @@ describe("Paylore public dApp identity", () => {
     expect(canonicalUrl.pathname).toBe("/pricing");
     expect(canonicalUrl.origin).toBe(metadataBase.origin);
     expect(openGraphUrl.origin).toBe(metadataBase.origin);
+    expect(metadata.title).toBe("Pricing | Paylore");
+    expect(metadata.openGraph).toMatchObject({
+      siteName: "Paylore",
+      title: "Paylore"
+    });
   });
 
   it("serves real PNG assets with their declared square dimensions", async () => {

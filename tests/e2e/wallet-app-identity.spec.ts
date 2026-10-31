@@ -11,7 +11,7 @@ test("wallet-facing page metadata names Paylore and advertises the canonical ico
   await expect(page).toHaveTitle("Private on-chain payroll | Paylore");
   await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
     "content",
-    "Private on-chain payroll | Paylore"
+    "Paylore"
   );
   await expect(page.locator('meta[property="og:site_name"]')).toHaveAttribute(
     "content",
@@ -28,12 +28,50 @@ test("wallet-facing page metadata names Paylore and advertises the canonical ico
     return new URL(href!, page.url()).pathname;
   };
 
-  expect(
-    await resolvePath('link[rel="apple-touch-icon"]')
-  ).toBe("/apple-touch-icon.png");
-  expect(
-    await resolvePath('link[rel="shortcut icon"]')
-  ).toBe("/favicon.ico");
+  const identityIconLinks = await page
+    .locator(
+      'head link[rel="apple-touch-icon"], head link[rel="shortcut icon"], head link[rel="icon"]'
+    )
+    .evaluateAll((links) =>
+      links.map((link) => ({
+        rel: link.getAttribute("rel"),
+        href: link.getAttribute("href"),
+        sizes: link.getAttribute("sizes"),
+        type: link.getAttribute("type")
+      }))
+    );
+  expect(identityIconLinks[0]).toMatchObject({
+    rel: "apple-touch-icon",
+    href: "/apple-touch-icon.png",
+    sizes: "180x180",
+    type: "image/png"
+  });
+  expect(identityIconLinks.slice(1)).toEqual([
+    {
+      rel: "shortcut icon",
+      href: "/favicon.ico",
+      sizes: null,
+      type: "image/x-icon"
+    },
+    {
+      rel: "icon",
+      href: "/favicon.ico",
+      sizes: "32x32",
+      type: "image/x-icon"
+    },
+    {
+      rel: "icon",
+      href: "/icons/paylore-192x192.png",
+      sizes: "192x192",
+      type: "image/png"
+    },
+    {
+      rel: "icon",
+      href: "/favicon.svg",
+      sizes: null,
+      type: "image/svg+xml"
+    }
+  ]);
   expect(
     await resolvePath('link[rel="icon"][type="image/png"][sizes="192x192"]')
   ).toBe("/icons/paylore-192x192.png");

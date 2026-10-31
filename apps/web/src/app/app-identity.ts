@@ -39,42 +39,6 @@ export function createRootMetadata(metadataBase: URL): Metadata {
       "USDC payroll",
       "Solana payroll"
     ],
-    icons: {
-      icon: [
-        {
-          url: APP_IDENTITY.icons.faviconIco,
-          sizes: "32x32",
-          type: "image/x-icon"
-        },
-        {
-          url: APP_IDENTITY.icons.png192,
-          sizes: "192x192",
-          type: "image/png"
-        },
-        {
-          url: APP_IDENTITY.icons.png512,
-          sizes: "512x512",
-          type: "image/png"
-        },
-        {
-          url: APP_IDENTITY.icons.faviconSvg,
-          type: "image/svg+xml"
-        }
-      ],
-      shortcut: [
-        {
-          url: APP_IDENTITY.icons.faviconIco,
-          type: "image/x-icon"
-        }
-      ],
-      apple: [
-        {
-          url: APP_IDENTITY.icons.appleTouch,
-          sizes: "180x180",
-          type: "image/png"
-        }
-      ]
-    },
     appleWebApp: {
       capable: true,
       title: APP_IDENTITY.shortName,
@@ -83,7 +47,7 @@ export function createRootMetadata(metadataBase: URL): Metadata {
     openGraph: {
       type: "website",
       siteName: APP_IDENTITY.name,
-      title: "Paylore | Private on-chain payroll",
+      title: APP_IDENTITY.name,
       description: APP_IDENTITY.socialDescription,
       images: [
         {
