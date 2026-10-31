@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { APP_IDENTITY } from "./app-identity";
 
 const LOCAL_DEVELOPMENT_ORIGIN = "http://localhost:3000";
 
@@ -28,8 +29,15 @@ const configuredSiteOrigin = [
   .map(parseOrigin)
   .find((value): value is URL => value !== undefined);
 
+const productionFallback =
+  process.env.NODE_ENV === "production"
+    ? new URL(APP_IDENTITY.productionOrigin)
+    : undefined;
+
 export const siteOrigin =
-  configuredSiteOrigin?.origin ?? LOCAL_DEVELOPMENT_ORIGIN;
+  configuredSiteOrigin?.origin ??
+  productionFallback?.origin ??
+  LOCAL_DEVELOPMENT_ORIGIN;
 
 export const metadataBase = new URL(siteOrigin);
 
@@ -44,13 +52,12 @@ export const publicRoutes = [
 ] as const;
 
 export const siteConfig = {
-  name: "Paylore",
-  shortName: "Paylore",
-  description:
-    "Private on-chain payroll for crypto-native organizations.",
-  socialDescription:
-    "Private on-chain payroll for crypto-native organizations using USDC on Solana.",
+  name: APP_IDENTITY.name,
+  shortName: APP_IDENTITY.shortName,
+  description: APP_IDENTITY.description,
+  socialDescription: APP_IDENTITY.socialDescription,
   logo: "/brand/paylore.svg",
+  icon: APP_IDENTITY.icons.png512,
   ogImage: "/opengraph-image",
   twitterImage: "/twitter-image"
 };
@@ -66,26 +73,21 @@ export function createPublicMetadata({
   description,
   path
 }: PublicMetadataInput): Metadata {
-  const canonicalUrl = configuredSiteOrigin
-    ? new URL(path, configuredSiteOrigin).toString()
-    : undefined;
+  const canonicalUrl = new URL(path, metadataBase).toString();
+  const brandedTitle = `${title} | ${siteConfig.name}`;
 
   return {
-    title,
+    title: brandedTitle,
     description,
-    ...(canonicalUrl
-      ? {
-          alternates: {
-            canonical: path
-          }
-        }
-      : {}),
+    alternates: {
+      canonical: canonicalUrl
+    },
     openGraph: {
       type: "website",
       siteName: siteConfig.name,
-      title,
+      title: siteConfig.name,
       description,
-      ...(canonicalUrl ? { url: canonicalUrl } : {}),
+      url: canonicalUrl,
       images: [
         {
           url: siteConfig.ogImage,
@@ -97,7 +99,7 @@ export function createPublicMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title,
+      title: brandedTitle,
       description,
       images: [siteConfig.twitterImage]
     }

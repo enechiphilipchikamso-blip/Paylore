@@ -36,7 +36,7 @@ export default async function ContributorInvitationsPage({
   const canManage = context.workspace.role === "organization_admin";
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -66,6 +66,6 @@ export default async function ContributorInvitationsPage({
         canManage={canManage}
       />
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

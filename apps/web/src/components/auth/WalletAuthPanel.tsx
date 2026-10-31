@@ -16,6 +16,8 @@ import { SolanaSignMessage } from "@solana/wallet-standard-features";
 import {
   isWalletCancellation
 } from "./walletErrors";
+import { MobileWalletAuthPanel } from "./MobileWalletAuthPanel";
+import { shouldUseMobileWalletDeepLinks } from "./mobile-wallet-deeplink";
 
 const SUPPORTED_WALLET_OPTIONS = [
   {
@@ -295,7 +297,7 @@ function disconnectFeatureFor(
   ] as StandardDisconnectFeature;
 }
 
-export function WalletAuthPanel({
+function DesktopWalletAuthPanel({
   nextPath,
   reason
 }: AuthPanelProps) {
@@ -1090,5 +1092,98 @@ export function WalletAuthPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+type WalletAuthRoute = "checking" | "desktop" | "mobile";
+
+function isMobileBrowser(): boolean {
+  const userAgent = navigator.userAgent ?? "";
+  return (
+    /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
+function hasSupportedWalletStandard(wallets: readonly { name: string }[]): boolean {
+  const supportedNames = new Set([
+    "phantom",
+    "phantomwallet",
+    "solflare",
+    "solflarewallet",
+    "backpack",
+    "backpackwallet",
+    "jupiter",
+    "jupiterwallet",
+    "jupiterwalletextension"
+  ]);
+  return wallets.some((wallet) =>
+    supportedNames.has(wallet.name.toLowerCase().replace(/[^a-z0-9]/g, ""))
+  );
+}
+
+/**
+ * Desktop extensions retain their existing Wallet Standard implementation.
+ * Mobile and browser-only contexts use the isolated wallet-app protocol path.
+ */
+export function WalletAuthPanel(props: AuthPanelProps) {
+  const [route, setRoute] = useState<WalletAuthRoute>("checking");
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe = () => {};
+
+    void import("@wallet-standard/app")
+      .then(({ getWallets }) => {
+        if (!active) return;
+        const registry = getWallets();
+
+        const chooseRoute = () => {
+          const useMobilePath = shouldUseMobileWalletDeepLinks(
+            isMobileBrowser(),
+            hasSupportedWalletStandard(registry.get())
+          );
+          setRoute(useMobilePath ? "mobile" : "desktop");
+        };
+
+        chooseRoute();
+        const removeRegister = registry.on("register", chooseRoute);
+        const removeUnregister = registry.on("unregister", chooseRoute);
+        unsubscribe = () => {
+          removeRegister();
+          removeUnregister();
+        };
+      })
+      .catch(() => {
+        if (active) setRoute("mobile");
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  if (route === "checking") {
+    return (
+      <div className="auth-card" role="status" aria-live="polite">
+        <span className="loading-indicator">
+          <span className="loading-indicator__icon" aria-hidden="true" />
+          Preparing wallet options…
+        </span>
+      </div>
+    );
+  }
+
+  return route === "mobile" ? (
+    <MobileWalletAuthPanel
+      nextPath={props.nextPath}
+      reason={props.reason}
+    />
+  ) : (
+    <DesktopWalletAuthPanel
+      nextPath={props.nextPath}
+      reason={props.reason}
+    />
   );
 }

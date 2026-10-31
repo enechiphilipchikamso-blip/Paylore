@@ -1,11 +1,12 @@
 import type { MetadataRoute } from "next";
+import { APP_IDENTITY } from "./app-identity";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Paylore",
-    short_name: "Paylore",
+    name: APP_IDENTITY.name,
+    short_name: APP_IDENTITY.shortName,
     id: "/",
-    description: "Private on-chain payroll for crypto-native organizations.",
+    description: APP_IDENTITY.description,
     start_url: "/",
     scope: "/",
     display: "standalone",
@@ -13,32 +14,35 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#16355f",
     icons: [
       {
-        src: "/icons/paylore-192x192.png",
+        src: APP_IDENTITY.icons.png192,
         sizes: "192x192",
         type: "image/png",
+        purpose: "any"
       },
       {
-        src: "/icons/paylore-512x512.png",
+        src: APP_IDENTITY.icons.png512,
         sizes: "512x512",
         type: "image/png",
+        purpose: "any"
       },
       {
-        src: "/icons/paylore-180x180.png",
+        src: APP_IDENTITY.icons.appleTouch,
         sizes: "180x180",
         type: "image/png",
+        purpose: "any"
       },
       {
         src: "/brand/paylore.png",
         sizes: "1254x1254",
         type: "image/png",
-        purpose: "maskable",
+        purpose: "maskable"
       },
       {
         src: "/brand/paylore.svg",
         sizes: "any",
         type: "image/svg+xml",
-        purpose: "any",
-      },
-    ],
+        purpose: "any"
+      }
+    ]
   };
-} 
+}

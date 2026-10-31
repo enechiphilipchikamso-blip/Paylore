@@ -26,6 +26,7 @@ export function InvitationManager({
   const [invitePath, setInvitePath] = useState<string | null>(null);
   const [inviteeName, setInviteeName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
   const [notice, setNotice] = useState<{
     state: "success" | "error";
     text: string;
@@ -80,7 +81,8 @@ export function InvitationManager({
   }
 
   async function copyInvitation() {
-    if (!invitePath) return;
+    if (!invitePath || copyBusy) return;
+    setCopyBusy(true);
     try {
       await navigator.clipboard.writeText(`${window.location.origin}${invitePath}`);
       setNotice({ state: "success", text: "Invitation copied." });
@@ -89,6 +91,8 @@ export function InvitationManager({
         state: "error",
         text: "The invitation could not be copied. Please copy the link shown below."
       });
+    } finally {
+      setCopyBusy(false);
     }
   }
 
@@ -119,6 +123,7 @@ export function InvitationManager({
               <button
                 className="button"
                 disabled={busy || !contributorId}
+                aria-busy={busy}
                 onClick={() => void createInvitation()}
                 type="button"
               >
@@ -144,7 +149,7 @@ export function InvitationManager({
             </span>
             <input readOnly value={invitePath} />
           </label>
-          <button className="button button--secondary" onClick={() => void copyInvitation()} type="button">
+          <button className="button button--secondary" disabled={copyBusy} aria-busy={copyBusy} onClick={() => void copyInvitation()} type="button">
             Copy invitation link
           </button>
         </div>

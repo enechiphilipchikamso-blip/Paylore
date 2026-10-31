@@ -124,7 +124,12 @@ test.describe("public experience", () => {
       .locator('meta[property="og:title"]')
       .getAttribute("content");
 
-    expect(ogTitle).toContain("Pricing");
+    expect(ogTitle).toBe("Paylore");
+
+    const twitterTitle = await page
+      .locator('meta[name="twitter:title"]')
+      .getAttribute("content");
+    expect(twitterTitle).toContain("Pricing");
 
     const twitterCard = await page
       .locator('meta[name="twitter:card"]')
@@ -170,6 +175,8 @@ test.describe("public experience", () => {
     for (const assetPath of [
       "/brand/paylore.svg",
       "/brand/paylore.png",
+      "/favicon.svg",
+      "/apple-touch-icon.png",
       "/icons/favicon.svg",
       "/icons/favicon-180x180.png",
       "/icons/paylore-192x192.png",
@@ -180,7 +187,7 @@ test.describe("public experience", () => {
       expect(asset.ok()).toBeTruthy();
     }
 
-    const favicon = await request.get("/icons/favicon.svg");
+    const favicon = await request.get("/favicon.svg");
     const faviconSvg = await favicon.text();
     expect(faviconSvg).toContain('fill="#f7f9fc"');
     expect(faviconSvg).toContain('transform="translate(0 -18)"');
@@ -192,19 +199,38 @@ test.describe("public experience", () => {
 
     await page.goto("/");
 
-    await expect(
-      page.locator('link[rel="icon"][type="image/svg+xml"][href="/icons/favicon.svg"]')
-    ).toHaveAttribute(
-      "href",
-      "/icons/favicon.svg"
+    const svgIconHref = await page
+      .locator('link[rel="icon"][type="image/svg+xml"]')
+      .getAttribute("href");
+    expect(new URL(svgIconHref!, page.url()).pathname).toBe("/favicon.svg");
+
+    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute(
+      "content",
+      "Paylore"
     );
-    await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", "Paylore");
-    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/manifest.webmanifest");
-    await expect(page.locator('link[rel="shortcut icon"][href="/icons/paylore-192x192.png"]')).toHaveCount(1);
-    await expect(page.locator('link[rel="icon"][type="image/png"][sizes="192x192"][href="/icons/paylore-192x192.png"]')).toHaveCount(1);
-    await expect(
-      page.locator('link[rel="apple-touch-icon"]')
-    ).toHaveAttribute("href", "/icons/paylore-180x180.png");
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+      "href",
+      "/manifest.webmanifest"
+    );
+
+    const shortcutIconHref = await page
+      .locator('link[rel="shortcut icon"]')
+      .getAttribute("href");
+    expect(new URL(shortcutIconHref!, page.url()).pathname).toBe("/favicon.ico");
+
+    const pngIconHref = await page
+      .locator('link[rel="icon"][type="image/png"][sizes="192x192"]')
+      .getAttribute("href");
+    expect(new URL(pngIconHref!, page.url()).pathname).toBe(
+      "/icons/paylore-192x192.png"
+    );
+
+    const appleIconHref = await page
+      .locator('link[rel="apple-touch-icon"]')
+      .getAttribute("href");
+    expect(new URL(appleIconHref!, page.url()).pathname).toBe(
+      "/apple-touch-icon.png"
+    );
   });
 
   test("robots and sitemap contain public routes only", async ({ page }) => {

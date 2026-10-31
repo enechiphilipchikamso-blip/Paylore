@@ -147,6 +147,7 @@ export function PayrollRunManager({
       <button
         className="button"
         disabled={!file || file.size > fileLimitBytes || busy}
+        aria-busy={busy}
         onClick={() => void submit("preview")}
         type="button"
       >
@@ -208,6 +209,7 @@ export function PayrollRunManager({
               preview.preview.errorCount > 0 ||
               preview.preview.validCount === 0
             }
+            aria-busy={busy}
             onClick={confirmRun}
             type="button"
           >

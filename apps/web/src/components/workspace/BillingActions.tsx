@@ -152,6 +152,7 @@ export function BillingActions({
                   <button
                     className="button button--secondary"
                     disabled={busy}
+                    aria-busy={busy}
                     onClick={() => void updateCancellation("cancel")}
                     type="button"
                   >
@@ -171,6 +172,7 @@ export function BillingActions({
             <button
               className="button button--secondary"
               disabled={busy}
+              aria-busy={busy}
               onClick={() => void updateCancellation("keep-active")}
               type="button"
             >
@@ -198,7 +200,10 @@ export function BillingActions({
       <section aria-labelledby="subscription-history-heading" className="subscription-history">
         <h2 id="subscription-history-heading">Subscription history</h2>
         {payments.length === 0 ? (
-          <p>No subscription history is available yet.</p>
+          <div className="workspace-empty-state">
+            <h3>No subscription payments recorded</h3>
+            <p>Verified workspace payments will appear here with their billing period and transaction reference.</p>
+          </div>
         ) : (
           <div className="table-scroll">
             <table>

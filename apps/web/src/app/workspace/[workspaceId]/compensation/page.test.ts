@@ -86,8 +86,10 @@ beforeEach(() => {
 describe("contributor compensation page authorization scope", () => {
   it("loads account and allocations only for the contributor resolved from the session wallet", async () => {
     const page = await CompensationPage({ params: Promise.resolve({ workspaceId: "workspace-a" }) });
-    renderToStaticMarkup(page);
+    const html = renderToStaticMarkup(page);
 
+    expect(html).not.toContain("<main");
+    expect(html).toContain('class="protected-wrap workspace-page"');
     expect(mocks.findWorkspaceContributorByWallet).toHaveBeenCalledWith(db, "workspace-a", "wallet-a");
     expect(mocks.getContributorConfidentialAccount).toHaveBeenCalledWith(db, "workspace-a", "contributor-a");
     expect(mocks.hasOpenContributorPayrollAllocations).toHaveBeenCalledWith(db, "workspace-a", "contributor-a");

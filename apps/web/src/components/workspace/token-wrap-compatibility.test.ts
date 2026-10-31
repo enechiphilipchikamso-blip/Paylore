@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertDevnetTokenWrapIdentity,
   assertDevnetTokenWrapProgramAccount,
+  assertExactFinalizedWrapBalances,
   assertExactFinalizedUnwrapBalances,
   assertExpectedAssociatedTokenAccount,
   DEVNET_TOKEN_WRAP_EXPECTED
@@ -134,4 +135,57 @@ describe("custom Devnet Token Wrap compatibility", () => {
       })
     ).toThrow("Do not submit a duplicate unwrap");
   });
+
+  it("requires per-transaction exact source debit, escrow credit, and Reserve wrapped-USDC credit", () => {
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 250_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceDebitBaseUnits: 200_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 250_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 240_000n,
+        destinationCreditBaseUnits: 250_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 250_000n,
+        sourceDebitBaseUnits: 250_000n,
+        escrowCreditBaseUnits: 250_000n,
+        destinationCreditBaseUnits: 200_000n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+
+    expect(() =>
+      assertExactFinalizedWrapBalances({
+        amountBaseUnits: 0n,
+        sourceDebitBaseUnits: 0n,
+        escrowCreditBaseUnits: 0n,
+        destinationCreditBaseUnits: 0n,
+        transactionSignature: "wrap-signature"
+      })
+    ).toThrow("Do not submit a duplicate wrap");
+  });
+
 });

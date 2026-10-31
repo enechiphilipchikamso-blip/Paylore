@@ -8,9 +8,6 @@ import {
   SignOutButton
 } from "../../../components/auth/SignOutButton";
 import {
-  WORKSPACE_ROLE_LABELS
-} from "../../../server/authorization-policy";
-import {
   getDatabase
 } from "../../../server/db";
 import {
@@ -22,9 +19,13 @@ import {
   listWorkspaceMemberships
 } from "@paylore/database";
 import { WorkspaceActivation } from "../../../components/workspace/WorkspaceActivation";
-import { WorkspaceRetentionBanner } from "../../../components/workspace/WorkspaceRetentionBanner";
 import { loadPayloreConfig } from "../../../server/config";
 import { isValidSolanaAddress } from "../../../server/security";
+import { getWorkspaceSetupProgress } from "../../../server/workspace-setup-progress";
+import {
+  WorkspaceLegalFooter,
+  WorkspaceNavigation
+} from "../../../components/workspace/WorkspaceNavigation";
 
 export const metadata: Metadata = {
   title: "Workspace",
@@ -130,111 +131,209 @@ export default async function WorkspacePage({
     );
   }
 
+  const setupProgress =
+    workspace.role === "organization_admin" &&
+    (subscription.status === "active" || subscription.status === "cancel_scheduled")
+      ? await getWorkspaceSetupProgress(
+          db,
+          workspaceId,
+          sessionState.session.walletAddress
+        )
+      : null;
+
   return (
     <div className="protected-wrap workspace-page">
+      <WorkspaceNavigation
+        workspaceId={workspaceId}
+        workspaceName={workspace.workspaceName}
+        role={workspace.role}
+        memberships={memberships.map((membership) => ({
+          workspaceId: membership.workspaceId,
+          workspaceName: membership.workspaceName,
+          role: membership.role
+        }))}
+      />
       {query.activated === "1" ? (
         <div className="state-callout" data-state="success" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>{workspace.workspaceName} is active and ready to use.</p>
+          <p>{workspace.workspaceName} subscription is active.</p>
+          {setupProgress && !setupProgress.complete ? (
+            <p>Finish Gas Tank funding and confidential Reserve setup below before running private payroll.</p>
+          ) : null}
         </div>
       ) : null}
-      <nav
-        className="workspace-navigation"
-        aria-label="Workspace navigation"
-      >
-        <Link
-          className="workspace-navigation__all"
-          href="/app"
-        >
-          All workspaces
-        </Link>
-
-        <details className="workspace-switcher">
-          <summary>
-            <span>Current workspace</span>
-            <strong>
-              {workspace.workspaceName}
-            </strong>
-          </summary>
-
-          <div className="workspace-switcher__menu">
-            <p>Switch workspace</p>
-            {memberships.map(
-              (membership) => (
-                <Link
-                  className="workspace-switcher__option"
-                  href={`/workspace/${membership.workspaceId}`}
-                  key={membership.workspaceId}
-                  aria-current={
-                    membership.workspaceId === workspace.workspaceId
-                      ? "page"
-                      : undefined
-                  }
-                >
-                  <span>
-                    {membership.workspaceName}
-                  </span>
-                  <small>
-                    {
-                      WORKSPACE_ROLE_LABELS[
-                        membership.role
-                      ]
-                    }
-                  </small>
-                </Link>
-              )
-            )}
-            <Link
-              className="workspace-switcher__create"
-              href="/app#create-workspace"
-            >
-              Create workspace
-            </Link>
-          </div>
-        </details>
-      </nav>
-
-      <WorkspaceRetentionBanner workspaceId={workspaceId} />
-
-      {workspace.role === "contributor" ? (
-        <nav className="workspace-main-nav" aria-label="Workspace features">
-          <Link href={`/workspace/${workspaceId}/compensation`}>Your compensation</Link>
-        </nav>
-      ) : null}
-
-      {workspace.role !== "contributor" ? (
-        <nav className="workspace-main-nav" aria-label="Workspace features">
-          <Link href={`/workspace/${workspaceId}/billing`}>Billing</Link>
-          <Link href={`/workspace/${workspaceId}/contributors`}>Contributor Directory</Link>
-          <Link href={`/workspace/${workspaceId}/contributors/invitations`}>Invitations</Link>
-          <Link href={`/workspace/${workspaceId}/settings`}>Settings</Link>
-          {workspace.role === "organization_admin" ? (
-            <Link href={`/workspace/${workspaceId}/settings/reserve`}>Confidential reserve</Link>
-          ) : null}
-        </nav>
-      ) : null}
-
-      <header className="protected-header">
-        <p className="eyebrow">
-          Workspace
-        </p>
-
-        <h1>
-          {workspace.workspaceName}
-        </h1>
-
+      <header className="protected-header workspace-home-heading">
+        <p className="eyebrow">Workspace home</p>
+        <h2>Workspace overview</h2>
         <p>
-          Your role:{" "}
-          <strong>
-            {
-              WORKSPACE_ROLE_LABELS[
-                workspace.role
-              ]
-            }
-          </strong>
-          .
+          A clear view of workspace status and the actions available to
+          {workspace.role === "organization_admin"
+            ? " your administrator team."
+            : workspace.role === "finance_auditor"
+              ? " your finance and audit role."
+              : " you as a contributor."}
         </p>
       </header>
+
+      {setupProgress && !setupProgress.complete ? (
+        <section className="workspace-setup" aria-labelledby="workspace-setup-heading">
+          <div className="state-callout" data-state="partial" role="status">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Workspace setup is incomplete. Finish the Gas Tank setup and confidential reserve checks to prepare this workspace for private payroll.</p>
+          </div>
+          <section className="surface-card workspace-setup__card">
+            <p className="eyebrow">Getting started</p>
+            <h2 id="workspace-setup-heading">Finish setting up this workspace</h2>
+            <ol className="workspace-setup__steps">
+              <li className="workspace-setup__step" data-state={setupProgress.gasTank.status}>
+                <span className="workspace-setup__number" aria-hidden="true">1</span>
+                <div className="workspace-setup__content">
+                  <p className="eyebrow">First</p>
+                  <h3>Gas Tank setup</h3>
+                  {setupProgress.gasTank.status === "not_initialized" ? (
+                    <p>Create the workspace Gas Tank. Paylore protects its signing key on the server; the workspace administrator supplies the SOL.</p>
+                  ) : setupProgress.gasTank.status === "funding_required" ? (
+                    <p>The Gas Tank needs more SOL. Transfer SOL from the administrator wallet to the Gas Tank before starting confidential Reserve setup. Paylore checks the live balance against transaction fees and rent before submitting.</p>
+                  ) : setupProgress.gasTank.status === "balance_unavailable" ? (
+                    <p>Paylore could not verify the live Gas Tank balance. Open the Gas Tank page and refresh its balance before starting Reserve setup.</p>
+                  ) : (
+                    <p>The Gas Tank is initialized and its live balance is available. Reserve setup will check a conservative rent allowance and network-fee buffer again before submitting any transaction.</p>
+                  )}
+                  {setupProgress.gasTank.address ? (
+                    <p className="workspace-setup__address">Gas Tank address: <code>{setupProgress.gasTank.address}</code></p>
+                  ) : null}
+                  {setupProgress.gasTank.balanceSol !== null && setupProgress.gasTank.status !== "balance_unavailable" ? (
+                    <p className="workspace-setup__balance">Live balance: {setupProgress.gasTank.balanceSol} SOL</p>
+                  ) : null}
+                  <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>
+                    {setupProgress.gasTank.status === "not_initialized" ? "Set up Gas Tank" : "Review and fund Gas Tank"}
+                  </Link>
+                </div>
+              </li>
+              <li className="workspace-setup__step" data-state={setupProgress.reserve.status}>
+                <span className="workspace-setup__number" aria-hidden="true">2</span>
+                <div className="workspace-setup__content">
+                  <p className="eyebrow">Next</p>
+                  <h3>Confidential reserve setup</h3>
+                  {setupProgress.reserve.status === "key_custody_required" ? (
+                    <p>After the Gas Tank is initialized and funded, configure encrypted Reserve signing-key custody, then initialize its confidential Token-2022 account and Payroll Program reserve state.</p>
+                  ) : setupProgress.reserve.status === "workspace_program_not_initialized" ? (
+                    <p>The Paylore Program workspace account is not initialized. Reserve setup will stop without submitting a transaction until that workspace state exists.</p>
+                  ) : setupProgress.reserve.status === "unavailable" ? (
+                    <p>Paylore could not verify the current Reserve state. Open Reserve settings and refresh the on-chain check before trying setup again.</p>
+                  ) : (
+                    <p>The Reserve still owns and authorizes its token account. When the Gas Tank has enough SOL, initialize or reconcile the confidential account and its Payroll Program reserve state.</p>
+                  )}
+                  <Link className="button" href={`/workspace/${workspaceId}/settings/reserve`}>
+                    Open confidential reserve
+                  </Link>
+                </div>
+              </li>
+            </ol>
+          </section>
+        </section>
+      ) : null}
+
+      {workspace.role === "organization_admin" ? (
+        <section className="workspace-quick-links" aria-labelledby="workspace-tools-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Workspace controls</p>
+              <h2 id="workspace-tools-heading">Workspace tools</h2>
+              <p>Open the workspace area you need without leaving this dashboard.</p>
+            </div>
+          </header>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/contributors`}>
+              <span><strong>Contributors</strong><small>Review the directory and onboarding status.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/payroll`}>
+              <span><strong>Payroll</strong><small>Prepare runs and review contributor allocations.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/gas-tank`}>
+              <span><strong>Gas Tank</strong><small>Check the sponsored network-fee balance and activity.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/billing`}>
+              <span><strong>Billing</strong><small>Review the subscription and payment history.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/ledger`}>
+              <span><strong>Workspace ledger</strong><small>Review workspace-scoped financial and operational entries.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Notifications</strong><small>Review durable workspace updates.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {workspace.role === "finance_auditor" ? (
+        <section className="workspace-quick-links" aria-labelledby="finance-overview-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Finance &amp; audit</p>
+              <h2 id="finance-overview-heading">Workspace records</h2>
+              <p>Review payroll, contributor records and operational activity. These views do not include administrator controls.</p>
+            </div>
+          </header>
+          <p className="notice" role="note">
+            Your Finance/Auditor access is read-only. Subscription changes, contributor administration, reserve management and payroll recovery remain with the workspace administrator.
+          </p>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/payroll`}>
+              <span><strong>Payroll history</strong><small>Review payroll runs, allocations and their recorded states.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/contributors`}>
+              <span><strong>Contributor directory</strong><small>Review contributor roles, wallet associations and onboarding status.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/ledger`}>
+              <span><strong>Workspace ledger</strong><small>Filter and export finalized financial and operational records.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/billing`}>
+              <span><strong>Billing history</strong><small>Review subscription status and verified payments.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/gas-tank`}>
+              <span><strong>Gas Tank activity</strong><small>Inspect the sponsored-fee balance and operation history.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Notifications</strong><small>Review workspace updates and operational notices.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {workspace.role === "contributor" ? (
+        <section className="workspace-quick-links" aria-labelledby="contributor-overview-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Contributor workspace</p>
+              <h2 id="contributor-overview-heading">Your payroll</h2>
+              <p>Review compensation assigned to your authenticated wallet and manage your contributor-controlled confidential account.</p>
+            </div>
+          </header>
+          <div className="workspace-quick-links__grid">
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/compensation`}>
+              <span><strong>Your compensation</strong><small>Review payroll allocations, claim status and confidential balances.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+            <Link className="workspace-quick-link" href={`/workspace/${workspaceId}/notifications`}>
+              <span><strong>Your notifications</strong><small>Read workspace updates and notices addressed to your account.</small></span>
+              <span aria-hidden="true" className="workspace-quick-link__arrow">→</span>
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       <section className="invite-state">
         {query.created === "1" ? (
@@ -321,11 +420,7 @@ export default async function WorkspacePage({
           <SignOutButton />
         </div>
       </section>
-      <footer className="workspace-legal-footer">
-        <Link href="/terms">Terms</Link>
-        <Link href="/privacy">Privacy</Link>
-        <Link href="/security">Security</Link>
-      </footer>
+      <WorkspaceLegalFooter />
     </div>
   );
 }

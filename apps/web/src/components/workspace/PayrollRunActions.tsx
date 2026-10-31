@@ -62,6 +62,7 @@ export function PayrollRunActions({
         <button
           className="button button--secondary"
           disabled={busy}
+          aria-busy={busy}
           onClick={() => void cancelRun()}
           type="button"
         >

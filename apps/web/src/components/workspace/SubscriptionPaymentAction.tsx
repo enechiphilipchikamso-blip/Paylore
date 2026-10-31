@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 import { useRouter } from "next/navigation";
 import {
   createSubscriptionPaymentTransaction,
@@ -357,10 +358,9 @@ export function SubscriptionPaymentAction({
         </section>
       ) : null}
       {busy ? (
-        <p className="loading-indicator" role="status" aria-live="polite">
-          <span className="loading-indicator__icon" aria-hidden="true" />
-          {progress || "Activating your workspace…"}
-        </p>
+        <BusyActionButton busy className="button" type="button">
+          {progress || "Processing activation payment…"}
+        </BusyActionButton>
       ) : pendingSignature ? (
         <button
           className="button button--secondary"

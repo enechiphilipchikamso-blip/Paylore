@@ -78,7 +78,7 @@ export default async function WorkspacePayrollPage({
       subscription?.status === "cancel_scheduled");
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -117,7 +117,10 @@ export default async function WorkspacePayrollPage({
             and finalized confidential balance movement before recording a recovery.
           </p>
           {recoveryQueue.length === 0 ? (
-            <p>No payroll allocations are available for recovery review.</p>
+            <div className="workspace-empty-state">
+              <h3>No allocations need recovery review</h3>
+              <p>Eligible unclaimed allocations will appear here when the workspace has payroll that may be reviewed for recovery.</p>
+            </div>
           ) : (
             <>
               <div className="table-scroll">
@@ -178,7 +181,10 @@ export default async function WorkspacePayrollPage({
       <section className="surface-card" aria-labelledby="payroll-runs-title">
         <h2 id="payroll-runs-title">Run history</h2>
         {runs.length === 0 ? (
-          <p>No payroll runs have been created in this workspace.</p>
+          <div className="workspace-empty-state">
+            <h3>No payroll runs yet</h3>
+            <p>Workspace payroll history will appear here after an administrator creates and records a run.</p>
+          </div>
         ) : (
           <div className="table-scroll">
             <table>
@@ -211,6 +217,6 @@ export default async function WorkspacePayrollPage({
         )}
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

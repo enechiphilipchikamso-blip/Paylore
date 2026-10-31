@@ -27,17 +27,18 @@ export default async function WorkspaceSettingsPage({
   if (context.workspace.role === "contributor") notFound();
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
         role={context.workspace.role}
       />
       <header className="protected-header">
-        <p className="eyebrow">Workspace</p>
-        <h2>Settings</h2>
+        <p className="eyebrow">Workspace controls</p>
+        <h2>Workspace settings</h2>
+        <p>Review workspace identity and the settings available to your role. Financial and operational controls remain with the workspace administrator.</p>
       </header>
-      <section className="card-grid settings-grid">
+      <section className="card-grid settings-grid" aria-label="Workspace settings categories">
         <article className="card">
           <h3>Workspace</h3>
           <dl className="settings-details">
@@ -49,13 +50,17 @@ export default async function WorkspaceSettingsPage({
         <article className="card">
           <h3>Billing</h3>
           <p>Review subscription status and payment history.</p>
-          <Link href={`/workspace/${workspaceId}/billing`}>Manage billing</Link>
+          <Link href={`/workspace/${workspaceId}/billing`}>
+            {context.workspace.role === "organization_admin" ? "Manage billing" : "View billing"}
+          </Link>
         </article>
-        <article className="card">
-          <h3>Reserve</h3>
-          <p>Manage this workspace’s confidential payroll reserve.</p>
-          <Link href={`/workspace/${workspaceId}/settings/reserve`}>Manage confidential reserve</Link>
-        </article>
+        {context.workspace.role === "organization_admin" ? (
+          <article className="card">
+            <h3>Reserve</h3>
+            <p>Manage this workspace’s confidential payroll reserve.</p>
+            <Link href={`/workspace/${workspaceId}/settings/reserve`}>Manage confidential reserve</Link>
+          </article>
+        ) : null}
         {context.workspace.role === "organization_admin" ? (
           <article className="card">
             <h3>Data retention</h3>
@@ -74,6 +79,6 @@ export default async function WorkspaceSettingsPage({
         </article>
       </section>
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }

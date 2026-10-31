@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 import { useRouter } from "next/navigation";
 
 type DeadLetter = {
@@ -59,7 +60,10 @@ export function WebhookDeadLetterQueue({
       <p>These events exhausted automatic retries. Receipt alone does not establish a successful transaction. Retrying repeats finalized-chain verification; it does not mark an event successful.</p>
       {message ? <p role="status" aria-live="polite">{message}</p> : null}
       {events.length === 0 ? (
-        <p>No workspace-linked webhook events need review.</p>
+        <div className="workspace-empty-state">
+          <h3>No events need review</h3>
+          <p>All workspace-linked webhook events have completed their automatic checks.</p>
+        </div>
       ) : (
         <div className="table-scroll">
           <table>
@@ -71,7 +75,17 @@ export function WebhookDeadLetterQueue({
                 <td>{event.transactionSignature ? <a href={`https://explorer.solana.com/tx/${encodeURIComponent(event.transactionSignature)}?cluster=devnet`} target="_blank" rel="noreferrer">View transaction</a> : "No signature recorded"}</td>
                 <td>{event.attempts}</td>
                 <td>{event.lastErrorCode ?? "Needs review"}</td>
-                <td><button className="button button--secondary" type="button" disabled={busyId !== null || !event.transactionSignature} onClick={() => void retry(event.id)}>{busyId === event.id ? "Scheduling…" : "Retry verification"}</button></td>
+                <td>
+                  <BusyActionButton
+                    busy={busyId === event.id}
+                    className="button button--secondary"
+                    disabled={!event.transactionSignature || (busyId !== null && busyId !== event.id)}
+                    onClick={() => void retry(event.id)}
+                    type="button"
+                  >
+                    {busyId === event.id ? "Scheduling…" : "Retry verification"}
+                  </BusyActionButton>
+                </td>
               </tr>
             ))}</tbody>
           </table>

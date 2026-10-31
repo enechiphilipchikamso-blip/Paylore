@@ -179,7 +179,7 @@ const EXPECTED_INSTRUCTIONS = [
       { name: "amount_commitment_proof", type: { vec: BYTE32 } }, { name: "escrow_token_account", type: "pubkey" }
     ] },
   { name: "configure_workspace_reserve", context: "ConfigureWorkspaceReserve",
-    accounts: ["authority", "workspace", "reserve_state", "reserve_authority", "reserve_token_account", "mint", "system_program"], args: [] },
+    accounts: ["authority", "workspace", "payer", "reserve_state", "reserve_authority", "reserve_token_account", "mint", "system_program"], args: [] },
   { name: "mark_settlement_pending", context: "MarkSettlementPending",
     accounts: ["contributor", "workspace", "reserve_state", "reserve_authority", "reserve_token_account", "mint", "claim", "escrow_token_account", "destination_token_account", "instructions_sysvar", "amount_commitment_context"], args: [] },
   { name: "mark_claimed", context: "MarkClaimed",

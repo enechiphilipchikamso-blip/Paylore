@@ -135,3 +135,23 @@ export function assertExactFinalizedUnwrapBalances(input: {
     );
   }
 }
+
+export function assertExactFinalizedWrapBalances(input: {
+  amountBaseUnits: bigint;
+  sourceDebitBaseUnits: bigint;
+  escrowCreditBaseUnits: bigint;
+  destinationCreditBaseUnits: bigint;
+  transactionSignature: string;
+}): void {
+  // The escrow is shared across wraps, so compare token-balance deltas from this signature's transaction metadata, not separate global snapshots.
+  if (
+    input.amountBaseUnits <= 0n ||
+    input.sourceDebitBaseUnits !== input.amountBaseUnits ||
+    input.escrowCreditBaseUnits !== input.amountBaseUnits ||
+    input.destinationCreditBaseUnits !== input.amountBaseUnits
+  ) {
+    throw new Error(
+      `The finalized wrap transaction does not reconcile to the requested Circle-USDC debit, Token Wrap escrow credit and Reserve wrapped-USDC credit. Do not submit a duplicate wrap. Transaction: ${input.transactionSignature}`
+    );
+  }
+}

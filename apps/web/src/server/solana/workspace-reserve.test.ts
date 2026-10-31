@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  assertWorkspaceReserveFundingGasTankReady,
+  completeWorkspaceReserveConfidentialFunding,
   getWorkspaceConfidentialReserveSnapshot,
   initializeWorkspaceConfidentialReserveAccount,
   WorkspaceReserveInitializationError
@@ -9,6 +11,20 @@ import {
 const h = vi.hoisted(() => ({
   tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   authority: "11111111111111111111111111111111",
+  gasTank: "GasTankSigner11111111111111111111111111111",
+  gasTankExists: true,
+  gasTankBalanceLamports: 1_000_000_000n,
+  gasTankBalanceError: null as Error | null,
+  gasTankBalanceCalls: 0,
+  gasTankBalanceFailsOnCall: 0,
+  currentBlockHeight: 500n,
+  expiredTransactionMissing: false,
+  sendTransactionError: null as Error | null,
+  feePayerAddresses: [] as string[],
+  registeredSignerAddresses: [] as string[][],
+  registeredInstructionSigners: [] as string[][],
+  setupArgs: null as null | { payer: string; owner: string },
+  configureAccounts: null as null | any[],
   reserve: "ReserveAuthority1111111111111111111111111",
   reserveToken: "ReserveTokenAccount111111111111111111111",
   mint: "WrappedUsdcMint11111111111111111111111111",
@@ -29,7 +45,21 @@ const h = vi.hoisted(() => ({
   configCalls: 0,
   attachCalls: [] as Array<{phase:string;signature:string}>,
   clearCalls: [] as Array<{phase:string;signature:string}>,
-  signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">
+  signatureFinality: {} as Record<string, "finalized" | "failed" | "pending">,
+  feeReservationCalls: [] as unknown[],
+  feeReservationResult: "reserved" as string,
+  beginBarrierEnabled: false,
+  beginBarrierCalls: 0,
+  beginBarrier: null as Promise<void> | null,
+  releaseBeginBarrier: null as (() => void) | null,
+  feeReservationBarrierEnabled: false,
+  feeReservationBarrierCalls: 0,
+  feeReservationBarrier: null as Promise<void> | null,
+  releaseFeeReservationBarrier: null as (() => void) | null,
+  currentFeeReservationOperationData: null as Record<string, unknown> | null,
+  transactionPublicBalanceBefore: 0n,
+  transactionAmount: 0n,
+  lastTransactionType: ""
 }));
 
 function sha(value: string): Uint8Array {
@@ -43,6 +73,18 @@ function encode(value: string): Uint8Array {
 }
 function b64(value: Uint8Array): string {
   return Buffer.from(value).toString("base64");
+}
+function base58(value: Uint8Array): string {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const hex = Buffer.from(value).toString("hex");
+  let number = hex ? BigInt("0x" + hex) : 0n;
+  let result = "";
+  while (number > 0n) {
+    result = alphabet[Number(number % 58n)] + result;
+    number /= 58n;
+  }
+  const zeroes = value.findIndex((byte) => byte !== 0);
+  return "1".repeat(zeroes < 0 ? value.length : zeroes) + result;
 }
 function workspaceAccount(): [string, "base64"] {
   const workspaceId = "workspace-a";
@@ -77,6 +119,12 @@ function getPlanStep(plan: any): string {
   };
   visit(plan);
   if (nodes.some((ix) => ix.programAddress === h.tokenProgram && ix.data?.[0] === 200)) return "account_setup";
+  if (nodes.some((ix) => ix.programAddress === h.tokenProgram && ix.data?.[0] === 201)) return "deposit";
+  if (nodes.some((ix) => ix.programAddress === h.tokenProgram && ix.data?.[0] === 202)) {
+    return String(h.currentFeeReservationOperationData?.stage ?? "").startsWith("preapply")
+      ? "preapply_apply"
+      : "apply";
+  }
   if (nodes.some((ix) =>
     ix.programAddress === h.programId &&
     Buffer.from(ix.data ?? []).equals(Buffer.from(discriminator("global:configure_workspace_reserve")))
@@ -87,6 +135,19 @@ function reset(): void {
   Object.assign(h, {
     accountReady: true,
     accountOwner: h.tokenProgram,
+    gasTankExists: true,
+    gasTankBalanceLamports: 1_000_000_000n,
+    gasTankBalanceError: null,
+    gasTankBalanceCalls: 0,
+    gasTankBalanceFailsOnCall: 0,
+    currentBlockHeight: 500n,
+    expiredTransactionMissing: false,
+    sendTransactionError: null,
+    feePayerAddresses: [],
+    registeredSignerAddresses: [],
+    registeredInstructionSigners: [],
+    setupArgs: null,
+    configureAccounts: null,
     workspaceInitialized: true,
     reserveConfigured: false,
     publicBalanceBaseUnits: 0n,
@@ -98,7 +159,21 @@ function reset(): void {
     configCalls: 0,
     attachCalls: [],
     clearCalls: [],
-    signatureFinality: {}
+    signatureFinality: {},
+    feeReservationCalls: [],
+    feeReservationResult: "reserved",
+    beginBarrierEnabled: false,
+    beginBarrierCalls: 0,
+    beginBarrier: null,
+    releaseBeginBarrier: null,
+    feeReservationBarrierEnabled: false,
+    feeReservationBarrierCalls: 0,
+    feeReservationBarrier: null,
+    releaseFeeReservationBarrier: null,
+    currentFeeReservationOperationData: null,
+    transactionPublicBalanceBefore: 0n,
+    transactionAmount: 0n,
+    lastTransactionType: ""
   });
 }
 
@@ -112,7 +187,10 @@ vi.mock("@solana/kit", () => ({
   address: (value: string) => value,
   isSome: (value: { __option?: string } | null | undefined) => value?.__option === "Some",
   blockhash: (value: string) => value,
-  createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserve })),
+  signature: (value: string) => value,
+  createKeyPairSignerFromBytes: vi.fn(async (bytes: Uint8Array) => ({
+    address: bytes[0] === 10 ? h.gasTank : h.reserve
+  })),
   createSolanaRpc: vi.fn(() => ({
     getSignatureStatuses: (signatures: string[]) => ({
       send: async () => ({
@@ -128,11 +206,28 @@ vi.mock("@solana/kit", () => ({
         })
       })
     }),
+    getBlockHeight: () => ({
+      send: async () => h.currentBlockHeight
+    }),
     getLatestBlockhash: () => ({
       send: async () => ({ value: { blockhash: "recent-blockhash", lastValidBlockHeight: 500n } })
     }),
+    getBalance: () => ({
+      send: async () => {
+        h.gasTankBalanceCalls++;
+        if (h.gasTankBalanceError) throw h.gasTankBalanceError;
+        if (h.gasTankBalanceFailsOnCall === h.gasTankBalanceCalls) {
+          throw new Error("RPC unavailable after reserve setup.");
+        }
+        return { value: h.gasTankBalanceLamports };
+      }
+    }),
+    getMinimumBalanceForRentExemption: (space: bigint) => ({
+      send: async () => space === 1024n ? 5_000_000n : 3_000_000n
+    }),
     sendTransaction: () => ({
       send: async () => {
+        if (h.sendTransactionError) throw h.sendTransactionError;
         const step = getPlanStep(h.currentPlan);
         h.submittedSteps.push(step);
         if (step === "account_setup") {
@@ -143,7 +238,24 @@ vi.mock("@solana/kit", () => ({
           h.configCalls++;
           h.reserveConfigured = true;
         }
-        return h.setupSignature + "-" + h.submittedSteps.length;
+        h.transactionPublicBalanceBefore = h.publicBalanceBaseUnits;
+        h.lastTransactionType = step;
+        if (h.signatureFinality["1".repeat(64)] !== "failed") {
+          if (step === "preapply_apply") {
+            const pending = h.pendingBalanceBaseUnits;
+            h.pendingBalanceBaseUnits = 0n;
+            h.availableBalanceBaseUnits += pending;
+          }
+          if (step === "deposit") {
+            h.publicBalanceBaseUnits -= h.transactionAmount;
+            h.pendingBalanceBaseUnits += h.transactionAmount;
+          }
+          if (step === "apply") {
+            h.pendingBalanceBaseUnits = 0n;
+            h.availableBalanceBaseUnits += h.transactionAmount;
+          }
+        }
+        return "1".repeat(64);
       }
     }),
     getAccountInfo: (pubkey: string) => ({
@@ -171,18 +283,70 @@ vi.mock("@solana/kit", () => ({
     })
   })),
   createTransactionMessage: () => ({}),
-  createTransactionPlanner: () => async (plan: any) => {
+  appendTransactionMessageInstruction: (instruction: any, message: any) => ({
+    ...message,
+    instructions: [...(message.instructions ?? []), instruction]
+  }),
+  createTransactionPlanner: (options: any) => async (plan: any) => {
     h.currentPlan = plan;
-    return plan;
+    const instructions: any[] = [];
+    const visit = (value: any): void => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      if (value.instruction) instructions.push(value.instruction);
+      else if (value.programAddress && value.data instanceof Uint8Array) instructions.push(value);
+      if (Array.isArray(value.plans)) value.plans.forEach(visit);
+    };
+    visit(plan);
+    const initialMessage = options.createTransactionMessage();
+    const messageWithLifetime = await options.onTransactionMessageUpdated(initialMessage);
+    return {
+      ...messageWithLifetime,
+      instructions
+    };
   },
   createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
-  partiallySignTransactionMessageWithSigners: async (message: any) => message,
-  getBase64EncodedWireTransaction: () => "dGVzdC10cmFuc2FjdGlvbg==",
-  setTransactionMessageFeePayerSigner: (_signer: any, message: any) => message,
+  partiallySignTransactionMessageWithSigners: async (message: any) => {
+    h.registeredInstructionSigners.push(
+      message.instructions.map((instruction: any) =>
+        (instruction.accounts ?? [])
+          .filter((account: any) => account.signer)
+          .map((account: any) => account.signer.address)
+      ).flat()
+    );
+    return message;
+  },
+  addSignersToTransactionMessage: (signers: any[], message: any) => {
+    h.registeredSignerAddresses.push(signers.map((signer) => signer.address));
+    const signersByAddress = new Map(signers.map((signer) => [signer.address, signer]));
+    return {
+      ...message,
+      feePayer: typeof message.feePayer === "object"
+        ? message.feePayer
+        : signersByAddress.get(message.feePayer?.address) ?? message.feePayer,
+      registeredSigners: signers,
+      instructions: message.instructions.map((instruction: any) => ({
+        ...instruction,
+        accounts: instruction.accounts?.map((account: any) =>
+          [2, 3].includes(account.role) && signersByAddress.has(account.address)
+            ? { ...account, signer: signersByAddress.get(account.address) }
+            : account
+        )
+      }))
+    };
+  },
+  getBase64EncodedWireTransaction: () =>
+    Buffer.from([1, ...new Array(64).fill(0)]).toString("base64"),
+  setTransactionMessageFeePayerSigner: (signer: any, message: any) => {
+    h.feePayerAddresses.push(signer.address);
+    return { ...message, feePayer: signer };
+  },
   setTransactionMessageLifetimeUsingBlockhash: (_lifetime: any, message: any) => message,
-  singleInstructionPlan: (instruction: any) => ({ kind: "single", instruction }),
+  singleInstructionPlan: (instruction: any) => {
+    h.configureAccounts = instruction.accounts;
+    return { kind: "single", instruction };
+  },
   getAddressEncoder: () => ({ encode: (value: string) => encode(value) }),
   getProgramDerivedAddress: async ({ seeds }: { seeds: Uint8Array[] }) => {
     const first = new TextDecoder().decode(seeds[0]);
@@ -218,7 +382,23 @@ vi.mock("@solana-program/token-2022", () => ({
       }]
     }
   })),
-  findAssociatedTokenPda: vi.fn(async () => [h.reserveToken, 255])
+  findAssociatedTokenPda: vi.fn(async () => [h.reserveToken, 255]),
+  getConfidentialDepositInstruction: vi.fn((input: any) => {
+    h.transactionAmount = input.amount;
+    return {
+      programAddress: h.tokenProgram,
+      accounts: [
+        { address: input.token, role: 1 },
+        { address: input.authority.address, role: 2 }
+      ],
+      data: new Uint8Array([
+        201,
+        ...new Array(8).fill(0).map((_, index) =>
+          Number((input.amount >> BigInt(index * 8)) & 0xffn)
+        )
+      ])
+    };
+  })
 }));
 
 vi.mock("@solana-program/token-2022/confidential", () => ({
@@ -230,13 +410,27 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
     availableBalance: h.availableBalanceBaseUnits,
     pendingBalance: h.pendingBalanceBaseUnits
   })),
-  getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async () => ({
-    kind: "single",
-    instruction: {
-      programAddress: h.tokenProgram,
-      accounts: [],
-      data: new Uint8Array([200])
-    }
+  getCreateConfidentialTransferAccountInstructionPlan: vi.fn(async (input: any) => {
+    h.setupArgs = { payer: input.payer.address, owner: input.owner.address };
+    return {
+      kind: "single",
+      instruction: {
+        programAddress: h.tokenProgram,
+        accounts: [
+          { address: input.payer.address, role: 3 },
+          { address: input.owner.address, role: 3 }
+        ],
+        data: new Uint8Array([200])
+      }
+    };
+  }),
+  getApplyConfidentialPendingBalanceInstructionFromToken: vi.fn((input: any) => ({
+    programAddress: h.tokenProgram,
+    accounts: [
+      { address: input.token, role: 1 },
+      { address: input.authority.address, role: 2 }
+    ],
+    data: new Uint8Array([202])
   }))
 }));
 
@@ -250,17 +444,170 @@ vi.mock("@solana/zk-sdk/bundler", () => {
 });
 
 vi.mock("@paylore/database", () => ({
+  isExactReserveFundingPreapply: (before: any, after: any) =>
+    BigInt(before.pendingBalance) > 0n &&
+    BigInt(after.publicBalance) === BigInt(before.publicBalance) &&
+    BigInt(after.pendingBalance) === 0n &&
+    BigInt(after.availableBalance) === BigInt(before.availableBalance) + BigInt(before.pendingBalance),
+  isExactReserveFundingDeposit: (before: any, after: any, amount: bigint) =>
+    amount > 0n && amount <= (1n << 48n) - 1n &&
+    before.pendingBalance === 0n &&
+    BigInt(before.publicBalance) - BigInt(after.publicBalance) === amount &&
+    BigInt(after.pendingBalance) - BigInt(before.pendingBalance) === amount &&
+    BigInt(after.availableBalance) === BigInt(before.availableBalance),
+  isExactReserveFundingApply: (before: any, after: any, amount: bigint) =>
+    amount > 0n && amount <= (1n << 48n) - 1n &&
+    BigInt(before.pendingBalance) === amount &&
+    BigInt(after.publicBalance) === BigInt(before.publicBalance) &&
+    BigInt(after.pendingBalance) === 0n &&
+    BigInt(after.availableBalance) - BigInt(before.availableBalance) === amount,
+  isUnchangedReserveFundingBalance: (expected: any, current: any) =>
+    current.publicBalance === expected.publicBalance &&
+    current.pendingBalance === expected.pendingBalance &&
+    current.availableBalance === expected.availableBalance,
   getWorkspacePayrollProgramAuthority: vi.fn(async () => ({ authorityAddress: h.authority })),
+  getWorkspaceGasTank: vi.fn(async () => h.gasTankExists ? ({ address: h.gasTank }) : null),
   getWorkspaceReserve: vi.fn(async () => ({
     address: h.reserve,
     confidentialAccountSetupSignature: null,
     programReserveSetupSignature: null
   })),
-  attachWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { phase: string; signature: string }) => {
+  beginWorkspaceReserveFundingOperation: vi.fn(async (_db: unknown, input: any) => {
+    if (!h.currentFeeReservationOperationData) {
+      h.currentFeeReservationOperationData = {
+        ...input.operationData,
+        stage: input.initialStage ?? "wrap_verified"
+      };
+      h.transactionAmount = BigInt(String(input.operationData.amountBaseUnits));
+    }
+    if (h.beginBarrierEnabled && h.beginBarrier) {
+      h.beginBarrierCalls++;
+      if (h.beginBarrierCalls === 2) h.releaseBeginBarrier?.();
+      await h.beginBarrier;
+    }
+    return {
+      status: "existing",
+      operation: {
+        id: "reserve-funding-operation",
+        status: "preparing",
+        feeLamports: "0",
+        operationData: h.currentFeeReservationOperationData
+      }
+    };
+  }),
+  getReserveFundingFeeReservationKeys: vi.fn((input: any) => {
+    const current = h.currentFeeReservationOperationData ?? {};
+    const keys: string[] = [];
+    const add = (phase: string, attempt: unknown, retry: boolean) => {
+      const number = typeof attempt === "number" ? attempt : 0;
+      keys.push(phase + ":" + String(retry ? number + 1 : Math.max(number, 1)));
+    };
+    switch (input.stage) {
+      case "wrap_verified":
+        if (input.pendingBalance > 0n) add("preapply", input.preapplyAttempt, true);
+        add("deposit", input.depositAttempt, true);
+        add("apply", input.applyAttempt, true);
+        break;
+      case "preapply_submitting":
+        add("preapply", input.preapplyAttempt, false);
+        add("deposit", input.depositAttempt, true);
+        add("apply", input.applyAttempt, true);
+        break;
+      case "deposit_failed":
+        add("deposit", input.depositAttempt, true);
+        add("apply", input.applyAttempt, true);
+        break;
+      default:
+        return input.pendingBalance > 0n
+          ? ["preapply:1", "deposit:1", "apply:1"]
+          : ["deposit:1", "apply:1"];
+    }
+    if (h.feeReservationBarrierEnabled && input.stage === "wrap_verified") {
+      return keys;
+    }
+    const used = Array.isArray(current.feeReservationKeys)
+      ? current.feeReservationKeys as string[]
+      : [];
+    return keys.filter((key) => !used.includes(key));
+  }),
+  reserveWorkspaceReserveFundingFeeBudget: vi.fn(async (_db: unknown, input: unknown) => {
+    h.feeReservationCalls.push(input);
+    let reservationResult = h.feeReservationResult;
+    if (h.feeReservationResult === "reserved" || h.feeReservationResult === "duplicate") {
+      const payload = input as { reservationKeys: string[] };
+      const current = h.currentFeeReservationOperationData ?? {};
+      const currentKeys = Array.isArray(current.feeReservationKeys)
+        ? current.feeReservationKeys as string[]
+        : [];
+      const newKeys = payload.reservationKeys.filter((key) => !currentKeys.includes(key));
+      if (newKeys.length === 0 && reservationResult === "reserved") {
+        reservationResult = "duplicate";
+      }
+      const currentReserved = BigInt(String(current.reservedFeeBudgetLamports ?? "0"));
+      h.currentFeeReservationOperationData = {
+        ...current,
+        wrapSignature: current.wrapSignature ?? "s".repeat(88),
+        walletAddress: current.walletAddress ?? h.authority,
+        feeBudgetReserved: true,
+        actualFeeLamports: String(current.actualFeeLamports ?? "0"),
+        reservedFeeBudgetLamports: (currentReserved + BigInt(newKeys.length) * 100_000n).toString(),
+        feePerTransactionLamports: "100000",
+        feeReservationKeys: [...currentKeys, ...newKeys],
+        feeReservationSettledKeys: Array.isArray(current.feeReservationSettledKeys)
+          ? current.feeReservationSettledKeys
+          : [],
+        feeBudgetSettledCount: Number(current.feeBudgetSettledCount ?? 0)
+      };
+    }
+    if (h.feeReservationBarrierEnabled && h.feeReservationBarrier) {
+      h.feeReservationBarrierCalls++;
+      if (h.feeReservationBarrierCalls === 2) h.releaseFeeReservationBarrier?.();
+      await h.feeReservationBarrier;
+    }
+    return reservationResult;
+  }),
+  getWorkspaceGasTankOperation: vi.fn(async () => h.currentFeeReservationOperationData
+    ? ({
+        id: "reserve-funding-operation",
+        status: "preparing",
+        operationData: h.currentFeeReservationOperationData
+      })
+    : null),
+  advanceWorkspaceReserveFundingOperation: vi.fn(async (_db: unknown, input: any) => {
+    const current = h.currentFeeReservationOperationData ?? {};
+    if (current.stage !== input.expectedStage) {
+      return current.stage === input.nextStage ? "duplicate" : "conflict";
+    }
+    const updated: Record<string, unknown> = {
+      ...current,
+      ...(input.operationData ?? {}),
+      stage: input.nextStage
+    };
+    if (Array.isArray(current.feeReservationKeys)) {
+      const actual = BigInt(String(current.actualFeeLamports ?? "0")) + BigInt(input.feeLamportsAdded ?? "0");
+      const reserved = BigInt(String(current.reservedFeeBudgetLamports ?? "0")) -
+        BigInt(input.feeReservationConsumedLamports ?? "0");
+      const settled = Array.isArray(current.feeReservationSettledKeys)
+        ? [...current.feeReservationSettledKeys as string[]]
+        : [];
+      if (typeof input.feeReservationKey === "string" && !settled.includes(input.feeReservationKey)) {
+        settled.push(input.feeReservationKey);
+      }
+      const remaining = input.nextStage === "finalized" ? 0n : (reserved > 0n ? reserved : 0n);
+      updated.actualFeeLamports = actual.toString();
+      updated.reservedFeeBudgetLamports = remaining.toString();
+      updated.feeBudgetReserved = remaining > 0n;
+      updated.feeReservationSettledKeys = settled;
+      updated.feeBudgetSettledCount = settled.length;
+    }
+    h.currentFeeReservationOperationData = updated;
+    return "updated";
+  }),
+  attachWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { workspaceId: string; phase: string; signature: string }) => {
     h.attachCalls.push(input);
     return "attached";
   }),
-  clearWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { phase: string; signature: string }) => {
+  clearWorkspaceReserveSetupSignature: vi.fn(async (_db: unknown, input: { workspaceId: string; phase: string; signature: string }) => {
     h.clearCalls.push(input);
     return true;
   })
@@ -279,8 +626,470 @@ vi.mock("../reserve", () => ({
   withWorkspaceReserveKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
     run(new Uint8Array(64).fill(9))
 }));
+vi.mock("../gas-tank", () => ({
+  withWorkspaceGasTankKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
+    run(new Uint8Array(64).fill(10))
+}));
+vi.mock("./rpc", () => ({
+  readSolanaRpc: vi.fn(async (method: string, params: unknown[]) => {
+    if (method !== "getTransaction") throw new Error("Unexpected Reserve funding RPC method.");
+    if (h.expiredTransactionMissing) return null;
+    const data = h.currentFeeReservationOperationData ?? {};
+    const stage = String(data.stage ?? "");
+    const phase = stage.startsWith("preapply")
+      ? "preapply"
+      : stage.startsWith("deposit")
+        ? "deposit"
+        : "apply";
+    const instruction = data[phase + "Instruction"] as {
+      programAddress: string;
+      dataBase64: string;
+      accountAddresses: string[];
+    } | undefined;
+    const marker = data[phase + "Marker"];
+    if (!instruction || typeof marker !== "string") {
+      throw new Error("Reserve funding stage is missing its persisted instruction marker.");
+    }
+    const signature = String(params[0]);
+    const failed = h.signatureFinality[signature] === "failed";
+    const before = h.transactionPublicBalanceBefore;
+    const after = h.publicBalanceBaseUnits;
+    return {
+      slot: 123,
+      meta: {
+        err: failed ? { InstructionError: [0, "Custom"] } : null,
+        fee: 5_000,
+        preTokenBalances: [{
+          accountIndex: 1,
+          mint: h.mint,
+          owner: h.reserve,
+          programId: h.tokenProgram,
+          uiTokenAmount: { amount: before.toString(), decimals: 6 }
+        }],
+        postTokenBalances: [{
+          accountIndex: 1,
+          mint: h.mint,
+          owner: h.reserve,
+          programId: h.tokenProgram,
+          uiTokenAmount: { amount: after.toString(), decimals: 6 }
+        }]
+      },
+      transaction: {
+        signatures: [signature],
+        message: {
+          header: { numRequiredSignatures: 1 },
+          accountKeys: [h.reserve, h.reserveToken],
+          instructions: [
+            {
+              programId: instruction.programAddress,
+              data: base58(Buffer.from(instruction.dataBase64, "base64")),
+              accounts: instruction.accountAddresses
+            },
+            {
+              programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+              data: base58(Buffer.from(marker, "utf8")),
+              accounts: []
+            }
+          ]
+        }
+      }
+    };
+  })
+}));
 
 import { attachWorkspaceReserveSetupSignature } from "@paylore/database";
+
+describe("ordinary-USDC Reserve funding Gas Tank preflight", () => {
+  it("requires a live balance and the stored Gas Tank signer before the wrap wallet prompt", async () => {
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).resolves.toBeUndefined();
+    expect(h.gasTankBalanceCalls).toBe(1);
+  });
+
+  it("blocks before wallet approval when the Gas Tank has no SOL reserve for the confidential transactions", async () => {
+    h.gasTankBalanceLamports = 1n;
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+  });
+
+  it("fails closed when the Gas Tank balance cannot be read", async () => {
+    h.gasTankBalanceError = new Error("RPC unavailable");
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+  });
+
+  it("requires Gas Tank signing-key custody before inviting the administrator to wrap USDC", async () => {
+    h.gasTankExists = false;
+
+    await expect(assertWorkspaceReserveFundingGasTankReady(
+      {} as any, "workspace-a"
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_not_initialized",
+      statusCode: 409
+    });
+    expect(h.gasTankBalanceCalls).toBe(0);
+  });
+});
+
+describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
+  it("reserves deposit and apply fees before any confidential transaction can be sent", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.feeReservationResult = "insufficient_balance";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(1);
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      workspaceId: "workspace-a",
+      reservationKeys: ["deposit:1", "apply:1"],
+      feePerTransactionLamports: "100000",
+      availableBalanceLamports: "1000000000"
+    });
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("includes the earlier pending-balance apply phase in the same atomic fee reservation", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.pendingBalanceBaseUnits = 250_000n;
+    h.feeReservationResult = "insufficient_balance";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      reservationKeys: ["preapply:1", "deposit:1", "apply:1"]
+    });
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("stops before confidential submission when the daily Gas Tank sponsorship limit is reached", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.feeReservationResult = "daily_limit";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_daily_sponsorship_limit",
+      statusCode: 429
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("reconciles the committed fee reservation before checking the Reserve's available public balance", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 0n;
+    h.feeReservationResult = "reserved";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_confidential_funding_public_balance_insufficient",
+      statusCode: 409
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(1);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("executes and verifies the complete confidential deposit and apply sequence under the Gas Tank fee payer", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 250_000n;
+
+    const result = await completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    });
+
+    expect(result).toMatchObject({
+      status: "confidential_balance_verified",
+      amountBaseUnits: "1000000",
+      publicBalanceBaseUnits: "4000000",
+      availableBalanceBaseUnits: "1250000"
+    });
+    expect(h.submittedSteps).toEqual(["deposit", "apply"]);
+    expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      reservationKeys: ["deposit:1", "apply:1"],
+      feePerTransactionLamports: "100000"
+    });
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "finalized",
+      feeBudgetReserved: false,
+      actualFeeLamports: "10000",
+      reservedFeeBudgetLamports: "0",
+      feeReservationSettledKeys: ["deposit:1", "apply:1"]
+    });
+  });
+
+  it("applies an earlier pending confidential balance before depositing the new Reserve funding", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 500_000n;
+    h.pendingBalanceBaseUnits = 250_000n;
+
+    const result = await completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    });
+
+    expect(result).toMatchObject({
+      status: "confidential_balance_verified",
+      publicBalanceBaseUnits: "4000000",
+      availableBalanceBaseUnits: "1750000"
+    });
+    expect(h.submittedSteps).toEqual(["preapply_apply", "deposit", "apply"]);
+    expect(h.feeReservationCalls[0]).toMatchObject({
+      reservationKeys: ["preapply:1", "deposit:1", "apply:1"]
+    });
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "finalized",
+      actualFeeLamports: "15000",
+      reservedFeeBudgetLamports: "0",
+      feeReservationSettledKeys: ["preapply:1", "deposit:1", "apply:1"]
+    });
+  });
+
+  it("retries a finalized failed deposit only after reserving a new fee attempt", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 500_000n;
+    h.signatureFinality["1".repeat(64)] = "failed";
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).resolves.toMatchObject({
+      status: "pending",
+      stage: "deposit_failed"
+    });
+    expect(h.publicBalanceBaseUnits).toBe(5_000_000n);
+    expect(h.pendingBalanceBaseUnits).toBe(0n);
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "deposit_failed",
+      feeReservationSettledKeys: ["deposit:1"],
+      reservedFeeBudgetLamports: "100000"
+    });
+
+    h.signatureFinality["1".repeat(64)] = "finalized";
+    const result = await completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    });
+
+    expect(result).toMatchObject({
+      status: "confidential_balance_verified",
+      publicBalanceBaseUnits: "4000000",
+      availableBalanceBaseUnits: "1500000"
+    });
+    expect(h.feeReservationCalls).toHaveLength(2);
+    expect(h.feeReservationCalls[1]).toMatchObject({
+      reservationKeys: ["deposit:2"]
+    });
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "finalized",
+      feeReservationSettledKeys: ["deposit:1", "deposit:2", "apply:1"],
+      actualFeeLamports: "15000",
+      reservedFeeBudgetLamports: "0"
+    });
+  });
+
+  it("does not reserve or submit when the live Gas Tank balance cannot be read", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.gasTankBalanceError = new Error("RPC unavailable");
+
+    await expect(completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    })).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+
+    expect(h.feeReservationCalls).toHaveLength(0);
+    expect(h.submittedSteps).toEqual([]);
+  });
+  it("records an expired confidential deposit blockhash as failed only after confirming no transaction landed", async () => {
+    const wrapSignature = "s".repeat(88);
+    const depositSignature = "1".repeat(64);
+    const amount = 1_000_000n;
+    const depositData = Buffer.alloc(9);
+    depositData[0] = 201;
+    depositData.writeBigUInt64LE(amount, 1);
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 250_000n;
+    h.currentBlockHeight = 501n;
+    h.expiredTransactionMissing = true;
+    h.signatureFinality[depositSignature] = "pending";
+    h.currentFeeReservationOperationData = {
+      walletAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature,
+      reserveAddress: h.reserve,
+      reserveTokenAddress: h.reserveToken,
+      mintAddress: h.mint,
+      initialPublicBalanceBaseUnits: "5000000",
+      initialAvailableBalanceBaseUnits: "250000",
+      initialPendingBalanceBaseUnits: "0",
+      stage: "deposit_submitted",
+      depositSignature,
+      depositLastValidBlockHeight: "500",
+      depositAttempt: 1,
+      depositInstruction: {
+        programAddress: h.tokenProgram,
+        dataBase64: depositData.toString("base64"),
+        accountAddresses: [h.reserveToken, h.reserve]
+      },
+      depositMarker: "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":deposit:1",
+      publicBeforeDepositBaseUnits: "5000000",
+      availableBeforeDepositBaseUnits: "250000",
+      feeBudgetReserved: true,
+      actualFeeLamports: "0",
+      reservedFeeBudgetLamports: "200000",
+      feePerTransactionLamports: "100000",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: [],
+      feeBudgetSettledCount: 0
+    };
+
+    const result = await completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature
+    });
+
+    expect(result).toMatchObject({
+      status: "pending",
+      phase: "deposit",
+      stage: "deposit_failed"
+    });
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "deposit_failed",
+      depositErrorCode: "blockhash_expired_without_landing",
+      feeReservationSettledKeys: ["deposit:1"],
+      reservedFeeBudgetLamports: "100000",
+      feeBudgetReserved: true
+    });
+    expect(h.publicBalanceBaseUnits).toBe(5_000_000n);
+    expect(h.pendingBalanceBaseUnits).toBe(0n);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("serializes concurrent full-operation retries before either request can submit a duplicate confidential transaction", async () => {
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 250_000n;
+    h.beginBarrierEnabled = true;
+    h.beginBarrier = new Promise<void>((resolve) => { h.releaseBeginBarrier = resolve; });
+    h.feeReservationBarrierEnabled = true;
+    h.feeReservationBarrier = new Promise<void>((resolve) => { h.releaseFeeReservationBarrier = resolve; });
+
+    const request = () => completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: "1000000",
+      wrapSignature: "s".repeat(88)
+    });
+    const results = await Promise.allSettled([request(), request()]);
+    const completed = results.find((result) => result.status === "fulfilled");
+    const rejected = results.find((result) => result.status === "rejected");
+
+    expect(results).toHaveLength(2);
+    expect(completed?.status).toBe("fulfilled");
+    expect(rejected?.status).toBe("rejected");
+    if (completed?.status !== "fulfilled" || rejected?.status !== "rejected") {
+      throw new Error("The concurrent Reserve funding requests did not resolve as a single owner and one conflict.");
+    }
+    expect(completed.value).toMatchObject({
+      status: "confidential_balance_verified",
+      amountBaseUnits: "1000000",
+      publicBalanceBaseUnits: "4000000",
+      availableBalanceBaseUnits: "1250000"
+    });
+    expect(rejected.reason).toMatchObject({
+      code: "reserve_confidential_funding_operation_conflict",
+      statusCode: 409
+    });
+    expect(h.submittedSteps).toEqual(["deposit", "apply"]);
+    expect(h.submittedSteps.filter((step) => step === "deposit")).toHaveLength(1);
+    expect(h.submittedSteps.filter((step) => step === "apply")).toHaveLength(1);
+    expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "finalized",
+      feeBudgetReserved: false,
+      actualFeeLamports: "10000",
+      reservedFeeBudgetLamports: "0",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: ["deposit:1", "apply:1"],
+      feeBudgetSettledCount: 2
+    });
+  });
+});
 
 describe("workspace confidential reserve initialization", () => {
   it("configures a reserve only after the workspace PDA and confidential token account are verified", async () => {
@@ -303,13 +1112,116 @@ describe("workspace confidential reserve initialization", () => {
     expect(h.attachCalls).toEqual([{
       workspaceId: "workspace-a",
       phase: "program_configure",
-      signature: "setup-signature-1"
+      signature: "1".repeat(64)
     }]);
     expect(h.clearCalls).toEqual([{
       workspaceId: "workspace-a",
       phase: "program_configure",
-      signature: "setup-signature-1"
+      signature: "1".repeat(64)
     }]);
+  });
+
+  it("uses the Gas Tank for fees while the Reserve remains the token owner and authority", async () => {
+    h.accountReady = false;
+
+    const result = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    );
+
+    expect(result.status).toBe("program_configured");
+    expect(h.setupArgs).toEqual({ payer: h.gasTank, owner: h.reserve });
+    expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
+    expect(h.registeredSignerAddresses).toEqual([
+      [h.gasTank, h.reserve],
+      [h.gasTank, h.reserve]
+    ]);
+    expect(h.registeredInstructionSigners).toEqual([
+      [h.gasTank, h.reserve],
+      [h.gasTank, h.reserve]
+    ]);
+    expect(h.configureAccounts?.map((account) => account.address)).toEqual([
+      h.authority, h.workspace, h.gasTank, h.reserveState,
+      h.reserve, h.reserveToken, h.mint, "11111111111111111111111111111111"
+    ]);
+  });
+
+  it("does not declare Reserve setup ready when the post-finality Gas Tank balance check fails", async () => {
+    h.gasTankBalanceFailsOnCall = 3;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+
+    expect(h.submittedSteps).toEqual(["program_configure"]);
+    expect(h.reserveConfigured).toBe(true);
+
+    const retry = await initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    );
+    expect(retry.status).toBe("program_configured");
+    expect(h.submittedSteps).toEqual(["program_configure"]);
+  });
+
+  it("blocks reserve setup when the Gas Tank balance cannot be verified", async () => {
+    h.accountReady = false;
+    h.gasTankBalanceError = new Error("RPC unavailable");
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_balance_unavailable",
+      statusCode: 503
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.attachCalls).toEqual([]);
+  });
+
+  it("blocks all reserve setup transactions when the Gas Tank cannot cover rent and fees", async () => {
+    h.accountReady = false;
+    h.gasTankBalanceLamports = 1n;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.setupArgs).toBeNull();
+  });
+
+  it("maps a late Gas Tank debit failure to a funding message instead of a generic verification error", async () => {
+    h.sendTransactionError = new Error(
+      "Attempt to debit an account but found no record of a prior credit."
+    );
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_insufficient_funds",
+      statusCode: 409
+    });
+
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.attachCalls).toEqual([]);
+  });
+
+  it("requires Gas Tank key custody before submitting reserve setup transactions", async () => {
+    h.gasTankExists = false;
+    h.accountReady = false;
+
+    await expect(initializeWorkspaceConfidentialReserveAccount(
+      {} as any, "workspace-a", h.authority
+    )).rejects.toMatchObject({
+      code: "reserve_gas_tank_not_initialized",
+      statusCode: 409
+    });
+    expect(h.submittedSteps).toEqual([]);
   });
 
   it("creates the confidential account before configuring the reserve when the token account is absent", async () => {

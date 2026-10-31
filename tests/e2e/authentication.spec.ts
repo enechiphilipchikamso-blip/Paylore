@@ -1,6 +1,7 @@
 import {
   expect,
-  test
+  test,
+  type Page
 } from "@playwright/test";
 
 const SUPPORTED_WALLETS = [
@@ -10,12 +11,58 @@ const SUPPORTED_WALLETS = [
   "Jupiter"
 ];
 
+async function registerWalletStandardMocks(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const account = {
+      address: "11111111111111111111111111111111",
+      publicKey: new Uint8Array(32),
+      chains: ["solana:devnet"],
+      features: [
+        "standard:connect",
+        "standard:disconnect",
+        "solana:signMessage"
+      ]
+    };
+
+    const wallets = [
+      "Phantom",
+      "Solflare",
+      "Backpack",
+      "Jupiter"
+    ].map((name) => ({
+      version: "1.0.0",
+      name,
+      icon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p8sAAAAASUVORK5CYII=",
+      chains: ["solana:devnet"],
+      features: {
+        "standard:connect": {
+          version: "1.0.0",
+          connect: async () => ({ accounts: [account] })
+        },
+        "standard:disconnect": {
+          version: "1.0.0",
+          disconnect: async () => undefined
+        }
+      },
+      accounts: [account]
+    }));
+
+    window.addEventListener("wallet-standard:app-ready", (event) => {
+      const api = (event as CustomEvent<{
+        register: (...wallets: unknown[]) => void;
+      }>).detail;
+      api.register(...wallets);
+    });
+  });
+}
+
 test.describe(
   "authentication boundary",
   () => {
     test(
       "authentication entry uses the product wording",
       async ({ page }) => {
+        await registerWalletStandardMocks(page);
         await page.goto("/auth");
 
         await expect(
@@ -64,6 +111,7 @@ test.describe(
     test(
       "wallet chooser is limited to the four supported wallets",
       async ({ page }) => {
+        await registerWalletStandardMocks(page);
         await page.goto("/auth");
 
         await page.getByRole(
@@ -113,6 +161,13 @@ test.describe(
     test(
       "wallet connection remains available on mobile viewports",
       async ({ page }) => {
+        await page.addInitScript(() => {
+          Object.defineProperty(navigator, "userAgent", {
+            configurable: true,
+            get: () =>
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
+          });
+        });
         await page.setViewportSize(
           {
             width: 390,
@@ -127,7 +182,7 @@ test.describe(
             "button",
             {
               name:
-                "Connect wallet"
+                "Connect with Solflare"
             }
           );
 
@@ -178,34 +233,24 @@ test.describe(
           0
         );
 
-        await connectButton.click();
-
-        const chooser =
-          page.locator(
-            ".wallet-chooser"
-          );
-
         await expect(
-          chooser
+          page.getByText(
+            "Open Solflare to approve the connection, then return to Paylore.",
+            { exact: true }
+          )
         ).toBeVisible();
-
-        for (
-          const wallet of
-          SUPPORTED_WALLETS
-        ) {
-          await expect(
-            chooser.getByText(
-              wallet,
-              { exact: true }
-            )
-          ).toBeVisible();
-        }
+        await expect(
+          page.getByRole("button", {
+            name: "Backpack unavailable on Devnet"
+          })
+        ).toBeDisabled();
       }
     );
 
     test(
       "connect action stays capped on wide viewports",
       async ({ page }) => {
+        await registerWalletStandardMocks(page);
         await page.setViewportSize({
           width: 1440,
           height: 1000
@@ -260,6 +305,7 @@ test.describe(
     test(
       "wallet chooser displays local wallet logos without availability labels",
       async ({ page }) => {
+        await registerWalletStandardMocks(page);
         await page.goto("/auth");
 
         await page.getByRole(

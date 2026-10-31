@@ -255,7 +255,7 @@ export function assertSponsoredCost(input: {
   }
   if (
     input.dailyOperationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
-    input.dailyBookedFeesLamports + input.feeLamports >
+    input.dailyBookedFeesLamports + input.feeLamports >=
       MAX_DAILY_SPONSORED_FEE_LAMPORTS
   ) {
     throw new GasTankSponsorshipPolicyError("gas_tank_daily_sponsorship_limit");

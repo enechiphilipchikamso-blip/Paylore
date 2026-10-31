@@ -1,9 +1,10 @@
-import type { Metadata, Viewport } from "next";
+import type { Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
-import { metadataBase, siteConfig } from "./site";
+import { APP_IDENTITY, createRootMetadata } from "./app-identity";
+import { metadataBase } from "./site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,63 +49,7 @@ export const viewport: Viewport = {
   ]
 };
 
-export const metadata: Metadata = {
-  metadataBase,
-  manifest: "/manifest.webmanifest",
-  title: {
-    default: "Paylore | Private on-chain payroll",
-    template: "%s | Paylore"
-  },
-  description: siteConfig.description,
-  applicationName: siteConfig.name,
-  keywords: [
-    "Paylore",
-    "private payroll",
-    "on-chain payroll",
-    "USDC payroll",
-    "Solana payroll"
-  ],
-  icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "32x32", type: "image/x-icon" },
-      { url: "/icons/paylore-192x192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icons/paylore-512x512.png", sizes: "512x512", type: "image/png" },
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/icons/favicon.svg", type: "image/svg+xml" }
-    ],
-    shortcut: [
-      { url: "/icons/paylore-192x192.png", sizes: "192x192", type: "image/png" }
-    ],
-    apple: [
-      { url: "/icons/paylore-180x180.png", sizes: "180x180", type: "image/png" }
-    ]
-  },
-  appleWebApp: {
-    capable: true,
-    title: "Paylore",
-    statusBarStyle: "default"
-  },
-  openGraph: {
-    type: "website",
-    siteName: siteConfig.name,
-    title: "Paylore | Private on-chain payroll",
-    description: siteConfig.socialDescription,
-    images: [
-      {
-        url: siteConfig.ogImage,
-        width: 1200,
-        height: 630,
-        alt: "Paylore — Private on-chain payroll"
-      }
-    ]
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Paylore | Private on-chain payroll",
-    description: siteConfig.socialDescription,
-    images: [siteConfig.twitterImage]
-  }
-};
+export const metadata = createRootMetadata(metadataBase);
 
 export default function RootLayout({
   children
@@ -119,6 +64,34 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <link
+          rel="apple-touch-icon"
+          sizes="180x180"
+          type="image/png"
+          href={APP_IDENTITY.icons.appleTouch}
+        />
+        <link
+          rel="shortcut icon"
+          type="image/x-icon"
+          href={APP_IDENTITY.icons.faviconIco}
+        />
+        <link
+          rel="icon"
+          sizes="32x32"
+          type="image/x-icon"
+          href={APP_IDENTITY.icons.faviconIco}
+        />
+        <link
+          rel="icon"
+          sizes="192x192"
+          type="image/png"
+          href={APP_IDENTITY.icons.png192}
+        />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href={APP_IDENTITY.icons.faviconSvg}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: themeBootstrapScript

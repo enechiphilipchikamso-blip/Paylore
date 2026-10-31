@@ -6,6 +6,7 @@ import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
+import { BusyActionButton } from "./BusyActionButton";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
 import {
@@ -31,6 +32,17 @@ type BalanceState = {
   pendingBalance: bigint;
   publicBalance: bigint;
 } | null;
+
+type ContributorBusyAction =
+  | "setup"
+  | "claim"
+  | "refresh"
+  | "apply"
+  | "cashout"
+  | "unwrap"
+  | "leave"
+  | "verify_setup"
+  | "ledger";
 
 type PayrollAllocation = {
   id: string;
@@ -97,6 +109,7 @@ export function ContributorCompensation({
   const [closeSignature, setCloseSignature] = useState<string | null>(null);
   const [setupSignature, setSetupSignature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<ContributorBusyAction | null>(null);
   const [message, setMessage] = useState<{
     state: "success" | "error" | "partial";
     text: string;
@@ -149,7 +162,8 @@ export function ContributorCompensation({
     return result.account as NonNullable<AccountState>;
   }
 
-  async function runSetup(): Promise<boolean> {
+  async function runSetup(manageBusy = true): Promise<boolean> {
+    if (manageBusy && busy) return false;
     if (!mint) {
       setMessage({
         state: "error",
@@ -161,8 +175,16 @@ export function ContributorCompensation({
       !window.confirm(
         "Your wallet will sign the Token-2022 confidential-key derivation message and authorize account setup. Paylore does not receive or store the resulting keys. Use the same wallet for future confidential balance actions."
       )
-    ) return false;
-    setBusy(true);
+    ) {
+      setMessage({ state: "partial", text: "Confidential account setup was canceled. No account transaction was submitted." });
+      return false;
+    }
+    if (manageBusy) {
+      setBusy(true);
+      setBusyAction("setup");
+    } else {
+      setBusyAction("setup");
+    }
     setMessage({ state: "partial", text: "Preparing account… Approve the confidential-key derivation and account transaction in your wallet." });
     try {
       const wallet = await findAuthenticatedWallet(walletAddress);
@@ -206,42 +228,54 @@ export function ContributorCompensation({
       });
       return false;
     } finally {
-      setBusy(false);
+      if (manageBusy) {
+        setBusy(false);
+        setBusyAction(null);
+      } else {
+        setBusyAction("claim");
+      }
     }
   }
 
   async function runClaimAndCashOut() {
     if (busy) return;
-    const setupOutcome = await ensureClaimAndCashOutAccount({
-      accountReady: currentAccount?.status === "ready",
-      setupAccount: runSetup
+    setBusy(true);
+    setBusyAction("claim");
+    setMessage({
+      state: "partial",
+      text: "Preparing your confidential account and payroll settlement…"
     });
-    if (setupOutcome === "account_setup_incomplete") return;
-    if (setupOutcome === "account_setup_completed") {
-      const accountResponse = await fetch(
-        `/api/workspaces/${workspaceId}/contributors/me/confidential-account`,
-        { credentials: "same-origin", cache: "no-store" }
-      );
-      const accountResult = await accountResponse.json();
-      if (!accountResponse.ok || !accountResult.account || accountResult.account.status !== "ready") {
-        setMessage({ state: "error", text: "The confidential account is not verified as ready. No payroll transfer was attempted." });
+    try {
+      const setupOutcome = await ensureClaimAndCashOutAccount({
+        accountReady: currentAccount?.status === "ready",
+        setupAccount: () => runSetup(false)
+      });
+      if (setupOutcome === "account_setup_incomplete") return;
+      let accountForBalance: AccountState = currentAccount;
+      if (setupOutcome === "account_setup_completed") {
+        const accountResponse = await fetch(
+          `/api/workspaces/${workspaceId}/contributors/me/confidential-account`,
+          { credentials: "same-origin", cache: "no-store" }
+        );
+        const accountResult = await accountResponse.json();
+        if (!accountResponse.ok || !accountResult.account || accountResult.account.status !== "ready") {
+          setMessage({ state: "error", text: "The confidential account is not verified as ready. No payroll transfer was attempted." });
+          return;
+        }
+        accountForBalance = accountResult.account as NonNullable<AccountState>;
+        setCurrentAccount(accountForBalance);
+      }
+      const eligible = allocations.filter((allocation) => allocation.status === "unclaimed" || allocation.status === "settlement_pending");
+      if (eligible.length === 0) {
+        setMessage({ state: "partial", text: "There are no unsettled payroll allocations available for this wallet." });
         return;
       }
-      setCurrentAccount(accountResult.account as NonNullable<AccountState>);
-    }
-    const eligible = allocations.filter((allocation) => allocation.status === "unclaimed" || allocation.status === "settlement_pending");
-    if (eligible.length === 0) {
-      setMessage({ state: "partial", text: "There are no unsettled payroll allocations available for this wallet." });
-      return;
-    }
-    setBusy(true);
-    setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
-    let settled = 0;
-    let pending = 0;
-    let failed = 0;
-    let cleanupPending = 0;
-    let stateConflict = false;
-    try {
+      let settled = 0;
+      let pending = 0;
+      let failed = 0;
+      let cleanupPending = 0;
+      let stateConflict = false;
+      setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
       for (const allocation of eligible) {
         if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
         try {
@@ -261,9 +295,19 @@ export function ContributorCompensation({
         } catch { pending++; }
       }
       router.refresh();
-      try { await refreshConfidentialBalance(); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
+      try { await refreshConfidentialBalance(accountForBalance); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
       setMessage(getClaimAndCashOutOutcome({ settled, pending, failed, cleanupPending, stateConflict }));
-    } finally { setBusy(false); }
+    } catch (error) {
+      setMessage({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "Confidential payroll settlement could not be completed."
+      });
+    } finally {
+      setBusy(false);
+      setBusyAction(null);
+    }
   }
 
   async function recordCashOutLedger(
@@ -298,6 +342,7 @@ export function ContributorCompensation({
     if (!cashOutLedgerRetry || busy) return;
     const pending = cashOutLedgerRetry;
     setBusy(true);
+    setBusyAction("ledger");
     try {
       const reconciled = await recordCashOutLedger(
         pending.kind, pending.signature, pending.amountBaseUnits
@@ -310,12 +355,14 @@ export function ContributorCompensation({
       }
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function runBalanceAction(
     action: "refresh" | "apply" | "cashout" | "unwrap"
   ) {
+    if (busy) return;
     if (cashOutLedgerRetry && (action === "cashout" || action === "unwrap")) {
       setMessage({
         state: "partial",
@@ -325,6 +372,7 @@ export function ContributorCompensation({
     }
     if (!mint || !currentAccount) return;
     setBusy(true);
+    setBusyAction(action);
     setMessage({
       state: "partial",
       text: action === "apply"
@@ -377,12 +425,12 @@ export function ContributorCompensation({
             `Unwrap ${formatUsdc(amount)} wrapped USDC into public Circle Devnet USDC in your wallet's token account? The wrapped tokens will be burned and the equivalent escrowed Circle USDC released. This operation and its amount are public on Solana.`
           )
         ) {
-          setMessage(null);
+          setMessage({ state: "partial", text: "Unwrap canceled. No transaction was submitted." });
           return;
         }
         await verifyWrappedUsdcUnwrapCompatibility(wallet, mint, circleMint, tokenWrapProgramId, amount);
         if (!window.confirm(`Read-only compatibility checks and simulation succeeded for the exact unwrap plan. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle Devnet USDC? The amount and transaction are public on Solana.`)) {
-          setMessage(null);
+          setMessage({ state: "partial", text: "Unwrap canceled. No transaction was submitted." });
           return;
         }
         const result = await unwrapWrappedUsdcToCircleUsdc(
@@ -413,7 +461,7 @@ export function ContributorCompensation({
           `Withdraw ${formatUsdc(amount)} wrapped USDC to your public wrapped-USDC token account? This does not convert it to Circle Devnet USDC. The withdrawal amount and transaction are public on Solana.`
         )
       ) {
-        setMessage(null);
+        setMessage({ state: "partial", text: "Withdrawal canceled. No transaction was submitted." });
         return;
       }
       const signatures = await withdrawConfidentialBalance(
@@ -443,16 +491,22 @@ export function ContributorCompensation({
       });
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function leaveWorkspace() {
+    if (busy) return;
     if (
       !window.confirm(
         "Leaving removes your membership in this workspace. It does not transfer ownership of your confidential account to the organization. Confirm only after reviewing any outstanding compensation or pending transaction."
       )
-    ) return;
+    ) {
+      setMessage({ state: "partial", text: "Workspace departure canceled. Your membership and confidential account are unchanged." });
+      return;
+    }
     setBusy(true);
+    setBusyAction("leave");
     setMessage({
       state: "partial",
       text: currentAccount?.status === "ready"
@@ -538,35 +592,114 @@ export function ContributorCompensation({
       });
     } finally {
       setBusy(false);
+      setBusyAction(null);
+    }
+  }
+
+  async function retrySetupVerification() {
+    if (busy || !setupSignature) return;
+    setBusy(true);
+    setBusyAction("verify_setup");
+    setMessage({ state: "partial", text: "Verifying the existing confidential account setup transaction…" });
+    try {
+      await verifySetup(setupSignature);
+      setMessage({ state: "success", text: "Confidential account ready." });
+    } catch {
+      setMessage({ state: "partial", text: "The setup transaction is not yet verified. Keep the same reference and try again." });
+    } finally {
+      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   return (
-    <section className="surface-card" aria-labelledby="compensation-heading">
-      <h2 id="compensation-heading">Your compensation</h2>
-      <p>
-        Review the wrapped-USDC allocations assigned to your wallet.
-        Confidential balances use separate pending and available states.
-      </p>
-      <section aria-labelledby="payroll-allocations-heading">
-        <h3 id="payroll-allocations-heading">Recorded payroll allocations</h3>
+    <div className="contributor-compensation">
+      <section className="surface-card contributor-compensation__overview" aria-labelledby="compensation-heading">
+        <header className="workspace-section-heading">
+          <div>
+            <p className="eyebrow">Your account</p>
+            <h2 id="compensation-heading">Confidential account overview</h2>
+            <p>Amounts shown here belong to your authenticated wallet. Pending and available balances are reported separately.</p>
+          </div>
+          <span className="subscription-status">
+            {currentAccount?.status === "ready" ? "Account ready" : "Setup required"}
+          </span>
+        </header>
+        <dl className="billing-period contributor-compensation__metrics">
+          <div><dt>Account status</dt><dd>{currentAccount?.status === "ready" ? "Ready" : "Setup required"}</dd></div>
+          <div><dt>Confidential account</dt><dd>{currentAccount?.tokenAccountAddress ?? "Not set up"}</dd></div>
+          <div><dt>Pending confidential balance</dt><dd>{balance ? `${formatUsdc(balance.pendingBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
+          <div><dt>Available confidential balance</dt><dd>{balance ? `${formatUsdc(balance.availableBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
+          <div><dt>Public wrapped-USDC balance</dt><dd>{balance ? `${formatUsdc(balance.publicBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
+          <div><dt>Payroll period</dt><dd>Current workspace allocations</dd></div>
+        </dl>
+        {offboardingRequested ? (
+          <p className="notice" role="status">
+            Your workspace administrator asked you to review leaving this
+            workspace. Resolve outstanding compensation and pending transactions
+            before confirming departure.
+          </p>
+        ) : null}
+        {!currentAccount || currentAccount.status !== "ready" ? (
+          <p className="notice">
+            Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Start from Claim &amp; Cash Out when an allocation is available. Payroll creation alone never creates or funds a confidential account.
+          </p>
+        ) : (
+          <div className="hero__actions">
+            <BusyActionButton
+              busy={busyAction === "refresh"}
+              className="button button--secondary"
+              disabled={busy}
+              onClick={() => void runBalanceAction("refresh")}
+              type="button"
+            >
+              {busyAction === "refresh" ? "Refreshing balance…" : "Refresh balance"}
+            </BusyActionButton>
+            <BusyActionButton
+              busy={busyAction === "apply"}
+              className="button button--secondary"
+              disabled={busy}
+              onClick={() => void runBalanceAction("apply")}
+              type="button"
+            >
+              {busyAction === "apply" ? "Applying pending balance…" : "Apply pending balance"}
+            </BusyActionButton>
+          </div>
+        )}
+      </section>
+
+      <section className="surface-card" aria-labelledby="payroll-allocations-heading">
+        <header className="workspace-section-heading">
+          <div>
+            <p className="eyebrow">Payroll</p>
+            <h2 id="payroll-allocations-heading">Recorded payroll allocations</h2>
+            <p>Review allocations assigned to your wallet and the finalized state of each claim.</p>
+          </div>
+        </header>
         {allocations.some((allocation) => allocation.status !== "claimed" && allocation.status !== "recovered") ? (
-          <div className="surface-card" aria-label="Claim and cash out">
-            <button
+          <div className="workspace-setup__content contributor-compensation__claim">
+            <h3>Claim eligible payroll</h3>
+            <p>This starts company-sponsored account setup when needed, then settles eligible allocations. Completion is shown only after finalized transfer and reserve reconciliation.</p>
+            <BusyActionButton
               className="button"
+              busy={busyAction === "claim" || busyAction === "setup"}
               disabled={busy || !mint}
               onClick={() => void runClaimAndCashOut()}
               type="button"
             >
-              {busy ? "Settling confidential payroll…" : "Claim & Cash Out"}
-            </button>
-            <p className="notice">
-              This action starts company-sponsored setup if needed, then settles eligible payroll allocations. Completion is shown only after finalized transfer and reserve reconciliation.
-            </p>
+              {busyAction === "setup"
+                ? "Setting up confidential account…"
+                : busyAction === "claim"
+                  ? "Settling confidential payroll…"
+                  : "Claim & Cash Out"}
+            </BusyActionButton>
           </div>
         ) : null}
         {allocations.length === 0 ? (
-          <p>No finalized payroll claim commitments are recorded for you.</p>
+          <div className="workspace-empty-state">
+            <h3>No payroll allocations yet</h3>
+            <p>When your workspace administrator records payroll for your wallet, the allocation and its claim status will appear here.</p>
+          </div>
         ) : (
           <>
             <p className="notice">
@@ -615,161 +748,148 @@ export function ContributorCompensation({
           </>
         )}
       </section>
-      <dl className="billing-period">
-        <div><dt>Payroll period</dt><dd>Current workspace allocations</dd></div>
-        <div><dt>Confidential account status</dt><dd>{currentAccount?.status === "ready" ? "Ready" : "Setup required"}</dd></div>
-        <div><dt>Confidential account</dt><dd>{currentAccount?.tokenAccountAddress ?? "Not set up"}</dd></div>
-        <div><dt>Pending confidential balance</dt><dd>{balance ? `${formatUsdc(balance.pendingBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
-        <div><dt>Available confidential balance</dt><dd>{balance ? `${formatUsdc(balance.availableBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
-        <div><dt>Public wrapped-USDC balance</dt><dd>{balance ? `${formatUsdc(balance.publicBalance)} wrapped USDC` : "Refresh to check"}</dd></div>
-      </dl>
-      {offboardingRequested ? (
-        <p className="notice" role="status">
-          Your workspace administrator asked you to review leaving this
-          workspace. Resolve outstanding compensation and pending transactions
-          before confirming departure.
-        </p>
-      ) : null}
-
-      {!currentAccount || currentAccount.status !== "ready" ? (
-        <p className="notice">
-          Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Start from Claim &amp; Cash Out when an allocation is available. Payroll creation alone never creates or funds a confidential account.
-        </p>
-      ) : (
-        <div className="hero__actions">
-          <button className="button button--secondary" disabled={busy} onClick={() => void runBalanceAction("refresh")} type="button">
-            Refresh balance
-          </button>
-          <button className="button button--secondary" disabled={busy} onClick={() => void runBalanceAction("apply")} type="button">
-            Apply pending balance
-          </button>
-        </div>
-      )}
 
       {setupSignature ? (
-        <div className="state-callout" data-state="partial" role="status">
+        <section className="state-callout" data-state="partial" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>Setup verification is pending. Transaction: <code>{setupSignature}</code></p>
-          <button className="button button--secondary" disabled={busy} onClick={() => {
-            setBusy(true);
-            void verifySetup(setupSignature)
-              .then(() => setMessage({ state: "success", text: "Confidential account ready" }))
-              .catch(() => setMessage({ state: "partial", text: "The setup transaction is not yet verified. Keep the same reference and try again." }))
-              .finally(() => setBusy(false));
-          }} type="button">
-            Verify setup
-          </button>
-        </div>
+          <div>
+            <p>Setup verification is pending. Transaction: <code>{setupSignature}</code></p>
+            <BusyActionButton
+              busy={busyAction === "verify_setup"}
+              className="button button--secondary"
+              disabled={busy}
+              onClick={() => void retrySetupVerification()}
+              type="button"
+            >
+              {busyAction === "verify_setup" ? "Verifying setup…" : "Verify setup"}
+            </BusyActionButton>
+          </div>
+        </section>
       ) : null}
 
       {currentAccount?.status === "ready" ? (
-        <div className="surface-card">
-          <h3>Withdraw to public wrapped USDC</h3>
-          <p>
-            This moves the amount from your confidential available balance to
-            the public token account for the configured wrapped-USDC mint. It
-            does not unwrap to Circle Devnet USDC. The amount and transaction
-            are public on Solana.
-          </p>
-          <label className="field">
-            <span>Amount to withdraw (wrapped USDC)</span>
-            <input
-              inputMode="decimal"
-              onChange={(event) => setWithdrawAmount(event.target.value)}
-              value={withdrawAmount}
-            />
-          </label>
-          <button
-            className="button"
-            disabled={busy || cashOutLedgerRetry !== null || !balance || balance.availableBalance <= 0n}
-            onClick={() => void runBalanceAction("cashout")}
-            type="button"
-          >
-            Withdraw wrapped USDC
-          </button>
-        </div>
-      ) : null}
-      {currentAccount?.status === "ready" ? (
-        <div className="surface-card">
-          <h3>Unwrap to public Circle Devnet USDC</h3>
-          <p>
-            Token Wrap burns public wrapped USDC from your wallet and releases
-            the equivalent escrowed Circle Devnet USDC to your public legacy
-            USDC token account. This conversion and its amount are visible on
-            Solana.
-          </p>
-          {!tokenWrapUnwrapEnabled ? (
-            <p role="status">
-              Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction can be submitted.
-            </p>
-          ) : null}
-          <label className="field">
-            <span>Amount to unwrap (wrapped USDC)</span>
-            <input
-              inputMode="decimal"
-              onChange={(event) => setUnwrapAmount(event.target.value)}
-              value={unwrapAmount}
-            />
-          </label>
-          <button
-            className="button button--secondary"
-            disabled={
-              busy ||
-              cashOutLedgerRetry !== null ||
-              !tokenWrapUnwrapEnabled ||
-              !balance ||
-              balance.publicBalance <= 0n ||
-              !circleMint
-            }
-            onClick={() => void runBalanceAction("unwrap")}
-            type="button"
-          >
-            {tokenWrapUnwrapEnabled
-              ? "Unwrap to Circle Devnet USDC"
-              : "Circle USDC conversion unavailable"}
-          </button>
-        </div>
+        <section className="surface-card" aria-labelledby="account-movement-heading">
+          <header className="workspace-section-heading">
+            <div>
+              <p className="eyebrow">Cash out</p>
+              <h2 id="account-movement-heading">Move your confidential balance</h2>
+              <p>Public withdrawals are visible on Solana. Choose the destination asset and review the amount before approving the wallet transaction.</p>
+            </div>
+          </header>
+          <div className="workspace-quick-links__grid contributor-compensation__movement-grid">
+            <section className="workspace-setup__content">
+              <h3>Withdraw to public wrapped USDC</h3>
+              <p>This moves the amount from your confidential available balance to your public wrapped-USDC token account. It does not convert to Circle Devnet USDC.</p>
+              <label className="field">
+                <span>Amount to withdraw (wrapped USDC)</span>
+                <input
+                  inputMode="decimal"
+                  onChange={(event) => setWithdrawAmount(event.target.value)}
+                  value={withdrawAmount}
+                />
+              </label>
+              <BusyActionButton
+                className="button"
+                busy={busyAction === "cashout"}
+                disabled={busy || cashOutLedgerRetry !== null || !balance || balance.availableBalance <= 0n}
+                onClick={() => void runBalanceAction("cashout")}
+                type="button"
+              >
+                {busyAction === "cashout" ? "Withdrawing wrapped USDC…" : "Withdraw wrapped USDC"}
+              </BusyActionButton>
+            </section>
+            <section className="workspace-setup__content">
+              <h3>Unwrap to public Circle Devnet USDC</h3>
+              <p>Token Wrap burns public wrapped USDC from your wallet and releases the equivalent escrowed Circle Devnet USDC to your public legacy USDC token account. This conversion and its amount are visible on Solana.</p>
+              {!tokenWrapUnwrapEnabled ? (
+                <p role="status">
+                  Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction can be submitted.
+                </p>
+              ) : null}
+              <label className="field">
+                <span>Amount to unwrap (wrapped USDC)</span>
+                <input
+                  inputMode="decimal"
+                  onChange={(event) => setUnwrapAmount(event.target.value)}
+                  value={unwrapAmount}
+                />
+              </label>
+              <BusyActionButton
+                className="button button--secondary"
+                busy={busyAction === "unwrap"}
+                disabled={
+                  busy ||
+                  cashOutLedgerRetry !== null ||
+                  !tokenWrapUnwrapEnabled ||
+                  !balance ||
+                  balance.publicBalance <= 0n ||
+                  !circleMint
+                }
+                onClick={() => void runBalanceAction("unwrap")}
+                type="button"
+              >
+                {busyAction === "unwrap"
+                  ? "Unwrapping Circle Devnet USDC…"
+                  : tokenWrapUnwrapEnabled
+                    ? "Unwrap to Circle Devnet USDC"
+                    : "Circle USDC conversion unavailable"}
+              </BusyActionButton>
+            </section>
+          </div>
+        </section>
       ) : null}
 
-      {hasOpenAllocations ? (
-        <p className="notice" role="status">
-          Workspace departure is unavailable while a qualifying compensation
-          obligation remains unresolved.
-        </p>
-      ) : null}
-      {currentAccount?.status === "ready" && (
-        <p className="notice">
-          {balance?.publicBalance === 0n &&
-          balance.pendingBalance === 0n &&
-          balance.availableBalance === 0n
-            ? "This confidential account has zero public, pending and available balances. Review the closure details before signing CloseAccount. Any eligible account rent is returned to the contributor-controlled destination."
-            : "This account cannot be closed yet. Resolve every displayed public, pending and available balance before trying again."}
-        </p>
-      )}
-      <button
-        className="button button--secondary"
-        disabled={busy || hasOpenAllocations || (currentAccount?.status === "ready" && (!balance || balance.publicBalance !== 0n || balance.availableBalance !== 0n || balance.pendingBalance !== 0n))}
-        onClick={() => void leaveWorkspace()}
-        type="button"
-      >
-        Acknowledge &amp; Leave Workspace
-      </button>
       {!mint ? (
-        <p className="notice">
-          Confidential account setup is unavailable until an approved
-          confidential wrapped-USDC mint is initialized and configured.
+        <p className="notice" role="status">
+          Confidential account setup is unavailable because the wrapped-USDC mint is not configured. No account setup or claim transaction can be submitted.
         </p>
       ) : null}
+
+      <section className="surface-card contributor-compensation__departure" aria-labelledby="workspace-departure-heading">
+        <h2 id="workspace-departure-heading">Workspace departure</h2>
+        <p>Leaving removes your membership. It does not transfer ownership of your confidential account to the organization.</p>
+        {hasOpenAllocations ? (
+          <p className="notice" role="status">
+            Workspace departure is unavailable while a qualifying compensation
+            obligation remains unresolved.
+          </p>
+        ) : null}
+        {currentAccount?.status === "ready" ? (
+          <p className="notice">
+            {balance?.publicBalance === 0n &&
+            balance.pendingBalance === 0n &&
+            balance.availableBalance === 0n
+              ? "This confidential account has zero public, pending and available balances. Review the closure details before signing CloseAccount. Any eligible account rent is returned to the contributor-controlled destination."
+              : "This account cannot be closed yet. Resolve every displayed public, pending and available balance before trying again."}
+          </p>
+        ) : null}
+        <BusyActionButton
+          className="button button--secondary"
+          busy={busyAction === "leave"}
+          disabled={busy || hasOpenAllocations || (currentAccount?.status === "ready" && (!balance || balance.publicBalance !== 0n || balance.availableBalance !== 0n || balance.pendingBalance !== 0n))}
+          onClick={() => void leaveWorkspace()}
+          type="button"
+        >
+          {busyAction === "leave" ? "Leaving workspace…" : "Acknowledge & Leave Workspace"}
+        </BusyActionButton>
+      </section>
+
       <ClaimAndCashOutStatus message={message} />
       {cashOutLedgerRetry ? (
         <div className="state-callout" data-state="partial" role="status">
           <span className="state-callout__signal" aria-hidden="true" />
           <p>The original transaction is saved for reconciliation. Retrying here does not submit another token transaction.</p>
-          <button className="button button--secondary" disabled={busy} onClick={() => void retryCashOutLedger()} type="button">
-            Retry ledger reconciliation
-          </button>
+          <BusyActionButton
+            className="button button--secondary"
+            busy={busyAction === "ledger"}
+            disabled={busy}
+            onClick={() => void retryCashOutLedger()}
+            type="button"
+          >
+            {busyAction === "ledger" ? "Reconciling ledger…" : "Retry ledger reconciliation"}
+          </BusyActionButton>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }

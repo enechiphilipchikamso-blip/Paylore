@@ -33,7 +33,7 @@ export default async function ContributorImportPage({
     subscription?.status === "cancel_scheduled";
 
   return (
-    <main className="protected-wrap workspace-page">
+    <div className="protected-wrap workspace-page">
       <WorkspaceNavigation
         workspaceId={workspaceId}
         workspaceName={context.workspace.workspaceName}
@@ -55,6 +55,6 @@ export default async function ContributorImportPage({
         </section>
       )}
       <WorkspaceLegalFooter />
-    </main>
+    </div>
   );
 }
