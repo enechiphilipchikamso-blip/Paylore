@@ -27,7 +27,8 @@
     "server-only": "0.0.1",
     "zod": "4.6.5",
     "@solana-program/zk-elgamal-proof": "0.4.0",
-    "@solana-program/system": "0.15.0"
+    "@solana-program/system": "0.15.0",
+    "tweetnacl": "1.0.3"
   },
   "devDependencies": {
     "@eslint/compat": "2.1.1",
