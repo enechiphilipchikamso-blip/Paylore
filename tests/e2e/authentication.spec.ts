@@ -286,6 +286,20 @@ test.describe(
     );
 
     test(
+      "session-expiry notice appears once on the shared sign-in page",
+      async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto("/auth?reason=inactivity-expired");
+
+        await expect(page.locator(".auth-card")).toHaveCount(1);
+        await expect(page.locator(".notice")).toHaveCount(1);
+        await expect(page.locator(".notice")).toContainText(
+          "Your session expired after 12 hours of inactivity."
+        );
+      }
+    );
+
+    test(
       "connect action stays capped on wide viewports",
       async ({ page }) => {
         await registerWalletStandardMocks(page);

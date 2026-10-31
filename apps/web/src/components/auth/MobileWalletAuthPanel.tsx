@@ -596,15 +596,6 @@ export function MobileWalletAuthPanel({
     setError(null);
   }
 
-  const expiredNotice =
-    reason === "inactivity-expired"
-      ? "Your session expired after 12 hours of inactivity. Sign again to continue."
-      : reason === "hard-expired"
-        ? "Your session reached its 7-day maximum lifetime. Sign in again to continue."
-        : reason === "logged-out"
-          ? "You have been signed out."
-          : null;
-
   const mobileWalletOptions = [
     { label: "Solflare", iconSrc: "/brand/wallets/solflare.svg", provider: "solflare" as const },
     { label: "Backpack", iconSrc: "/brand/wallets/backpack.png", provider: "backpack" as const }
@@ -612,12 +603,6 @@ export function MobileWalletAuthPanel({
 
   return (
     <>
-      {expiredNotice ? (
-        <div className="notice" role="status" aria-live="polite">
-          {expiredNotice}
-        </div>
-      ) : null}
-
       {account ? (
         <div className="auth-status auth-status--mobile-wallet" role="status">
           <span className="status-indicator" data-connected="true" />
