@@ -6815,6 +6815,7 @@ export async function beginWorkspaceReserveFundingOperation(
     const existing = existingRows[0];
     if (existing) {
       if (
+        existing.workspaceId !== input.workspaceId ||
         existing.operationType !== RESERVE_FUNDING_OPERATION_TYPE ||
         existing.requestDigest !== input.requestDigest ||
         existing.transactionSignature !== input.wrapSignature
@@ -6855,7 +6856,11 @@ export async function beginWorkspaceReserveFundingOperation(
       eq(gasTankOperations.workspaceId, input.workspaceId),
       eq(gasTankOperations.idempotencyKey, input.idempotencyKey)
     )).for("update").limit(1);
-    return raced[0] && raced[0].requestDigest === input.requestDigest
+    return raced[0] &&
+      raced[0].workspaceId === input.workspaceId &&
+      raced[0].operationType === RESERVE_FUNDING_OPERATION_TYPE &&
+      raced[0].requestDigest === input.requestDigest &&
+      raced[0].transactionSignature === input.wrapSignature
       ? { status: "existing" as const, operation: raced[0] }
       : { status: "conflict" as const, operation: raced[0] ?? null };
   });

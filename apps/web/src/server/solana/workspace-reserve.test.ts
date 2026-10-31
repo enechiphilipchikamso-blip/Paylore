@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
   gasTankBalanceError: null as Error | null,
   gasTankBalanceCalls: 0,
   gasTankBalanceFailsOnCall: 0,
+  currentBlockHeight: 500n,
+  expiredTransactionMissing: false,
   sendTransactionError: null as Error | null,
   feePayerAddresses: [] as string[],
   registeredSignerAddresses: [] as string[][],
@@ -130,6 +132,8 @@ function reset(): void {
     gasTankBalanceError: null,
     gasTankBalanceCalls: 0,
     gasTankBalanceFailsOnCall: 0,
+    currentBlockHeight: 500n,
+    expiredTransactionMissing: false,
     sendTransactionError: null,
     feePayerAddresses: [],
     registeredSignerAddresses: [],
@@ -185,6 +189,9 @@ vi.mock("@solana/kit", () => ({
           return { confirmationStatus: "finalized", err: null };
         })
       })
+    }),
+    getBlockHeight: () => ({
+      send: async () => h.currentBlockHeight
     }),
     getLatestBlockhash: () => ({
       send: async () => ({ value: { blockhash: "recent-blockhash", lastValidBlockHeight: 500n } })
@@ -593,6 +600,7 @@ vi.mock("../gas-tank", () => ({
 vi.mock("./rpc", () => ({
   readSolanaRpc: vi.fn(async (method: string, params: unknown[]) => {
     if (method !== "getTransaction") throw new Error("Unexpected Reserve funding RPC method.");
+    if (h.expiredTransactionMissing) return null;
     const data = h.currentFeeReservationOperationData ?? {};
     const stage = String(data.stage ?? "");
     const phase = stage.startsWith("preapply")
@@ -927,6 +935,143 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
 
     expect(h.feeReservationCalls).toHaveLength(0);
     expect(h.submittedSteps).toEqual([]);
+  });
+  it("records an expired confidential deposit blockhash as failed only after confirming no transaction landed", async () => {
+    const wrapSignature = "s".repeat(88);
+    const depositSignature = "1".repeat(64);
+    const amount = 1_000_000n;
+    const depositData = Buffer.alloc(9);
+    depositData[0] = 201;
+    depositData.writeBigUInt64LE(amount, 1);
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 250_000n;
+    h.currentBlockHeight = 501n;
+    h.expiredTransactionMissing = true;
+    h.signatureFinality[depositSignature] = "pending";
+    h.currentFeeReservationOperationData = {
+      walletAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature,
+      reserveAddress: h.reserve,
+      reserveTokenAddress: h.reserveToken,
+      mintAddress: h.mint,
+      initialPublicBalanceBaseUnits: "5000000",
+      initialAvailableBalanceBaseUnits: "250000",
+      initialPendingBalanceBaseUnits: "0",
+      stage: "deposit_submitted",
+      depositSignature,
+      depositLastValidBlockHeight: "500",
+      depositAttempt: 1,
+      depositInstruction: {
+        programAddress: h.tokenProgram,
+        dataBase64: depositData.toString("base64"),
+        accountAddresses: [h.reserveToken, h.reserve]
+      },
+      depositMarker: "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":deposit:1",
+      publicBeforeDepositBaseUnits: "5000000",
+      availableBeforeDepositBaseUnits: "250000",
+      feeBudgetReserved: true,
+      actualFeeLamports: "0",
+      reservedFeeBudgetLamports: "200000",
+      feePerTransactionLamports: "100000",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: [],
+      feeBudgetSettledCount: 0
+    };
+
+    const result = await completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature
+    });
+
+    expect(result).toMatchObject({
+      status: "pending",
+      phase: "deposit",
+      stage: "deposit_failed"
+    });
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "deposit_failed",
+      depositErrorCode: "blockhash_expired_without_landing",
+      feeReservationSettledKeys: ["deposit:1"],
+      reservedFeeBudgetLamports: "100000",
+      feeBudgetReserved: true
+    });
+    expect(h.publicBalanceBaseUnits).toBe(5_000_000n);
+    expect(h.pendingBalanceBaseUnits).toBe(0n);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
+  });
+
+  it("does not resubmit confidential transactions when two requests resume the same pending operation", async () => {
+    const wrapSignature = "s".repeat(88);
+    const depositSignature = "1".repeat(64);
+    const amount = 1_000_000n;
+    const depositData = Buffer.alloc(9);
+    depositData[0] = 201;
+    depositData.writeBigUInt64LE(amount, 1);
+    h.reserveConfigured = true;
+    h.publicBalanceBaseUnits = 5_000_000n;
+    h.availableBalanceBaseUnits = 250_000n;
+    h.currentBlockHeight = 500n;
+    h.signatureFinality[depositSignature] = "pending";
+    h.currentFeeReservationOperationData = {
+      walletAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature,
+      reserveAddress: h.reserve,
+      reserveTokenAddress: h.reserveToken,
+      mintAddress: h.mint,
+      initialPublicBalanceBaseUnits: "5000000",
+      initialAvailableBalanceBaseUnits: "250000",
+      initialPendingBalanceBaseUnits: "0",
+      stage: "deposit_submitted",
+      depositSignature,
+      depositLastValidBlockHeight: "500",
+      depositAttempt: 1,
+      depositInstruction: {
+        programAddress: h.tokenProgram,
+        dataBase64: depositData.toString("base64"),
+        accountAddresses: [h.reserveToken, h.reserve]
+      },
+      depositMarker: "PAYLORE_RESERVE_FUNDING:v2:" + wrapSignature + ":deposit:1",
+      publicBeforeDepositBaseUnits: "5000000",
+      availableBeforeDepositBaseUnits: "250000",
+      feeBudgetReserved: true,
+      actualFeeLamports: "0",
+      reservedFeeBudgetLamports: "200000",
+      feePerTransactionLamports: "100000",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: [],
+      feeBudgetSettledCount: 0
+    };
+
+    const resume = () => completeWorkspaceReserveConfidentialFunding({
+      db: {} as any,
+      workspaceId: "workspace-a",
+      fallbackAuthorityAddress: h.authority,
+      amountBaseUnits: amount.toString(),
+      wrapSignature
+    });
+    const results = await Promise.all([resume(), resume()]);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) =>
+      result.status === "pending" && result.stage === "deposit_submitted"
+    )).toBe(true);
+    expect(h.currentFeeReservationOperationData).toMatchObject({
+      stage: "deposit_submitted",
+      feeReservationKeys: ["deposit:1", "apply:1"],
+      feeReservationSettledKeys: [],
+      reservedFeeBudgetLamports: "200000",
+      feeBudgetReserved: true
+    });
+    expect(h.feeReservationCalls).toHaveLength(0);
+    expect(h.submittedSteps).toEqual([]);
+    expect(h.feePayerAddresses).toEqual([]);
   });
 });
 
