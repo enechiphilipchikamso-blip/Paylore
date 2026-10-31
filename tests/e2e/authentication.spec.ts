@@ -79,14 +79,14 @@ test.describe(
 
         await expect(
           page.getByText(
-            "No wallet is connected",
+            "No browser wallet is connected",
             { exact: true }
           )
         ).toBeVisible();
 
         await expect(
           page.getByRole("button", {
-            name: "Connect wallet"
+            name: "Refresh wallet list"
           })
         ).toBeVisible();
 
@@ -117,13 +117,13 @@ test.describe(
         await page.getByRole(
           "button",
           {
-            name: "Connect wallet"
+            name: "Refresh wallet list"
           }
         ).click();
 
         const chooser =
           page.locator(
-            ".wallet-chooser"
+            ".wallet-standard-chooser"
           );
 
         await expect(
@@ -235,15 +235,50 @@ test.describe(
 
         await expect(
           page.getByText(
-            "Open Solflare to approve the connection, then return to Paylore.",
+            "Open Solflare or Backpack when you want to connect through its app.",
             { exact: true }
           )
         ).toBeVisible();
+        await expect(page.locator(".auth-card")).toHaveCount(1);
         await expect(
           page.getByRole("button", {
-            name: "Backpack unavailable on Devnet"
+            name: "Backpack app link unavailable"
           })
         ).toBeDisabled();
+      }
+    );
+
+    test(
+      "an injected wallet browser keeps Wallet Standard choices and app links on one mobile sign-in page",
+      async ({ page }) => {
+        await registerWalletStandardMocks(page);
+        await page.addInitScript(() => {
+          Object.defineProperty(navigator, "userAgent", {
+            configurable: true,
+            get: () =>
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
+          });
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto("/auth");
+
+        await expect(page.locator(".auth-card")).toHaveCount(1);
+        const standardChooser = page.locator(".wallet-standard-chooser");
+        for (const wallet of SUPPORTED_WALLETS) {
+          await expect(standardChooser.getByText(wallet, { exact: true })).toBeVisible();
+        }
+        await expect(
+          page.getByRole("button", { name: "Connect with Solflare" })
+        ).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: "Backpack app link unavailable" })
+        ).toBeDisabled();
+        await expect(
+          page.locator(".wallet-app-links .wallet-choice__icon--muted")
+        ).toHaveCount(1);
+        await expect(
+          standardChooser.getByRole("button", { name: "Backpack" })
+        ).toBeEnabled();
       }
     );
 
@@ -262,7 +297,7 @@ test.describe(
           page.getByRole(
             "button",
             {
-              name: "Connect wallet"
+              name: "Refresh wallet list"
             }
           );
 
@@ -311,13 +346,13 @@ test.describe(
         await page.getByRole(
           "button",
           {
-            name: "Connect wallet"
+            name: "Refresh wallet list"
           }
         ).click();
 
         const chooser =
           page.locator(
-            ".wallet-chooser"
+            ".wallet-standard-chooser"
           );
 
         const walletImages =

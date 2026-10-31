@@ -9,6 +9,8 @@ import {
 import {
   verifyWalletProof
 } from "../../../../server/auth/verification";
+import { loadPayloreConfig } from "../../../../server/config";
+import { getSolanaWalletChainId } from "../../../../server/auth/protocol";
 import {
   getDatabase
 } from "../../../../server/db";
@@ -142,7 +144,8 @@ export async function POST(
             "/auth",
             getRequestOrigin(request)
           ).toString(),
-          expectedMessage: challenge.message
+          expectedMessage: challenge.message,
+          expectedChainId: getSolanaWalletChainId(loadPayloreConfig().PAYLORE_NETWORK)
         },
         {
           authMethod: parsed.data.authMethod,

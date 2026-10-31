@@ -14,7 +14,6 @@ import type {
   SolanaSignInOutput
 } from "@solana/wallet-standard-features";
 import {
-  DEVNET_CHAIN_ID,
   solanaSignInInputSchema
 } from "./protocol";
 
@@ -71,6 +70,7 @@ export async function verifyWalletProof(
     challengeInput: SolanaSignInInput;
     expectedAuthUrl: string;
     expectedMessage: string;
+    expectedChainId: string;
   },
   proof: WalletProof
 ): Promise<boolean> {
@@ -97,7 +97,7 @@ export async function verifyWalletProof(
 
   if (
     parsedChallenge.data.chainId !==
-      DEVNET_CHAIN_ID ||
+      input.expectedChainId ||
     parsedChallenge.data.domain !==
       expectedUrl.host ||
     parsedChallenge.data.uri !==
@@ -113,7 +113,7 @@ export async function verifyWalletProof(
     !proof.account.features.every(
       isWalletIdentifier
     ) ||
-    !proof.account.chains.includes(DEVNET_CHAIN_ID) ||
+    !proof.account.chains.includes(input.expectedChainId) ||
     (proof.authMethod === "siws" &&
       !proof.account.features.includes("solana:signIn")) ||
     (proof.authMethod === "message" &&

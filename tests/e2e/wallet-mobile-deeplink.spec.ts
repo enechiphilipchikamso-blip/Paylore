@@ -30,12 +30,13 @@ test("mobile browser builds a Solflare connect request with the real app and ret
   await expect(connectButton).toBeVisible();
 
   const backpackButton = page.getByRole("button", {
-    name: "Backpack unavailable on Devnet"
+    name: "Backpack app link unavailable"
   });
   await expect(backpackButton).toBeDisabled();
-  await expect(page.locator(".auth-mobile-note")).toContainText(
-    "Backpack's published connection options do not list Devnet"
-  );
+  await expect(page.locator(".auth-card")).toHaveCount(1);
+  await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
+  await expect(page.locator(".wallet-standard-chooser .wallet-choice")).toHaveCount(4);
+  await expect(page.locator(".wallet-app-links .wallet-choice")).toHaveCount(2);
 
   await connectButton.click();
   await expect.poll(() => connectUrl).not.toBe("");
@@ -59,7 +60,7 @@ test("mobile browser builds a Solflare connect request with the real app and ret
   expect(redirect.searchParams.get("wallet_state")).toMatch(/^[a-f0-9]{48}$/);
 });
 
-test("a browser without a supported desktop extension gets the separate wallet-app path", async ({
+test("a browser without an injected provider keeps the same sign-in page", async ({
   page
 }) => {
   await page.goto("/auth");
@@ -68,9 +69,10 @@ test("a browser without a supported desktop extension gets the separate wallet-a
     page.getByRole("button", { name: "Connect with Solflare" })
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Backpack unavailable on Devnet" })
+    page.getByRole("button", { name: "Backpack app link unavailable" })
   ).toBeDisabled();
-  await expect(page.locator(".auth-card__header")).toContainText(
-    "mobile wallet"
-  );
+  await expect(page.locator(".auth-card")).toHaveCount(1);
+  await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
+  await expect(page.locator(".wallet-standard-chooser .wallet-choice")).toHaveCount(4);
+  await expect(page.locator(".wallet-app-links .wallet-choice")).toHaveCount(2);
 });

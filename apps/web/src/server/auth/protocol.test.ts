@@ -5,7 +5,9 @@ import {
 } from "vitest";
 import {
   buildChallenge,
-  challengeIsUsable
+  challengeIsUsable,
+  getSolanaWalletChainId,
+  getSolanaWalletDeepLinkCluster
 } from "./protocol";
 import {
   isSafeReturnTo
@@ -33,6 +35,7 @@ describe(
         const result =
           buildChallenge({
             walletAddress,
+            chainId: "solana:devnet",
             nonce:
               "a".repeat(64),
             issuedAt,
@@ -72,6 +75,13 @@ describe(
         );
       }
     );
+
+    it("derives wallet authentication chain and app-link cluster from deployment configuration", () => {
+      expect(getSolanaWalletChainId("devnet")).toBe("solana:devnet");
+      expect(getSolanaWalletChainId("mainnet")).toBe("solana:mainnet");
+      expect(getSolanaWalletDeepLinkCluster("devnet")).toBe("devnet");
+      expect(getSolanaWalletDeepLinkCluster("mainnet")).toBe("mainnet-beta");
+    });
 
     it(
       "rejects a consumed challenge",

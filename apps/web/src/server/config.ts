@@ -46,8 +46,11 @@ export type AppConfig = z.infer<typeof envSchema>;
 
 const payloreConfigSchema = z.object({
   PAYLORE_NETWORK: z
-    .literal("devnet")
+    .enum(["devnet", "mainnet"])
     .default("devnet"),
+  PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED: z
+    .enum(["true", "false"])
+    .default("false"),
   PAYLORE_RPC_PRIMARY_PROVIDER: z
     .enum(["helius", "quicknode", "solana", "custom"])
     .default("solana"),
@@ -187,7 +190,10 @@ export function parsePayloreConfig(
         env.SOLANA_NETWORK,
       PAYLORE_RPC_PRIMARY_URL:
         env.PAYLORE_RPC_PRIMARY_URL ??
-        env.SOLANA_RPC_PRIMARY
+        env.SOLANA_RPC_PRIMARY ??
+        ((env.PAYLORE_NETWORK ?? env.SOLANA_NETWORK) === "mainnet"
+          ? "https://api.mainnet-beta.solana.com"
+          : undefined)
     });
 
   if (!result.success) {

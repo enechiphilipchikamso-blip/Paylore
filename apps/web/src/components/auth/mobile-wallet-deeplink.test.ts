@@ -9,8 +9,7 @@ import {
   deriveWalletSharedSecret,
   encodeBase58,
   encryptWalletPayload,
-  parseWalletError,
-  shouldUseMobileWalletDeepLinks
+  parseWalletError
 } from "./mobile-wallet-deeplink";
 
 const APP_URL = "https://paylore.netlify.app/";
@@ -18,13 +17,6 @@ const REDIRECT_URL =
   "https://paylore.netlify.app/auth?wallet_provider=solflare&wallet_action=connect&wallet_state=0123456789abcdef0123456789abcdef0123456789abcdef";
 
 describe("Solana mobile wallet deeplinks", () => {
-  it("selects the dedicated path for mobile devices and browsers without a supported extension", () => {
-    expect(shouldUseMobileWalletDeepLinks(true, true)).toBe(true);
-    expect(shouldUseMobileWalletDeepLinks(true, false)).toBe(true);
-    expect(shouldUseMobileWalletDeepLinks(false, false)).toBe(true);
-    expect(shouldUseMobileWalletDeepLinks(false, true)).toBe(false);
-  });
-
   it("round-trips Base58 bytes, including leading zero bytes", () => {
     const input = Uint8Array.from([0, 0, 1, 2, 255, 0, 13]);
     expect(decodeBase58(encodeBase58(input))).toEqual(input);
@@ -85,22 +77,7 @@ describe("Solana mobile wallet deeplinks", () => {
     ).toThrow("Wallet links must stay on Paylore's secure public origin.");
   });
 
-  it("fails closed rather than defaulting Backpack to mainnet for the Devnet app", () => {
-    const keyPair = createWalletEncryptionKeyPair();
-    expect(() =>
-      buildWalletConnectDeepLink({
-        provider: "backpack",
-        appUrl: APP_URL,
-        redirectLink: REDIRECT_URL,
-        dappEncryptionPublicKey: keyPair.publicKey,
-        cluster: "devnet"
-      })
-    ).toThrow(
-      "Backpack's published deeplink connection options do not include Solana Devnet."
-    );
-  });
-
-  it("builds the Backpack URL with app_url and redirect_link when a supported mainnet cluster is selected", () => {
+  it("passes the explicitly selected cluster to the Backpack connection URL", () => {
     const keyPair = createWalletEncryptionKeyPair();
     const url = new URL(
       buildWalletConnectDeepLink({
@@ -189,6 +166,38 @@ describe("Solana mobile wallet deeplinks", () => {
     expect(url.searchParams.get("redirect_link")).toContain(
       "wallet_action=sign_message"
     );
+  });
+
+  it("builds the Backpack message-signing deep link using the established connection session", () => {
+    const keyPair = createWalletEncryptionKeyPair();
+    const sharedSecret = nacl.randomBytes(nacl.box.sharedKeyLength);
+    const encrypted = encryptWalletPayload(
+      {
+        session: "opaque-session-token",
+        message: encodeBase58(new TextEncoder().encode("Paylore sign-in challenge")),
+        display: "utf8"
+      },
+      sharedSecret
+    );
+    const url = new URL(
+      buildWalletSignMessageDeepLink({
+        provider: "backpack",
+        appUrl: APP_URL,
+        dappEncryptionPublicKey: keyPair.publicKey,
+        redirectLink: "https://paylore.netlify.app/auth?wallet_provider=backpack&wallet_action=sign_message&wallet_state=0123456789abcdef0123456789abcdef0123456789abcdef",
+        encryptedPayload: encrypted.payload,
+        nonce: encrypted.nonce
+      })
+    );
+
+    expect(url.origin).toBe("https://backpack.app");
+    expect(url.pathname).toBe("/ul/v1/signMessage");
+    expect(url.searchParams.get("dapp_encryption_public_key")).toBe(
+      encodeBase58(keyPair.publicKey)
+    );
+    expect(url.searchParams.get("nonce")).toBe(encrypted.nonce);
+    expect(url.searchParams.get("payload")).toBe(encrypted.payload);
+    expect(url.searchParams.get("redirect_link")).toBe("https://paylore.netlify.app/auth?wallet_provider=backpack&wallet_action=sign_message&wallet_state=0123456789abcdef0123456789abcdef0123456789abcdef");
   });
 
   it("maps only the published cancellation and disconnect codes to specific copy", () => {

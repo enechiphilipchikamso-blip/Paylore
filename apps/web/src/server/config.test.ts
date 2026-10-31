@@ -197,7 +197,32 @@ describe("parsePayloreConfig", () => {
     ).toThrow(ConfigurationError);
   });
 
-  it("keeps the official Token Wrap program ID selected for Mainnet", () => {
+  it("keeps the Backpack app deep link disabled by default and validates its feature switch", () => {
+    expect(parsePayloreConfig({ NODE_ENV: "test" }).PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED).toBe("false");
+    expect(parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED: "true"
+    }).PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED).toBe("true");
+    expect(() => parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_BACKPACK_MOBILE_DEEPLINK_ENABLED: "yes"
+    })).toThrow(ConfigurationError);
+  });
+
+  it("selects wallet authentication and RPC settings from the configured deployment network", () => {
+    const developmentConfig = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_NETWORK: "devnet"
+    });
+    expect(developmentConfig.PAYLORE_NETWORK).toBe("devnet");
+    expect(developmentConfig.PAYLORE_RPC_PRIMARY_URL).toBe("https://api.devnet.solana.com");
+
+    const productionConfig = parsePayloreConfig({
+      NODE_ENV: "test",
+      PAYLORE_NETWORK: "mainnet"
+    });
+    expect(productionConfig.PAYLORE_NETWORK).toBe("mainnet");
+    expect(productionConfig.PAYLORE_RPC_PRIMARY_URL).toBe("https://api.mainnet-beta.solana.com");
     expect(getTokenWrapProgramId("mainnet")).toBe(
       "TwRapQCDhWkZRrDaHfZGuHxkZ91gHDRkyuzNqeU5MgR"
     );

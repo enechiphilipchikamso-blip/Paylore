@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -12,23 +13,23 @@ import {
   encodeBase58,
   encryptWalletPayload,
   isValidWalletCallbackState,
-  parseWalletError
+  parseWalletError,
+  type MobileDeepLinkWallet,
+  type MobileDeepLinkCluster
 } from "./mobile-wallet-deeplink";
 
 const MOBILE_CONNECTION_KEY = "paylore:mobile-wallet:connection:v1";
 const MOBILE_PENDING_PREFIX = "paylore:mobile-wallet:pending:v1:";
 const MOBILE_PENDING_MAX_AGE_MS = 10 * 60 * 1000;
-const MOBILE_SESSION_CHAIN = "solana:devnet";
 
 type MobileWalletAccount = {
   address: string;
   publicKey: Uint8Array;
-  chains: string[];
-  features: string[];
+  provider: MobileDeepLinkWallet;
 };
 
 type MobileConnection = {
-  provider: "solflare";
+  provider: MobileDeepLinkWallet;
   appUrl: string;
   dappPublicKey: string;
   dappSecretKey: string;
@@ -41,7 +42,7 @@ type MobileConnection = {
 type PendingConnect = {
   action: "connect";
   state: string;
-  provider: "solflare";
+  provider: MobileDeepLinkWallet;
   appUrl: string;
   dappPublicKey: string;
   dappSecretKey: string;
@@ -50,16 +51,18 @@ type PendingConnect = {
 
 type PendingSignMessage = {
   action: "sign_message";
+  provider: MobileDeepLinkWallet;
   state: string;
   createdAt: number;
   challengeNonce: string;
   challengeMessage: string;
+  chainId: string;
   walletAddress: string;
 };
 
 type ChallengeResponse = {
   nonce: string;
-  input: unknown;
+  input: { chainId: string };
   message: string;
 };
 
@@ -69,11 +72,6 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
   }
   return btoa(binary);
-}
-
-function fromBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function createState(): string {
@@ -99,7 +97,7 @@ function readMobileConnection(): MobileConnection | null {
     if (!raw) return null;
     const value = JSON.parse(raw) as MobileConnection;
     if (
-      value.provider !== "solflare" ||
+      (value.provider !== "solflare" && value.provider !== "backpack") ||
       typeof value.appUrl !== "string" ||
       typeof value.dappPublicKey !== "string" ||
       typeof value.dappSecretKey !== "string" ||
@@ -127,13 +125,12 @@ function accountFromConnection(
 ): MobileWalletAccount {
   const publicKey = decodeBase58(connection.walletAddress);
   if (publicKey.length !== 32) {
-    throw new Error("Solflare returned an invalid Solana account address.");
+    throw new Error("The wallet returned an invalid Solana account address.");
   }
   return {
     address: connection.walletAddress,
     publicKey,
-    chains: [MOBILE_SESSION_CHAIN],
-    features: ["solana:signMessage"]
+    provider: connection.provider
   };
 }
 
@@ -160,13 +157,14 @@ function clearWalletCallbackUrl(): void {
 }
 
 function callbackRedirectLink(
+  provider: MobileDeepLinkWallet,
   action: "connect" | "sign_message",
   state: string,
   nextPath: string,
   reason?: string
 ): string {
   const url = new URL("/auth", window.location.origin);
-  url.searchParams.set("wallet_provider", "solflare");
+  url.searchParams.set("wallet_provider", provider);
   url.searchParams.set("wallet_action", action);
   url.searchParams.set("wallet_state", state);
   if (nextPath !== "/app") url.searchParams.set("next", nextPath);
@@ -194,9 +192,12 @@ function readPending<T>(state: string): T | null {
   }
 }
 
-function setLastUsedWallet(): void {
+function setLastUsedWallet(provider: MobileDeepLinkWallet): void {
   try {
-    window.localStorage.setItem("paylore-last-wallet", "Solflare");
+    window.localStorage.setItem(
+      "paylore-last-wallet",
+      provider === "solflare" ? "Solflare" : "Backpack"
+    );
   } catch {
     // The active connection remains usable for this page even when preferences are unavailable.
   }
@@ -204,10 +205,14 @@ function setLastUsedWallet(): void {
 
 export function MobileWalletAuthPanel({
   nextPath,
-  reason
+  reason,
+  walletCluster,
+  backpackDeepLinkEnabled
 }: {
   nextPath: string;
   reason?: "inactivity-expired" | "hard-expired" | "logged-out";
+  walletCluster: MobileDeepLinkCluster;
+  backpackDeepLinkEnabled: boolean;
 }) {
   const router = useRouter();
   const [account, setAccount] = useState<MobileWalletAccount | null>(null);
@@ -237,7 +242,7 @@ export function MobileWalletAuthPanel({
       }
 
       if (
-        provider !== "solflare" ||
+        (provider !== "solflare" && provider !== "backpack") ||
         (action !== "connect" && action !== "sign_message") ||
         !isValidWalletCallbackState(state)
       ) {
@@ -249,7 +254,12 @@ export function MobileWalletAuthPanel({
 
       const pending = readPending<PendingConnect | PendingSignMessage>(state);
       clearWalletCallbackUrl();
-      if (!pending || pending.action !== action || pending.state !== state) {
+      if (
+        !pending ||
+        pending.action !== action ||
+        pending.state !== state ||
+        pending.provider !== provider
+      ) {
         throw new Error(
           "The wallet response expired or was already used. Start the connection again."
         );
@@ -264,18 +274,22 @@ export function MobileWalletAuthPanel({
       const responseNonce = params.get("nonce");
       if (!encryptedData || !responseNonce) {
         throw new Error(
-          "Solflare did not return a complete response. Reconnect and try again."
+          "The wallet did not return a complete response. Reconnect and try again."
         );
       }
 
       if (action === "connect") {
         const connectPending = pending as PendingConnect;
+        const encryptionKeyParameter =
+          provider === "solflare"
+            ? "solflare_encryption_public_key"
+            : "wallet_encryption_public_key";
         const walletEncryptionPublicKey = params.get(
-          "solflare_encryption_public_key"
+          encryptionKeyParameter
         );
         if (!walletEncryptionPublicKey) {
           throw new Error(
-            "Solflare did not return its connection encryption key."
+            "The wallet did not return its connection encryption key."
           );
         }
 
@@ -298,12 +312,12 @@ export function MobileWalletAuthPanel({
           !decoded.session
         ) {
           throw new Error(
-            "Solflare returned an incomplete connection. Reconnect and try again."
+            "The wallet returned an incomplete connection. Reconnect and try again."
           );
         }
 
         const connection: MobileConnection = {
-          provider: "solflare",
+          provider,
           appUrl: connectPending.appUrl,
           dappPublicKey: connectPending.dappPublicKey,
           dappSecretKey: connectPending.dappSecretKey,
@@ -321,7 +335,7 @@ export function MobileWalletAuthPanel({
           setAccount(nextAccount);
           setStatus("idle");
           setError(null);
-          setLastUsedWallet();
+          setLastUsedWallet(provider);
         }
         return;
       }
@@ -330,10 +344,12 @@ export function MobileWalletAuthPanel({
       const connection = readMobileConnection();
       if (
         !connection ||
+        connection.provider !== provider ||
+        signPending.provider !== provider ||
         connection.walletAddress !== signPending.walletAddress
       ) {
         throw new Error(
-          "The Solflare connection changed before sign-in. Reconnect and try again."
+          "The wallet connection changed before sign-in. Reconnect and try again."
         );
       }
 
@@ -353,7 +369,7 @@ export function MobileWalletAuthPanel({
         typeof decoded.signature !== "string"
       ) {
         throw new Error(
-          "Solflare did not return a message signature. Try signing in again."
+          "The wallet did not return a message signature. Try signing in again."
         );
       }
 
@@ -363,7 +379,7 @@ export function MobileWalletAuthPanel({
       );
       if (signature.length !== 64 || signedMessage.length === 0) {
         throw new Error(
-          "Solflare returned an invalid sign-in response. Try again."
+          "The wallet returned an invalid sign-in response. Try again."
         );
       }
 
@@ -376,7 +392,7 @@ export function MobileWalletAuthPanel({
           nonce: signPending.challengeNonce,
           walletAddress: signPending.walletAddress,
           publicKey: toBase64(accountFromConnection(connection).publicKey),
-          chains: [MOBILE_SESSION_CHAIN],
+          chains: [signPending.chainId],
           features: ["solana:signMessage"],
           signedMessage: toBase64(signedMessage),
           signature: toBase64(signature)
@@ -415,17 +431,19 @@ export function MobileWalletAuthPanel({
     };
   }, [nextPath, router]);
 
-  async function connectSolflare(): Promise<void> {
+  async function connectMobileWallet(provider: MobileDeepLinkWallet): Promise<void> {
+    if (provider === "backpack" && !backpackDeepLinkEnabled) {
+      setError("The Backpack app link is turned off for this deployment. Open Paylore inside Backpack to connect through its browser.");
+      return;
+    }
     setError(null);
     setStatus("connecting");
     try {
       const keyPair = createWalletEncryptionKeyPair();
-      const stateBytes = crypto.getRandomValues(new Uint8Array(24));
-      const state = [...stateBytes]
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
+      const state = createState();
       const appUrl = new URL("/", window.location.origin).toString();
       const redirectLink = callbackRedirectLink(
+        provider,
         "connect",
         state,
         nextPath,
@@ -434,7 +452,7 @@ export function MobileWalletAuthPanel({
       const pending: PendingConnect = {
         action: "connect",
         state,
-        provider: "solflare",
+        provider,
         appUrl,
         dappPublicKey: encodeBase58(keyPair.publicKey),
         dappSecretKey: encodeBase58(keyPair.secretKey),
@@ -446,11 +464,11 @@ export function MobileWalletAuthPanel({
       );
 
       const deepLink = buildWalletConnectDeepLink({
-        provider: "solflare",
+        provider,
         appUrl,
         redirectLink,
         dappEncryptionPublicKey: keyPair.publicKey,
-        cluster: "devnet"
+        cluster: walletCluster
       });
       window.location.assign(deepLink);
     } catch (cause) {
@@ -458,16 +476,16 @@ export function MobileWalletAuthPanel({
       setError(
         cause instanceof Error
           ? cause.message
-          : "Paylore could not open Solflare. Try again."
+          : "Paylore could not open the wallet app. Try again."
       );
     }
   }
 
-  async function signInWithSolflare(): Promise<void> {
+  async function signInWithMobileWallet(provider: MobileDeepLinkWallet): Promise<void> {
     const connection = readMobileConnection();
-    if (!connection || !account) {
+    if (!connection || connection.provider !== provider || !account || account.provider !== provider) {
       setAccount(null);
-      setError("Reconnect Solflare before signing in.");
+      setError("Reconnect your wallet before signing in.");
       return;
     }
 
@@ -487,7 +505,9 @@ export function MobileWalletAuthPanel({
         !challengeResponse.ok ||
         !("nonce" in challenge) ||
         typeof challenge.message !== "string" ||
-        typeof challenge.nonce !== "string"
+        typeof challenge.nonce !== "string" ||
+        !challenge.input ||
+        typeof challenge.input.chainId !== "string"
       ) {
         throw new Error(
           challengeResponse.status >= 500
@@ -510,11 +530,9 @@ export function MobileWalletAuthPanel({
         },
         sharedSecret
       );
-      const stateBytes = crypto.getRandomValues(new Uint8Array(24));
-      const state = [...stateBytes]
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
+      const state = createState();
       const redirectLink = callbackRedirectLink(
+        provider,
         "sign_message",
         state,
         nextPath,
@@ -522,10 +540,12 @@ export function MobileWalletAuthPanel({
       );
       const pending: PendingSignMessage = {
         action: "sign_message",
+        provider,
         state,
         createdAt: Date.now(),
         challengeNonce: challenge.nonce,
         challengeMessage: challenge.message,
+        chainId: challenge.input.chainId,
         walletAddress: account.address
       };
       getSessionStorage().setItem(
@@ -534,7 +554,7 @@ export function MobileWalletAuthPanel({
       );
 
       const deepLink = buildWalletSignMessageDeepLink({
-        provider: "solflare",
+        provider,
         appUrl: connection.appUrl,
         dappEncryptionPublicKey: decodeBase58(connection.dappPublicKey),
         redirectLink,
@@ -547,12 +567,12 @@ export function MobileWalletAuthPanel({
       setError(
         cause instanceof Error
           ? cause.message
-          : "Paylore could not open the sign-in request. Try again."
+          : "Paylore could not open the wallet sign-in request. Try again."
       );
     }
   }
 
-  function disconnectSolflare(): void {
+  function disconnectMobileWallet(): void {
     try {
       const storage = getSessionStorage();
       storage.removeItem(MOBILE_CONNECTION_KEY);
@@ -579,116 +599,134 @@ export function MobileWalletAuthPanel({
           ? "You have been signed out."
           : null;
 
-  return (
-    <div className="auth-card">
-      <div className="auth-card__header">
-        <h2>Sign in to Paylore</h2>
-        <p>
-          Connect to a mobile wallet and approve Paylore&apos;s separate sign-in
-          message. Signing in proves wallet control; it does not send payroll
-          funds or a payroll transaction.
-        </p>
-      </div>
+  const mobileWalletOptions = [
+    { label: "Solflare", iconSrc: "/brand/wallets/solflare.svg", provider: "solflare" as const },
+    { label: "Backpack", iconSrc: "/brand/wallets/backpack.png", provider: "backpack" as const }
+  ];
 
+  return (
+    <>
       {expiredNotice ? (
         <div className="notice" role="status" aria-live="polite">
           {expiredNotice}
         </div>
       ) : null}
 
-      <div className="auth-status">
-        <span
-          className="status-indicator"
-          data-connected={account ? "true" : "false"}
-        />
-        <div className="auth-status__copy">
-          {account ? (
-            <>
-              <strong>Solflare</strong>
-              <span>
-                {account.address.slice(0, 5)}…{account.address.slice(-4)}
-              </span>
-              <small>Connected. Paylore sign-in is still required.</small>
-            </>
-          ) : (
-            <>
-              <strong>No wallet is connected</strong>
-              <span>
-                Open Solflare to approve the connection, then return to Paylore.
-              </span>
-            </>
-          )}
+      {account ? (
+        <div className="auth-status auth-status--mobile-wallet" role="status">
+          <span className="status-indicator" data-connected="true" />
+          <div className="auth-status__copy">
+            <strong>Connected with {account.provider === "solflare" ? "Solflare" : "Backpack"}</strong>
+            <span>{account.address.slice(0, 5)}…{account.address.slice(-4)}</span>
+            <small>Paylore sign-in is still required.</small>
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      <div className="auth-actions">
-        {!account ? (
+      <section className="wallet-chooser wallet-app-links" aria-label="Connect with a wallet app">
+        <div className="wallet-chooser__header">
+          <div>
+            <h3>Connect with a wallet app</h3>
+            <p>Open Solflare or Backpack when you want to connect through its app.</p>
+          </div>
+        </div>
+        <div className="wallet-choices">
+          {mobileWalletOptions.map((option) => {
+            const selected = account?.provider === option.provider;
+            const disabledBySetting =
+              option.provider === "backpack" && !backpackDeepLinkEnabled;
+            return (
+              <button
+                className="wallet-choice"
+                key={option.label}
+                type="button"
+                disabled={
+                  status === "connecting" ||
+                  status === "signing" ||
+                  disabledBySetting ||
+                  Boolean(account && !selected)
+                }
+                onClick={() => {
+                  if (!account && !disabledBySetting) {
+                    void connectMobileWallet(option.provider);
+                  }
+                }}
+                aria-label={
+                  disabledBySetting
+                    ? "Backpack app link unavailable"
+                    : selected
+                      ? "Connected to " + option.label
+                      : "Connect with " + option.label
+                }
+                aria-pressed={selected}
+                aria-describedby={
+                  disabledBySetting ? "backpack-app-link-note" : undefined
+                }
+              >
+                <span
+                  className={
+                    disabledBySetting
+                      ? "wallet-choice__icon wallet-choice__icon--muted"
+                      : "wallet-choice__icon"
+                  }
+                  aria-hidden="true"
+                >
+                  <Image
+                    src={option.iconSrc}
+                    alt=""
+                    width={44}
+                    height={44}
+                    unoptimized
+                  />
+                </span>
+                <span className="wallet-choice__copy">
+                  <span className="wallet-choice__name">{option.label}</span>
+                  {selected && account ? (
+                    <small>Connected · {account.address.slice(0, 5)}…{account.address.slice(-4)}</small>
+                  ) : disabledBySetting ? (
+                    <small id="backpack-app-link-note">
+                      The app link is turned off for this deployment. Connect through Backpack&apos;s browser instead.
+                    </small>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {account ? (
+        <div className="auth-actions">
           <button
             className="button"
             type="button"
-            onClick={() => void connectSolflare()}
-            disabled={status === "connecting" || status === "signing"}
+            onClick={() => void signInWithMobileWallet(account.provider)}
+            disabled={status === "signing" || status === "success"}
           >
-            {status === "connecting" ? (
+            {status === "signing" ? (
               <span className="loading-indicator">
                 <span className="loading-indicator__icon" aria-hidden="true" />
-                Opening Solflare…
+                Waiting for wallet…
               </span>
+            ) : status === "success" ? (
+              "Signed in"
             ) : (
-              "Connect with Solflare"
+              "Sign in with wallet"
             )}
           </button>
-        ) : (
-          <>
-            <button
-              className="button"
-              type="button"
-              onClick={() => void signInWithSolflare()}
-              disabled={status === "signing" || status === "success"}
-            >
-              {status === "signing" ? (
-                <span className="loading-indicator">
-                  <span className="loading-indicator__icon" aria-hidden="true" />
-                  Waiting for Solflare…
-                </span>
-              ) : status === "success" ? (
-                "Signed in"
-              ) : (
-                "Sign in with Solflare"
-              )}
-            </button>
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={disconnectSolflare}
-              disabled={status === "signing"}
-            >
-              Disconnect wallet
-            </button>
-          </>
-        )}
-        <button
-          className="button button--secondary"
-          type="button"
-          disabled
-          aria-describedby="backpack-devnet-note"
-        >
-          Backpack unavailable on Devnet
-        </button>
-      </div>
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={disconnectMobileWallet}
+            disabled={status === "signing"}
+          >
+            Disconnect wallet
+          </button>
+        </div>
+      ) : null}
 
-      <p className="auth-mobile-note">
-        Paylore currently authenticates on Solana Devnet. Solflare&apos;s published
-        deep-link connection flow supports Devnet. Backpack&apos;s published
-        connection options do not list Devnet, so Paylore will not send a request
-        that could default to Mainnet.
-      </p>
       <p className="auth-security-note">
         Signing in is an authentication action. It does not send payroll funds.
-      </p>
-      <p id="backpack-devnet-note" className="auth-security-note">
-        Use a supported desktop Wallet Standard extension with Backpack, or use
-        Solflare on mobile for Devnet sign-in.
       </p>
 
       {error ? (
@@ -696,6 +734,6 @@ export function MobileWalletAuthPanel({
           {error}
         </div>
       ) : null}
-    </div>
+    </>
   );
 }

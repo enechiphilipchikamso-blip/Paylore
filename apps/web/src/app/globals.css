@@ -1964,6 +1964,11 @@ ul {
   object-fit: cover;
 }
 
+.wallet-choice__icon--muted {
+  opacity: 0.38;
+  filter: grayscale(1);
+}
+
 .wallet-choice__copy {
   display: grid;
   gap: var(--space-1);

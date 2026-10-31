@@ -101,7 +101,8 @@ describe(
           expectedAuthUrl: "https://paylore.example/auth",
           expectedMessage: createSignInMessage(
             challengeInput
-          ).toString()
+          ).toString(),
+          expectedChainId: challengeInput.chainId
         },
         {
           ...proof,
@@ -109,6 +110,20 @@ describe(
         }
       );
     }
+
+    it("rejects a challenge from a different deployment network", async () => {
+      await expect(
+        verifyWalletProof(
+          {
+            challengeInput,
+            expectedAuthUrl: "https://paylore.example/auth",
+            expectedMessage: createSignInMessage(challengeInput).toString(),
+            expectedChainId: "solana:mainnet"
+          },
+          proof
+        )
+      ).resolves.toBe(false);
+    });
 
     it(
       "rejects non-namespaced chains",
@@ -154,6 +169,7 @@ describe(
         const challenge =
           buildChallenge({
             walletAddress: address,
+            chainId: "solana:devnet",
             nonce: "b".repeat(64),
             issuedAt,
             expirationTime: new Date(
@@ -198,7 +214,8 @@ describe(
               challengeInput:
                 challenge.input,
               expectedAuthUrl: "https://paylore.example/auth",
-              expectedMessage: challenge.message
+              expectedMessage: challenge.message,
+          expectedChainId: challenge.input.chainId
             },
             proof
           )
@@ -206,7 +223,8 @@ describe(
 
         const verificationInput = {
           expectedAuthUrl: "https://paylore.example/auth",
-          expectedMessage: challenge.message
+          expectedMessage: challenge.message,
+          expectedChainId: challenge.input.chainId
         };
 
         const tamperedSignature =
@@ -311,7 +329,8 @@ describe(
           {
             challengeInput: challenge.input,
             expectedAuthUrl: "https://paylore.example/auth",
-            expectedMessage: challenge.message
+            expectedMessage: challenge.message,
+          expectedChainId: challenge.input.chainId
           },
           proof
         )
@@ -322,7 +341,8 @@ describe(
           {
             challengeInput: challenge.input,
             expectedAuthUrl: "https://paylore.example/auth",
-            expectedMessage: `${challenge.message} altered`
+            expectedMessage: `${challenge.message} altered`,
+            expectedChainId: challenge.input.chainId
           },
           proof
         )

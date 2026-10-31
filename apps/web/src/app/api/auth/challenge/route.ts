@@ -7,8 +7,10 @@ import {
 import { getDatabase } from "../../../../server/db";
 import {
   AUTH_CHALLENGE_TTL_MS,
-  buildChallenge
+  buildChallenge,
+  getSolanaWalletChainId
 } from "../../../../server/auth/protocol";
+import { loadPayloreConfig } from "../../../../server/config";
 import {
   assertSameOrigin,
   getRequestOrigin,
@@ -85,8 +87,10 @@ export async function POST(
       AUTH_CHALLENGE_TTL_MS
   );
   const nonce = randomBytes(32).toString("hex");
+  const config = loadPayloreConfig();
   const challenge = buildChallenge({
     walletAddress: parsed.data.walletAddress,
+    chainId: getSolanaWalletChainId(config.PAYLORE_NETWORK),
     nonce,
     issuedAt,
     expirationTime,
