@@ -277,6 +277,9 @@ test.describe(
           page.locator(".wallet-app-links .wallet-choice__icon--muted")
         ).toHaveCount(1);
         await expect(
+          page.locator(".wallet-standard-chooser .wallet-choice__icon--muted")
+        ).toHaveCount(1);
+        await expect(
           standardChooser.getByRole("button", { name: "Backpack" })
         ).toBeEnabled();
       }

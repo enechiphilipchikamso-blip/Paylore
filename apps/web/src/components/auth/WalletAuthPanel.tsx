@@ -320,8 +320,9 @@ function disconnectFeatureFor(
 
 function WalletStandardAuthPanel({
   nextPath,
-  reason
-}: AuthPanelProps) {
+  reason,
+  backpackDeepLinkEnabled
+}: AuthPanelProps & { backpackDeepLinkEnabled: boolean }) {
   const router = useRouter();
 
   const [
@@ -1036,7 +1037,11 @@ function WalletStandardAuthPanel({
                     }}
                   >
                     <span
-                      className="wallet-choice__icon"
+                      className={
+                        option.label === "Backpack" && !backpackDeepLinkEnabled
+                          ? "wallet-choice__icon wallet-choice__icon--muted"
+                          : "wallet-choice__icon"
+                      }
                       aria-hidden="true"
                     >
                       <Image
@@ -1103,6 +1108,7 @@ export function WalletAuthPanel(props: WalletAuthPanelProps) {
       <WalletStandardAuthPanel
         nextPath={props.nextPath}
         reason={props.reason}
+        backpackDeepLinkEnabled={props.backpackDeepLinkEnabled}
       />
       <MobileWalletAuthPanel
         nextPath={props.nextPath}
