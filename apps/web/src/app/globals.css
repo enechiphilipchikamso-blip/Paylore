@@ -856,27 +856,69 @@ ul {
 
 .wallet-connection-notice {
   position: fixed;
-  top: 1rem;
+  top: max(1rem, env(safe-area-inset-top));
   left: 50%;
-  z-index: 20;
-  width: min(32rem, calc(100vw - 2rem));
-  padding: 1rem 1.15rem;
-  border: 1px solid var(--color-border-strong);
+  z-index: 1000;
+  width: min(34rem, calc(100vw - 2rem));
+  padding: 1.1rem 3.25rem 1.1rem 1.25rem;
+  border: 2px solid #b52a39;
   border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-md);
-  color: var(--color-text);
+  background: #fff4f4;
+  box-shadow: 0 1rem 3rem rgba(75, 15, 25, 0.25);
+  color: #43141b;
   transform: translateX(-50%);
+}
+
+.wallet-connection-notice--toast {
+  animation: wallet-connection-toast-in 180ms ease-out both;
 }
 
 .wallet-connection-notice strong {
   display: block;
   margin-bottom: 0.25rem;
+  font-size: 1rem;
 }
 
 .wallet-connection-notice p {
   margin: 0 0 0.75rem;
-  color: var(--color-text-muted);
+  color: #5e252d;
+  line-height: 1.45;
+}
+
+.wallet-connection-notice .button {
+  background: #8f1d2c;
+  border-color: #8f1d2c;
+  color: #ffffff;
+}
+
+.wallet-connection-notice__close {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.7rem;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #7d2733;
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.wallet-connection-notice__close:hover {
+  background: rgba(143, 29, 44, 0.12);
+}
+
+@keyframes wallet-connection-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .feature-list,

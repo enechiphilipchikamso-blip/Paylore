@@ -2,7 +2,7 @@
 
 import { getWallets } from "@wallet-standard/app";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   hasAuthenticatedWallet,
   reconnectAuthenticatedWallet
@@ -52,8 +52,10 @@ export function WalletConnectionMonitor() {
   const [disconnected, setDisconnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const isHomePage = pathname === "/app" ||
-    /^\/workspace\/[^/]+$/.test(pathname);
+  const [toastVisible, setToastVisible] = useState(false);
+  const previousConnection = useRef<boolean | null>(null);
+  const isDashboardPage = /^\/workspace\/[^/]+(?:\/|$)/.test(pathname);
+  const isDashboardHome = /^\/workspace\/[^/]+$/.test(pathname);
 
   useEffect(() => {
     let active = true;
@@ -78,14 +80,19 @@ export function WalletConnectionMonitor() {
         const connected = hasAuthenticatedWallet(session.walletAddress!);
         setDisconnected(!connected);
         if (connected) {
-          window.clearTimeout(disconnectTimer);
+          previousConnection.current = true;
           setMessage(null);
+          setToastVisible(false);
         } else {
-          setMessage(
-            "Your wallet connection is unavailable. Go to your home page and reconnect your wallet to continue."
-          );
-          window.clearTimeout(toastTimer);
-          toastTimer = window.setTimeout(() => setMessage(null), 5_000);
+          if (previousConnection.current !== false) {
+            setMessage(
+              "Your wallet connection is unavailable. Go to your administrator workspace home, contributor dashboard home, or auditor dashboard home and reconnect your wallet to continue."
+            );
+            setToastVisible(true);
+            window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(() => setToastVisible(false), 5_000);
+          }
+          previousConnection.current = false;
         }
       };
       unsubscribeRegister = registry.on("register", check);
@@ -111,10 +118,14 @@ export function WalletConnectionMonitor() {
     if (!walletAddress || reconnecting) return;
     setReconnecting(true);
     setMessage(null);
+    setToastVisible(false);
     try {
       await reconnectAuthenticatedWallet(walletAddress);
       setDisconnected(false);
-      setMessage("Wallet reconnected. You can return to your workspace.");
+      previousConnection.current = true;
+      setMessage("Wallet reconnected. You can return to your dashboard.");
+      setToastVisible(true);
+      window.setTimeout(() => setToastVisible(false), 5_000);
     } catch (error) {
       setDisconnected(true);
       setMessage(isWalletCancellation(error)
@@ -127,13 +138,18 @@ export function WalletConnectionMonitor() {
     }
   }
 
-  if (!message && !(disconnected && isHomePage)) return null;
+  if (!isDashboardPage) return null;
+  if (!toastVisible && (!disconnected || !isDashboardHome)) return null;
 
   return (
-    <aside className="wallet-connection-notice" role="status" aria-live="polite">
-      <strong>Wallet connection needed</strong>
-      {message ? <p>{message}</p> : null}
-      {disconnected && isHomePage ? (
+    <aside
+      className={`wallet-connection-notice${toastVisible ? " wallet-connection-notice--toast" : ""}`}
+      role={toastVisible ? "alert" : "status"}
+      aria-live="polite"
+    >
+      <strong>{disconnected ? "Wallet connection needed" : "Wallet reconnected"}</strong>
+      {toastVisible && message ? <p>{message}</p> : null}
+      {disconnected && isDashboardHome ? (
         <button
           className="button"
           type="button"
@@ -142,6 +158,16 @@ export function WalletConnectionMonitor() {
           onClick={() => void reconnect()}
         >
           {reconnecting ? "Reconnecting…" : "Reconnect wallet"}
+        </button>
+      ) : null}
+      {toastVisible ? (
+        <button
+          className="wallet-connection-notice__close"
+          type="button"
+          aria-label="Dismiss wallet connection notification"
+          onClick={() => setToastVisible(false)}
+        >
+          ×
         </button>
       ) : null}
     </aside>
