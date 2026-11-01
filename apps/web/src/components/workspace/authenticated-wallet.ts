@@ -53,6 +53,14 @@ type ConnectFeature = {
 export const WALLET_RECONNECT_REQUIRED =
   "Reconnect the wallet you used to sign in, then try again.";
 
+export function hasAuthenticatedWallet(walletAddress: string): boolean {
+  const registry = getWallets() as WalletRegistry;
+  return registry.get().some((wallet) =>
+    matchesSupportedWallet(wallet.name) &&
+    exposesAuthenticatedAccount(wallet, walletAddress)
+  );
+}
+
 function isSignAndSendFeature(value: unknown): value is SignAndSendFeature {
   return Boolean(
     value &&

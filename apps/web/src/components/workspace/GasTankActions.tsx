@@ -5,7 +5,6 @@ import { useState } from "react";
 import { isWalletCancellation } from "../auth/walletErrors";
 import {
   findAuthenticatedWallet,
-  reconnectAuthenticatedWallet,
   WALLET_RECONNECT_REQUIRED
 } from "./authenticated-wallet";
 import {
@@ -97,7 +96,6 @@ export function GasTankActions({
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [reviewedFunding, setReviewedFunding] = useState<ReviewedFunding | null>(null);
-  const [reconnectRequired, setReconnectRequired] = useState(false);
   const [pendingFunding, setPendingFunding] = useState<{
     signature: string;
     lamports: string;
@@ -247,38 +245,11 @@ export function GasTankActions({
       findAuthenticatedWallet(walletAddress);
       return true;
     } catch (error) {
-      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
-        setReconnectRequired(true);
-      }
       setNotice({
         state: "error",
         text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
       });
       return false;
-    }
-  }
-
-  async function reconnectWallet() {
-    setBusy(true);
-    setNotice(null);
-    try {
-      await reconnectAuthenticatedWallet(walletAddress);
-      setReconnectRequired(false);
-      setNotice({
-        state: "success",
-        text: "Wallet reconnected. You can fund the Gas Tank now."
-      });
-    } catch (error) {
-      setNotice({
-        state: isWalletCancellation(error) ? "partial" : "error",
-        text: isWalletCancellation(error)
-          ? "The wallet connection was cancelled."
-          : error instanceof Error
-            ? error.message
-            : WALLET_RECONNECT_REQUIRED
-      });
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -359,9 +330,6 @@ export function GasTankActions({
       wallet = findAuthenticatedWallet(walletAddress);
     } catch (error) {
       setReviewedFunding(null);
-      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
-        setReconnectRequired(true);
-      }
       setNotice({
         state: "error",
         text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
@@ -602,17 +570,7 @@ export function GasTankActions({
                 </dl>
               ) : null}
               <div className="action-row">
-                {reconnectRequired ? (
-                  <button
-                    className="button"
-                    type="button"
-                    disabled={busy}
-                    aria-busy={busy}
-                    onClick={() => void reconnectWallet()}
-                  >
-                    Reconnect wallet
-                  </button>
-                ) : reviewedFunding ? (
+                {reviewedFunding ? (
                   <>
                     <button
                       className="button"
