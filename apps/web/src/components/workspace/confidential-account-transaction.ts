@@ -177,8 +177,7 @@ async function executePlan(
         const [signed] = await wallet.signTransaction({
           account: wallet.account,
           chain: "solana:devnet",
-          transaction,
-          options: { preflightCommitment: "confirmed" }
+          transaction
         });
         const originalDecoded = getTransactionDecoder().decode(transaction);
         const signedDecoded = getTransactionDecoder().decode(signed.signedTransaction);
@@ -235,8 +234,7 @@ async function executePlan(
       const [result] = await wallet.signAndSendTransaction({
         account: wallet.account,
         chain: "solana:devnet",
-        transaction,
-        options: { commitment: "confirmed" }
+        transaction
       });
       const encodedSignature = getBase58Decoder().decode(result.signature);
       const transactionSignature = signature(encodedSignature);

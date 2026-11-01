@@ -156,8 +156,7 @@ export function PayrollClaimCommitAction({
           [result] = await wallet.signAndSendTransaction({
             account: wallet.account,
             chain: "solana:devnet",
-            transaction,
-            options: { commitment: "confirmed" }
+            transaction
           });
         } catch (error) {
           if (isWalletCancellation(error)) {
