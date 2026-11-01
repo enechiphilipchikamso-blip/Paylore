@@ -3,7 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { isWalletCancellation } from "../auth/walletErrors";
-import { findAuthenticatedWallet } from "./authenticated-wallet";
+import {
+  findAuthenticatedWallet,
+  reconnectAuthenticatedWallet,
+  WALLET_RECONNECT_REQUIRED
+} from "./authenticated-wallet";
 import {
   createGasTankFundingTransaction,
   gasTankFundingSignature,
@@ -22,6 +26,15 @@ type PreparedFunding = {
   blockhash: string;
   lastValidBlockHeight: number;
 };
+
+type ReviewedFunding = PreparedFunding & {
+  transaction: Uint8Array;
+  expiresAt: number;
+};
+
+// A prepared blockhash stays valid for roughly 60 seconds; expire the review
+// early so the wallet is never asked to sign a transaction that cannot land.
+const PREPARED_FUNDING_TTL_MS = 45_000;
 
 function formatSol(lamports: string): string {
   const amount = BigInt(lamports);
@@ -72,6 +85,8 @@ export function GasTankActions({
   const [copyingAddress, setCopyingAddress] = useState(false);
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [reviewedFunding, setReviewedFunding] = useState<ReviewedFunding | null>(null);
+  const [reconnectRequired, setReconnectRequired] = useState(false);
   const [pendingFunding, setPendingFunding] = useState<{
     signature: string;
     lamports: string;
@@ -145,7 +160,47 @@ export function GasTankActions({
     router.refresh();
   }
 
-  async function fund() {
+  function walletAvailable(): boolean {
+    try {
+      findAuthenticatedWallet(walletAddress);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
+        setReconnectRequired(true);
+      }
+      setNotice({
+        state: "error",
+        text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
+      });
+      return false;
+    }
+  }
+
+  async function reconnectWallet() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await reconnectAuthenticatedWallet(walletAddress);
+      setReconnectRequired(false);
+      setNotice({
+        state: "success",
+        text: "Wallet reconnected. You can fund the Gas Tank now."
+      });
+    } catch (error) {
+      setNotice({
+        state: isWalletCancellation(error) ? "partial" : "error",
+        text: isWalletCancellation(error)
+          ? "The wallet connection was cancelled."
+          : error instanceof Error
+            ? error.message
+            : WALLET_RECONNECT_REQUIRED
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function prepareFunding() {
     let lamports: string;
     try {
       lamports = solToLamports(amount);
@@ -159,9 +214,11 @@ export function GasTankActions({
       return;
     }
 
-    setBusy(true);
+    setReviewedFunding(null);
     setNotice(null);
-    let submissionStarted = false;
+    if (!walletAvailable()) return;
+
+    setBusy(true);
     try {
       const preparedResponse = await postAction({
         action: "prepare_funding",
@@ -186,22 +243,80 @@ export function GasTankActions({
         });
         return;
       }
-      const transaction = createGasTankFundingTransaction(prepared);
-      const wallet = await findAuthenticatedWallet(walletAddress);
+      setReviewedFunding({
+        ...prepared,
+        transaction: createGasTankFundingTransaction(prepared),
+        expiresAt: Date.now() + PREPARED_FUNDING_TTL_MS
+      });
+    } catch (error) {
+      setNotice({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "Gas Tank funding could not be prepared."
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveFunding() {
+    const prepared = reviewedFunding;
+    if (!prepared || busy) return;
+    if (Date.now() >= prepared.expiresAt) {
+      setReviewedFunding(null);
+      setNotice({
+        state: "partial",
+        text: "The prepared funding expired. No funding was sent. Prepare it again before approving."
+      });
+      return;
+    }
+
+    let wallet: ReturnType<typeof findAuthenticatedWallet>;
+    try {
+      wallet = findAuthenticatedWallet(walletAddress);
+    } catch (error) {
+      setReviewedFunding(null);
+      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
+        setReconnectRequired(true);
+      }
+      setNotice({
+        state: "error",
+        text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
+      });
+      return;
+    }
+    if (wallet.account.address !== prepared.payer) {
+      setReviewedFunding(null);
+      setNotice({
+        state: "error",
+        text: "The authenticated wallet or Gas Tank changed. Refresh this page before funding."
+      });
+      return;
+    }
+
+    setBusy(true);
+    setNotice(null);
+    let submissionStarted = false;
+    try {
       submissionStarted = true;
-      const [sent] = await wallet.signAndSendTransaction({
+      // The wallet request starts synchronously from this approval click; no
+      // asynchronous preparation remains between the click and wallet invocation.
+      const submission = wallet.signAndSendTransaction({
         account: wallet.account,
-        transaction,
+        transaction: prepared.transaction,
         chain: "solana:devnet",
         options: { commitment: "confirmed" }
       });
+      setReviewedFunding(null);
+      const [sent] = await submission;
       if (!sent) {
         throw new Error("The wallet did not return a transaction signature.");
       }
       const signature = gasTankFundingSignature(sent.signature);
-      setPendingFunding({ signature, lamports });
+      setPendingFunding({ signature, lamports: prepared.lamports });
       submissionStarted = false;
-      await verifyFunding(signature, lamports);
+      await verifyFunding(signature, prepared.lamports);
     } catch (error) {
       if (isWalletCancellation(error)) {
         setNotice({
@@ -242,7 +357,11 @@ export function GasTankActions({
       {busy ? (
         <p className="loading-indicator" role="status" aria-live="polite">
           <span className="loading-indicator__icon" aria-hidden="true" />
-          {pendingFunding ? "Confirming funding…" : "Preparing Gas Tank…"}
+          {pendingFunding
+            ? "Confirming funding…"
+            : reviewedFunding
+              ? "Waiting for wallet approval…"
+              : "Preparing Gas Tank…"}
         </p>
       ) : null}
       {!gasTank ? (
@@ -335,7 +454,10 @@ export function GasTankActions({
                 <input
                   inputMode="decimal"
                   value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setReviewedFunding(null);
+                  }}
                   aria-describedby="gas-tank-funding-help"
                 />
               </label>
@@ -343,15 +465,69 @@ export function GasTankActions({
                 The connected, authenticated workspace administrator wallet will
                 sign a transfer to this Gas Tank address.
               </p>
-              <button
-                className="button"
-                type="button"
-                disabled={busy || !walletAddress}
-                aria-busy={busy}
-                onClick={() => void fund()}
-              >
-                Fund Gas Tank
-              </button>
+              {reviewedFunding ? (
+                <dl className="billing-period" aria-label="Review Gas Tank funding">
+                  <div>
+                    <dt>Amount</dt>
+                    <dd>{formatSol(reviewedFunding.lamports)} SOL</dd>
+                  </div>
+                  <div>
+                    <dt>Network</dt>
+                    <dd>Solana Devnet</dd>
+                  </div>
+                  <div>
+                    <dt>From</dt>
+                    <dd><code>{reviewedFunding.payer}</code></dd>
+                  </div>
+                  <div>
+                    <dt>Gas Tank</dt>
+                    <dd><code>{reviewedFunding.destination}</code></dd>
+                  </div>
+                </dl>
+              ) : null}
+              <div className="action-row">
+                {reconnectRequired ? (
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy}
+                    aria-busy={busy}
+                    onClick={() => void reconnectWallet()}
+                  >
+                    Reconnect wallet
+                  </button>
+                ) : reviewedFunding ? (
+                  <>
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={busy}
+                      aria-busy={busy}
+                      onClick={() => void approveFunding()}
+                    >
+                      Open wallet to approve {formatSol(reviewedFunding.lamports)} SOL
+                    </button>
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setReviewedFunding(null)}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy || !walletAddress}
+                    aria-busy={busy}
+                    onClick={() => void prepareFunding()}
+                  >
+                    Fund Gas Tank
+                  </button>
+                )}
+              </div>
             </section>
           ) : null}
         </>
