@@ -9,8 +9,10 @@ import { clearSessionCookie, getSessionState } from "../../../../../server/sessi
 import { assertSameOrigin, RequestSecurityError } from "../../../../../server/security";
 import { getDatabase } from "../../../../../server/db";
 import {
+  GasTankFundingSubmissionError,
   getWorkspaceGasTankSnapshot,
   initializeWorkspaceGasTank,
+  submitWorkspaceGasTankFunding,
   verifyAndRestoreWorkspaceGasTank,
   verifyWorkspaceGasTankFunding
 } from "../../../../../server/gas-tank";
@@ -28,6 +30,15 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("restore") }),
   z.object({
     action: z.literal("prepare_funding"),
+    lamports: fundingLamports
+  }),
+  z.object({
+    action: z.literal("submit_funding"),
+    transactionBase64: z
+      .string()
+      .min(1)
+      .max(1_024)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/),
     lamports: fundingLamports
   }),
   z.object({
@@ -136,7 +147,8 @@ export async function POST(
     }
     if (
       parsed.data.action === "initialize" ||
-      parsed.data.action === "prepare_funding"
+      parsed.data.action === "prepare_funding" ||
+      parsed.data.action === "submit_funding"
     ) {
       const deletionState = await getWorkspaceDeletionState(
         access.db,
@@ -200,6 +212,27 @@ export async function POST(
         blockhash: blockhash.value.blockhash,
         lastValidBlockHeight: blockhash.value.lastValidBlockHeight
       });
+    }
+    if (parsed.data.action === "submit_funding") {
+      try {
+        const submission = await submitWorkspaceGasTankFunding(access.db, {
+          workspaceId,
+          payer: access.session.walletAddress,
+          transactionBase64: parsed.data.transactionBase64,
+          expectedLamports: parsed.data.lamports
+        });
+        return NextResponse.json(submission, {
+          status: submission.status === "submitted" ? 200 : 202
+        });
+      } catch (error) {
+        if (error instanceof GasTankFundingSubmissionError) {
+          return NextResponse.json(
+            { error: error.code },
+            { status: error.code === "funding_transaction_invalid" ? 400 : 409 }
+          );
+        }
+        throw error;
+      }
     }
 
     const verification = await verifyWorkspaceGasTankFunding(access.db, {

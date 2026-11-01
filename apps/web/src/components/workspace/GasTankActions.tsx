@@ -3,10 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { isWalletCancellation } from "../auth/walletErrors";
-import { findAuthenticatedWallet } from "./authenticated-wallet";
+import {
+  findAuthenticatedWallet,
+  reconnectAuthenticatedWallet,
+  WALLET_RECONNECT_REQUIRED
+} from "./authenticated-wallet";
 import {
   createGasTankFundingTransaction,
   gasTankFundingSignature,
+  signedGasTankFunding,
   solToLamports
 } from "./gas-tank-funding-transaction";
 
@@ -22,6 +27,25 @@ type PreparedFunding = {
   blockhash: string;
   lastValidBlockHeight: number;
 };
+
+type ReviewedFunding = PreparedFunding & {
+  transaction: Uint8Array;
+  expiresAt: number;
+};
+
+// A prepared blockhash stays valid for roughly 60 seconds; expire the review
+// early so the wallet is never asked to sign a transaction that cannot land.
+const PREPARED_FUNDING_TTL_MS = 45_000;
+// Devnet usually finalizes a transfer within about 15 seconds; keep checking
+// briefly before handing reconciliation to "Check funding transaction".
+const FUNDING_FINALITY_ATTEMPTS = 12;
+const FUNDING_FINALITY_INTERVAL_MS = 3_000;
+
+function walletErrorReason(error: unknown): string {
+  return error instanceof Error && error.message.trim()
+    ? ` Wallet response: ${error.message.trim()}`
+    : "";
+}
 
 function formatSol(lamports: string): string {
   const amount = BigInt(lamports);
@@ -72,6 +96,8 @@ export function GasTankActions({
   const [copyingAddress, setCopyingAddress] = useState(false);
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [reviewedFunding, setReviewedFunding] = useState<ReviewedFunding | null>(null);
+  const [reconnectRequired, setReconnectRequired] = useState(false);
   const [pendingFunding, setPendingFunding] = useState<{
     signature: string;
     lamports: string;
@@ -117,7 +143,10 @@ export function GasTankActions({
     }
   }
 
-  async function verifyFunding(signature: string, lamports: string) {
+  async function verifyFunding(
+    signature: string,
+    lamports: string
+  ): Promise<"pending" | "settled"> {
     const response = await postAction({
       action: "verify_funding",
       signature,
@@ -128,14 +157,14 @@ export function GasTankActions({
         state: "partial",
         text: "The transaction was submitted, but its final status is not confirmed yet. Paylore is checking the network before you retry."
       });
-      return;
+      return "pending";
     }
     if (!response.ok) {
       setNotice({
         state: "error",
         text: "The Gas Tank operation could not be completed. No success has been recorded. Check the operation details and try again."
       });
-      return;
+      return "settled";
     }
     setPendingFunding(null);
     setNotice({
@@ -143,9 +172,117 @@ export function GasTankActions({
       text: "Gas Tank updated"
     });
     router.refresh();
+    return "settled";
   }
 
-  async function fund() {
+  async function awaitFundingFinality(signature: string, lamports: string) {
+    for (let attempt = 0; attempt < FUNDING_FINALITY_ATTEMPTS; attempt += 1) {
+      if (await verifyFunding(signature, lamports) === "settled") return;
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, FUNDING_FINALITY_INTERVAL_MS)
+      );
+    }
+  }
+
+  async function submitSignedFunding(
+    prepared: ReviewedFunding,
+    signedTransaction: Uint8Array
+  ) {
+    let signed: ReturnType<typeof signedGasTankFunding>;
+    try {
+      signed = signedGasTankFunding(
+        prepared.transaction,
+        signedTransaction,
+        prepared.payer
+      );
+    } catch (error) {
+      setNotice({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "The wallet did not sign the funding transaction. No funding was sent."
+      });
+      return;
+    }
+    // The signature is known before submission, so any later uncertainty is
+    // reconciled against this exact transaction instead of a new signature.
+    setPendingFunding({ signature: signed.signature, lamports: prepared.lamports });
+    let response: Response;
+    try {
+      response = await postAction({
+        action: "submit_funding",
+        transactionBase64: signed.transactionBase64,
+        lamports: prepared.lamports
+      });
+    } catch {
+      setNotice({
+        state: "partial",
+        text: "Paylore could not confirm that the signed funding transaction reached the network. Use Check funding transaction before signing again."
+      });
+      return;
+    }
+    if (response.status === 400 || response.status === 409) {
+      setPendingFunding(null);
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      setNotice({
+        state: "error",
+        text: result?.error === "funding_transaction_rejected"
+          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough Devnet SOL, then prepare the funding again."
+          : "Paylore could not accept the signed funding transaction. No funding was sent. Refresh this page and prepare the funding again."
+      });
+      return;
+    }
+    if (!response.ok && response.status !== 202) {
+      setNotice({
+        state: "partial",
+        text: "Paylore could not confirm that the signed funding transaction reached the network. Use Check funding transaction before signing again."
+      });
+      return;
+    }
+    await awaitFundingFinality(signed.signature, prepared.lamports);
+  }
+
+  function walletAvailable(): boolean {
+    try {
+      findAuthenticatedWallet(walletAddress);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
+        setReconnectRequired(true);
+      }
+      setNotice({
+        state: "error",
+        text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
+      });
+      return false;
+    }
+  }
+
+  async function reconnectWallet() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await reconnectAuthenticatedWallet(walletAddress);
+      setReconnectRequired(false);
+      setNotice({
+        state: "success",
+        text: "Wallet reconnected. You can fund the Gas Tank now."
+      });
+    } catch (error) {
+      setNotice({
+        state: isWalletCancellation(error) ? "partial" : "error",
+        text: isWalletCancellation(error)
+          ? "The wallet connection was cancelled."
+          : error instanceof Error
+            ? error.message
+            : WALLET_RECONNECT_REQUIRED
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function prepareFunding() {
     let lamports: string;
     try {
       lamports = solToLamports(amount);
@@ -159,9 +296,11 @@ export function GasTankActions({
       return;
     }
 
-    setBusy(true);
+    setReviewedFunding(null);
     setNotice(null);
-    let submissionStarted = false;
+    if (!walletAvailable()) return;
+
+    setBusy(true);
     try {
       const preparedResponse = await postAction({
         action: "prepare_funding",
@@ -186,40 +325,132 @@ export function GasTankActions({
         });
         return;
       }
-      const transaction = createGasTankFundingTransaction(prepared);
-      const wallet = await findAuthenticatedWallet(walletAddress);
-      submissionStarted = true;
-      const [sent] = await wallet.signAndSendTransaction({
-        account: wallet.account,
-        transaction,
-        chain: "solana:devnet",
-        options: { commitment: "confirmed" }
+      setReviewedFunding({
+        ...prepared,
+        transaction: createGasTankFundingTransaction(prepared),
+        expiresAt: Date.now() + PREPARED_FUNDING_TTL_MS
       });
-      if (!sent) {
-        throw new Error("The wallet did not return a transaction signature.");
-      }
-      const signature = gasTankFundingSignature(sent.signature);
-      setPendingFunding({ signature, lamports });
-      submissionStarted = false;
-      await verifyFunding(signature, lamports);
     } catch (error) {
-      if (isWalletCancellation(error)) {
-        setNotice({
-          state: "partial",
-          text: "The wallet request was cancelled. No funding was sent."
+      setNotice({
+        state: "error",
+        text: error instanceof Error
+          ? error.message
+          : "Gas Tank funding could not be prepared."
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveFunding() {
+    const prepared = reviewedFunding;
+    if (!prepared || busy) return;
+    if (Date.now() >= prepared.expiresAt) {
+      setReviewedFunding(null);
+      setNotice({
+        state: "partial",
+        text: "The prepared funding expired. No funding was sent. Prepare it again before approving."
+      });
+      return;
+    }
+
+    let wallet: ReturnType<typeof findAuthenticatedWallet>;
+    try {
+      wallet = findAuthenticatedWallet(walletAddress);
+    } catch (error) {
+      setReviewedFunding(null);
+      if (error instanceof Error && error.message === WALLET_RECONNECT_REQUIRED) {
+        setReconnectRequired(true);
+      }
+      setNotice({
+        state: "error",
+        text: error instanceof Error ? error.message : WALLET_RECONNECT_REQUIRED
+      });
+      return;
+    }
+    if (wallet.account.address !== prepared.payer) {
+      setReviewedFunding(null);
+      setNotice({
+        state: "error",
+        text: "The authenticated wallet or Gas Tank changed. Refresh this page before funding."
+      });
+      return;
+    }
+
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (wallet.signTransaction) {
+        // Prefer wallet signing with Paylore submission: a signing failure
+        // always means nothing was broadcast, and the wallet does not need to
+        // reach its own RPC before showing the approval prompt.
+        let signedTransaction: Uint8Array;
+        try {
+          // The wallet request starts synchronously from this approval click.
+          const [signed] = await wallet.signTransaction({
+            account: wallet.account,
+            transaction: prepared.transaction,
+            chain: "solana:devnet",
+            options: { preflightCommitment: "confirmed" }
+          });
+          if (!signed) {
+            throw new Error("The wallet did not return a signed transaction.");
+          }
+          signedTransaction = signed.signedTransaction;
+        } catch (error) {
+          setNotice(isWalletCancellation(error)
+            ? {
+                state: "partial",
+                text: "The wallet request was cancelled. No funding was sent."
+              }
+            : {
+                state: "error",
+                text: `The wallet could not sign the funding transaction. No funding was sent.${walletErrorReason(error)}`
+              });
+          return;
+        }
+        setReviewedFunding(null);
+        await submitSignedFunding(prepared, signedTransaction);
+        return;
+      }
+
+      let submissionStarted = false;
+      try {
+        submissionStarted = true;
+        const submission = wallet.signAndSendTransaction({
+          account: wallet.account,
+          transaction: prepared.transaction,
+          chain: "solana:devnet",
+          options: { commitment: "confirmed" }
         });
-      } else if (submissionStarted) {
-        setNotice({
-          state: "partial",
-          text: "The wallet did not confirm whether it sent the funding transaction. Check wallet activity before trying again."
-        });
-      } else {
-        setNotice({
-          state: "error",
-          text: error instanceof Error
-            ? error.message
-            : "Gas Tank funding could not be completed."
-        });
+        setReviewedFunding(null);
+        const [sent] = await submission;
+        if (!sent) {
+          throw new Error("The wallet did not return a transaction signature.");
+        }
+        const signature = gasTankFundingSignature(sent.signature);
+        setPendingFunding({ signature, lamports: prepared.lamports });
+        submissionStarted = false;
+        await awaitFundingFinality(signature, prepared.lamports);
+      } catch (error) {
+        if (isWalletCancellation(error)) {
+          setNotice({
+            state: "partial",
+            text: "The wallet request was cancelled. No funding was sent."
+          });
+        } else if (submissionStarted) {
+          setNotice({
+            state: "partial",
+            text: `The wallet did not confirm whether it sent the funding transaction. Check wallet activity before trying again.${walletErrorReason(error)}`
+          });
+        } else {
+          setNotice({
+            state: "error",
+            text: error instanceof Error
+              ? error.message
+              : "Gas Tank funding could not be completed."
+          });
+        }
       }
     } finally {
       setBusy(false);
@@ -242,7 +473,11 @@ export function GasTankActions({
       {busy ? (
         <p className="loading-indicator" role="status" aria-live="polite">
           <span className="loading-indicator__icon" aria-hidden="true" />
-          {pendingFunding ? "Confirming funding…" : "Preparing Gas Tank…"}
+          {pendingFunding
+            ? "Confirming funding…"
+            : reviewedFunding
+              ? "Waiting for wallet approval…"
+              : "Preparing Gas Tank…"}
         </p>
       ) : null}
       {!gasTank ? (
@@ -335,7 +570,10 @@ export function GasTankActions({
                 <input
                   inputMode="decimal"
                   value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setReviewedFunding(null);
+                  }}
                   aria-describedby="gas-tank-funding-help"
                 />
               </label>
@@ -343,15 +581,69 @@ export function GasTankActions({
                 The connected, authenticated workspace administrator wallet will
                 sign a transfer to this Gas Tank address.
               </p>
-              <button
-                className="button"
-                type="button"
-                disabled={busy || !walletAddress}
-                aria-busy={busy}
-                onClick={() => void fund()}
-              >
-                Fund Gas Tank
-              </button>
+              {reviewedFunding ? (
+                <dl className="billing-period" aria-label="Review Gas Tank funding">
+                  <div>
+                    <dt>Amount</dt>
+                    <dd>{formatSol(reviewedFunding.lamports)} SOL</dd>
+                  </div>
+                  <div>
+                    <dt>Network</dt>
+                    <dd>Solana Devnet</dd>
+                  </div>
+                  <div>
+                    <dt>From</dt>
+                    <dd><code>{reviewedFunding.payer}</code></dd>
+                  </div>
+                  <div>
+                    <dt>Gas Tank</dt>
+                    <dd><code>{reviewedFunding.destination}</code></dd>
+                  </div>
+                </dl>
+              ) : null}
+              <div className="action-row">
+                {reconnectRequired ? (
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy}
+                    aria-busy={busy}
+                    onClick={() => void reconnectWallet()}
+                  >
+                    Reconnect wallet
+                  </button>
+                ) : reviewedFunding ? (
+                  <>
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={busy}
+                      aria-busy={busy}
+                      onClick={() => void approveFunding()}
+                    >
+                      Open wallet to approve {formatSol(reviewedFunding.lamports)} SOL
+                    </button>
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setReviewedFunding(null)}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy || !walletAddress}
+                    aria-busy={busy}
+                    onClick={() => void prepareFunding()}
+                  >
+                    Fund Gas Tank
+                  </button>
+                )}
+              </div>
             </section>
           ) : null}
         </>
