@@ -57,12 +57,12 @@ export async function buildWorkspaceInitializationTransaction(input: {
       encoder.encode(`paylore:workspace:v1:${input.workspaceId}`)
     )
   );
-  const [workspace] = await deriveWorkspaceAddress(authority, workspaceSeed, programId);
+  const workspace = await deriveWorkspaceAddress(authority, workspaceSeed, programId);
   const instruction = {
     programAddress: programId,
     accounts: [
       { address: authority, role: AccountRole.WRITABLE_SIGNER },
-      { address: address(workspace), role: AccountRole.WRITABLE },
+      { address: workspace, role: AccountRole.WRITABLE },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY }
     ],
     data: concatenate(
