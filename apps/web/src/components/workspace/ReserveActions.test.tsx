@@ -148,7 +148,7 @@ describe("ReserveActions Gas Tank preflight", () => {
       "reserve_gas_tank_insufficient_funds",
       "initialize_confidential"
     )).toBe(
-      "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry."
+      "The workspace Gas Tank does not have enough SOL to cover Reserve setup fees and reserve account rent. Fund the Gas Tank, then retry."
     );
   });
 
@@ -184,7 +184,7 @@ describe("ReserveActions Gas Tank preflight", () => {
       />
     );
 
-    expect(html).toContain("Gas Tank setup comes first");
+    expect(html).toContain("Gas Tank funding comes first");
     expect(html).toContain("Initialize the workspace Gas Tank and fund it with SOL");
     expect(html).toContain('href="/workspace/workspace-a/gas-tank"');
     expect(html).toContain("Set up Gas Tank");

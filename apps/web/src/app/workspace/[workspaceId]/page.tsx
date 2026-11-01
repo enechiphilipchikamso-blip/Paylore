@@ -218,7 +218,7 @@ export default async function WorkspacePage({
                   {setupProgress.reserve.status === "key_custody_required" ? (
                     <p>After the Gas Tank is initialized and funded, configure encrypted Reserve signing-key custody, then initialize its confidential Token-2022 account and Payroll Program reserve state.</p>
                   ) : setupProgress.reserve.status === "workspace_program_not_initialized" ? (
-                    <p>The Paylore Program workspace account is not initialized. Reserve setup will stop without submitting a transaction until that workspace state exists.</p>
+                    <p>The Paylore Program workspace account is not initialized. Reserve setup will initialize that workspace state once with your connected admin wallet, then continue configuring the confidential reserve.</p>
                   ) : setupProgress.reserve.status === "unavailable" ? (
                     <p>Paylore could not verify the current Reserve state. Open Reserve settings and refresh the on-chain check before trying setup again.</p>
                   ) : (

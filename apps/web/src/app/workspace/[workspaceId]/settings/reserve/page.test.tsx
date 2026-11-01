@@ -93,7 +93,7 @@ describe("workspace reserve readiness copy", () => {
 
     expect(html).toContain("Key custody alone does not create or fund an on-chain confidential reserve.");
     expect(html).toContain("Initialize the workspace Gas Tank and fund it with SOL first");
-    expect(html).toContain("the Gas Tank pays Reserve setup transaction fees and account rent");
+    expect(html).toContain("the Gas Tank pays Reserve setup transaction fees and reserve account rent");
     expect(html).toContain("Configure the reserve-owned Token-2022 account and matching Payroll Program reserve state");
     expect(html).toContain("A payroll claim is reported settled only after its confidential transfer reaches finality and the reserve debit is reconciled.");
     expect(html).not.toContain("payroll settlement remains unavailable until that flow is implemented and verified");
