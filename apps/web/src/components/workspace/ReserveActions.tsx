@@ -3,10 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  createSolanaRpc,
+  getBase58Decoder,
+  getBase64EncodedWireTransaction,
+  getTransactionDecoder
+} from "@solana/kit";
 import { isWalletCancellation } from "../auth/walletErrors";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
 import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
+import { waitForDevnetFinality } from "./payroll-transaction-finality";
 import { usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
@@ -203,6 +210,43 @@ function fundingStateDescription(state: OnChainAccountState["fundingState"]): st
     default:
       return "Funding state is unavailable. Refresh the finalized on-chain check before relying on reserve readiness.";
   }
+}
+
+/**
+ * Wallets reject an unrecognized `commitment` send option, so the admin wallet
+ * only signs and Paylore submits the exact signed bytes to Devnet.
+ */
+async function submitWorkspaceInitialization(
+  wallet: ReturnType<typeof findAuthenticatedWallet>,
+  transaction: Uint8Array
+): Promise<string> {
+  if (!wallet.signTransaction) {
+    const [sent] = await wallet.signAndSendTransaction({
+      account: wallet.account,
+      chain: "solana:devnet",
+      transaction
+    });
+    if (!sent) {
+      throw new Error("The wallet did not return a workspace initialization signature.");
+    }
+    return getBase58Decoder().decode(sent.signature);
+  }
+  const [signed] = await wallet.signTransaction({
+    account: wallet.account,
+    chain: "solana:devnet",
+    transaction,
+    options: { preflightCommitment: "confirmed" }
+  });
+  if (!signed) {
+    throw new Error("The wallet did not sign the workspace initialization transaction.");
+  }
+  const decoded = getTransactionDecoder().decode(signed.signedTransaction);
+  return await createSolanaRpc("https://api.devnet.solana.com")
+    .sendTransaction(getBase64EncodedWireTransaction(decoded), {
+      encoding: "base64",
+      preflightCommitment: "confirmed"
+    })
+    .send();
 }
 
 export function ReserveActions({
@@ -439,20 +483,16 @@ export function ReserveActions({
                 workspaceId,
                 programId: result.workspaceInitialization.programId
               });
-              const [sent] = await wallet.signAndSendTransaction({
-                account: wallet.account,
-                chain: "solana:devnet",
-                transaction,
-                options: { commitment: "confirmed" }
-              });
-              if (!sent) {
-                throw new Error("The wallet did not return a workspace initialization signature.");
-              }
+              const initializationSignature = await submitWorkspaceInitialization(
+                wallet,
+                transaction
+              );
               setNotice({
                 state: "partial",
-                text: "The Payroll Program workspace was initialized. Paylore is continuing confidential Reserve setup."
+                text: "The Payroll Program workspace initialization was submitted. Paylore is waiting for network finality before continuing confidential Reserve setup."
               });
-              await new Promise((resolve) => setTimeout(resolve, 2_000));
+              // The server verifies the workspace account at finalized commitment.
+              await waitForDevnetFinality(initializationSignature);
               await run(action, true);
               return;
             } catch (error) {
