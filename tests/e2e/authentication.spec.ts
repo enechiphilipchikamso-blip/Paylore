@@ -79,7 +79,7 @@ test.describe(
 
         await expect(
           page.getByText(
-            "No browser wallet is connected",
+            "Wallet not connected",
             { exact: true }
           )
         ).toBeVisible();
@@ -132,7 +132,7 @@ test.describe(
 
         await expect(
           chooser.getByText(
-            "Choose a wallet available in this browser.",
+            "Connect with Phantom, Solflare, Backpack, or Jupiter.",
             { exact: true }
           )
         ).toBeVisible();
@@ -233,23 +233,20 @@ test.describe(
           0
         );
 
-        await expect(
-          page.getByText(
-            "Open Solflare or Backpack when you want to connect through its app.",
-            { exact: true }
-          )
-        ).toBeVisible();
         await expect(page.locator(".auth-card")).toHaveCount(1);
-        await expect(
-          page.getByRole("button", {
-            name: "Backpack app link unavailable"
-          })
-        ).toBeDisabled();
+        await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+        await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+        await expect(page.locator(".wallet-choice")).toHaveCount(4);
+        for (const wallet of SUPPORTED_WALLETS) {
+          await expect(
+            page.getByRole("button", { name: "Connect with " + wallet })
+          ).toBeEnabled();
+        }
       }
     );
 
     test(
-      "an injected wallet browser keeps Wallet Standard choices and app links on one mobile sign-in page",
+      "an injected wallet browser uses one four-wallet chooser on one mobile sign-in page",
       async ({ page }) => {
         await registerWalletStandardMocks(page);
         await page.addInitScript(() => {
@@ -267,21 +264,15 @@ test.describe(
         for (const wallet of SUPPORTED_WALLETS) {
           await expect(standardChooser.getByText(wallet, { exact: true })).toBeVisible();
         }
-        await expect(
-          page.getByRole("button", { name: "Connect with Solflare" })
-        ).toBeVisible();
-        await expect(
-          page.getByRole("button", { name: "Backpack app link unavailable" })
-        ).toBeDisabled();
-        await expect(
-          page.locator(".wallet-app-links .wallet-choice__icon--muted")
-        ).toHaveCount(1);
-        await expect(
-          page.locator(".wallet-standard-chooser .wallet-choice__icon--muted")
-        ).toHaveCount(1);
-        await expect(
-          standardChooser.getByRole("button", { name: "Backpack" })
-        ).toBeEnabled();
+        await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+        await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+        await expect(standardChooser.locator(".wallet-choice")).toHaveCount(4);
+        for (const wallet of SUPPORTED_WALLETS) {
+          await expect(standardChooser.getByRole("button", { name: "Connect with " + wallet })).toBeEnabled();
+        }
+        await standardChooser.getByRole("button", { name: "Connect with Backpack" }).click();
+        await expect(page.locator(".auth-status")).toContainText("Backpack");
+        await expect(page.getByRole("button", { name: "Sign in with wallet" })).toBeEnabled();
       }
     );
 

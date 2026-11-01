@@ -28,15 +28,13 @@ test("mobile browser builds a Solflare connect request with the real app and ret
     name: "Connect with Solflare"
   });
   await expect(connectButton).toBeVisible();
-
-  const backpackButton = page.getByRole("button", {
-    name: "Backpack app link unavailable"
-  });
-  await expect(backpackButton).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Connect with Backpack" })).toBeEnabled();
   await expect(page.locator(".auth-card")).toHaveCount(1);
   await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
-  await expect(page.locator(".wallet-standard-chooser .wallet-choice")).toHaveCount(4);
-  await expect(page.locator(".wallet-app-links .wallet-choice")).toHaveCount(2);
+  await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+  await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+  await expect(page.locator(".wallet-choice")).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
 
   await connectButton.click();
   await expect.poll(() => connectUrl).not.toBe("");
@@ -65,14 +63,54 @@ test("a browser without an injected provider keeps the same sign-in page", async
 }) => {
   await page.goto("/auth");
 
-  await expect(
-    page.getByRole("button", { name: "Connect with Solflare" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Backpack app link unavailable" })
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Connect with Solflare" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect with Backpack" })).toBeEnabled();
   await expect(page.locator(".auth-card")).toHaveCount(1);
   await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
-  await expect(page.locator(".wallet-standard-chooser .wallet-choice")).toHaveCount(4);
-  await expect(page.locator(".wallet-app-links .wallet-choice")).toHaveCount(2);
+  await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+  await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+  await expect(page.locator(".wallet-choice")).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
+});
+
+
+test("Backpack remains in the unified chooser when its optional deep-link route is off", async ({
+  page
+}) => {
+  await page.goto("/auth");
+  const backpackButton = page.getByRole("button", { name: "Connect with Backpack" });
+  await expect(backpackButton).toBeEnabled();
+  await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+  await expect(page.locator(".wallet-choice__icon--muted")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
+  await backpackButton.click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Backpack did not respond to the connection request. Refresh Paylore in Backpack or connect with its browser extension."
+  );
+});
+
+
+test("desktop browser uses the same Solflare row for the connection fallback", async ({
+  page
+}) => {
+  let connectUrl = "";
+  await page.route(/https:\/\/solflare\.com\/ul\/v1\/connect\?/, async (route) => {
+    connectUrl = route.request().url();
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>Solflare handoff intercepted</title>"
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/auth");
+  const appOrigin = new URL(page.url()).origin;
+  await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
+  await expect(page.locator(".wallet-chooser")).toHaveCount(1);
+  await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+  await page.getByRole("button", { name: "Connect with Solflare" }).click();
+  await expect.poll(() => connectUrl).not.toBe("");
+  const connect = new URL(connectUrl);
+  expect(connect.searchParams.get("app_url")).toBe(new URL("/", appOrigin).toString());
 });

@@ -133,6 +133,23 @@ function AuthCardShell({ children }: { children: ReactNode }) {
   );
 }
 
+function requestMobileWalletAction(
+  action: "connect" | "sign-in" | "disconnect",
+  provider: "solflare" | "backpack"
+): void {
+  window.dispatchEvent(
+    new CustomEvent("paylore:mobile-wallet-action", {
+      detail: { action, provider }
+    })
+  );
+}
+
+type MobileWalletDisplayState = {
+  account: { address: string; provider: "solflare" | "backpack" } | null;
+  status: "idle" | "connecting" | "signing" | "success";
+  error: string | null;
+};
+
 type ChallengeResponse = {
   nonce: string;
   input: SolanaSignInInput;
@@ -390,6 +407,24 @@ function WalletStandardAuthPanel({
     useState<string | null>(
       null
     );
+  const [mobileWalletState, setMobileWalletState] =
+    useState<MobileWalletDisplayState>({
+      account: null,
+      status: "idle",
+      error: null
+    });
+
+  useEffect(() => {
+    const handleMobileWalletState = (event: Event) => {
+      const detail = (event as CustomEvent<MobileWalletDisplayState>).detail;
+      if (detail) {
+        setMobileWalletState(detail);
+        setChooserOpen(!detail.account);
+      }
+    };
+    window.addEventListener("paylore:deeplink-wallet-state", handleMobileWalletState);
+    return () => window.removeEventListener("paylore:deeplink-wallet-state", handleMobileWalletState);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -503,13 +538,16 @@ function WalletStandardAuthPanel({
     reasonCopy(reason);
 
   const connected =
-    Boolean(
-      selectedWallet &&
-        account
-    );
+    Boolean((selectedWallet && account) || mobileWalletState.account);
 
-  const failure =
-    Boolean(error);
+  const displayedError = error ?? mobileWalletState.error;
+  const failure = Boolean(displayedError);
+  const operationStatus =
+    mobileWalletState.status === "connecting" ||
+    mobileWalletState.status === "signing" ||
+    mobileWalletState.status === "success"
+      ? mobileWalletState.status
+      : status;
 
   const orderedWalletOptions = [
     ...SUPPORTED_WALLET_OPTIONS
@@ -852,40 +890,26 @@ function WalletStandardAuthPanel({
         />
 
         <div className="auth-status__copy">
-          {connected &&
-          account &&
-          selectedWallet ? (
+          {connected ? (
             <>
               <strong>
-                {
-                  getSupportedWalletLabel(
-                    selectedWallet
-                  ) ??
-                  selectedWallet.name
-                }
+                {selectedWallet
+                  ? getSupportedWalletLabel(selectedWallet) ?? selectedWallet.name
+                  : mobileWalletState.account?.provider === "solflare"
+                    ? "Solflare"
+                    : "Backpack"}
               </strong>
-
               <span>
                 {truncateAddress(
-                  account.address
+                  account?.address ?? mobileWalletState.account?.address ?? ""
                 )}
               </span>
-
-              <small>
-                Connected. Paylore
-                sign-in is still required.
-              </small>
+              <small>Connected. Paylore sign-in is still required.</small>
             </>
           ) : (
             <>
-              <strong>
-                No browser wallet is connected
-              </strong>
-
-              <span>
-                Connect through this browser or open a wallet app below.
-                Signing in is a separate step.
-              </span>
+              <strong>Wallet not connected</strong>
+              <span>Choose one of the four supported wallets. Signing in is a separate step.</span>
             </>
           )}
         </div>
@@ -901,10 +925,20 @@ function WalletStandardAuthPanel({
             }
             disabled={
               status === "connecting" ||
+              mobileWalletState.status === "connecting" ||
+              mobileWalletState.status === "signing" ||
               walletDiscoveryStatus === "loading"
             }
           >
-            {walletDiscoveryStatus === "loading" ? (
+            {mobileWalletState.status === "connecting" || status === "connecting" ? (
+              <span className="loading-indicator">
+                <span
+                  className="loading-indicator__icon"
+                  aria-hidden="true"
+                />
+                Connecting…
+              </span>
+            ) : walletDiscoveryStatus === "loading" ? (
               <span className="loading-indicator">
                 <span
                   className="loading-indicator__icon"
@@ -914,14 +948,6 @@ function WalletStandardAuthPanel({
               </span>
             ) : failure ? (
               "Try again"
-            ) : status === "connecting" ? (
-              <span className="loading-indicator">
-                <span
-                  className="loading-indicator__icon"
-                  aria-hidden="true"
-                />
-                Connecting…
-              </span>
             ) : (
               "Refresh wallet list"
             )}
@@ -930,19 +956,23 @@ function WalletStandardAuthPanel({
           <button
             className="button"
             type="button"
-            onClick={() =>
-              void authenticate()
-            }
+            onClick={() => {
+              if (mobileWalletState.account) {
+                requestMobileWalletAction("sign-in", mobileWalletState.account.provider);
+              } else {
+                void authenticate();
+              }
+            }}
             disabled={
-              status ===
-                "signing" ||
-              status ===
-                "success"
+              status === "signing" ||
+              status === "success" ||
+              mobileWalletState.status === "signing" ||
+              mobileWalletState.status === "success"
             }
           >
             {failure ? (
               "Try again"
-            ) : status === "signing" ? (
+            ) : operationStatus === "signing" ? (
               <span className="loading-indicator">
                 <span
                   className="loading-indicator__icon"
@@ -950,7 +980,7 @@ function WalletStandardAuthPanel({
                 />
                 Signing…
               </span>
-            ) : status === "success" ? (
+            ) : operationStatus === "success" ? (
               "Signed in"
             ) : (
               "Sign in with wallet"
@@ -962,11 +992,16 @@ function WalletStandardAuthPanel({
           <button
             className="button button--secondary"
             type="button"
-            onClick={() =>
-              void disconnectWallet()
-            }
+            onClick={() => {
+              if (mobileWalletState.account) {
+                requestMobileWalletAction("disconnect", mobileWalletState.account.provider);
+              } else {
+                void disconnectWallet();
+              }
+            }}
             disabled={
-              status === "signing"
+              status === "signing" ||
+              mobileWalletState.status === "signing"
             }
           >
             Disconnect wallet
@@ -977,17 +1012,12 @@ function WalletStandardAuthPanel({
       {chooserOpen ? (
         <section
           className="wallet-chooser wallet-standard-chooser"
-          aria-label="Choose a supported wallet"
+          aria-label="Connect wallet"
         >
           <div className="wallet-chooser__header">
             <div>
-              <h3>
-                Choose your wallet
-              </h3>
-
-              <p>
-                Choose a wallet available in this browser.
-              </p>
+              <h3>Connect wallet</h3>
+              <p>Connect with Phantom, Solflare, Backpack, or Jupiter.</p>
             </div>
 
             <button
@@ -1023,25 +1053,39 @@ function WalletStandardAuthPanel({
                       option.label
                     }
                     disabled={
-                      !detectedWallet
+                      status === "connecting" ||
+                      mobileWalletState.status === "connecting" ||
+                      mobileWalletState.status === "signing"
                     }
                     type="button"
+                    aria-label={"Connect with " + option.label}
                     onClick={() => {
-                      if (
-                        detectedWallet
-                      ) {
-                        void connectWallet(
-                          detectedWallet
-                        );
+                      setError(null);
+                      if (walletDiscoveryStatus === "loading") {
+                        setError("Wallet discovery is still loading. Try again in a moment.");
+                        return;
                       }
+                      if (detectedWallet && connectFeatureFor(detectedWallet)) {
+                        void connectWallet(detectedWallet);
+                        return;
+                      }
+                      if (option.label === "Solflare") {
+                        setChooserOpen(false);
+                        requestMobileWalletAction("connect", "solflare");
+                        return;
+                      }
+                      if (option.label === "Backpack" && backpackDeepLinkEnabled) {
+                        setChooserOpen(false);
+                        requestMobileWalletAction("connect", "backpack");
+                        return;
+                      }
+                      setError(
+                        option.label + " did not respond to the connection request. Refresh Paylore in " + option.label + " or connect with its browser extension."
+                      );
                     }}
                   >
                     <span
-                      className={
-                        option.label === "Backpack" && !backpackDeepLinkEnabled
-                          ? "wallet-choice__icon wallet-choice__icon--muted"
-                          : "wallet-choice__icon"
-                      }
+                      className="wallet-choice__icon"
                       aria-hidden="true"
                     >
                       <Image
@@ -1069,11 +1113,7 @@ function WalletStandardAuthPanel({
                         </small>
                       ) : null}
 
-                      {!detectedWallet ? (
-                        <small>
-                          Not detected in this browser
-                        </small>
-                      ) : null}
+
                     </span>
                   </button>
                 );
@@ -1089,13 +1129,13 @@ function WalletStandardAuthPanel({
         does not send payroll funds.
       </p>
 
-      {error ? (
+      {displayedError ? (
         <div
           className="error-box"
           role="alert"
           aria-live="assertive"
         >
-          {error}
+          {displayedError}
         </div>
       ) : null}
     </>

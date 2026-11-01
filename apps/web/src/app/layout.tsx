@@ -71,6 +71,12 @@ export default function RootLayout({
           href={APP_IDENTITY.icons.appleTouch}
         />
         <link
+          rel="icon"
+          sizes="512x512"
+          type="image/png"
+          href={APP_IDENTITY.icons.png512}
+        />
+        <link
           rel="shortcut icon"
           type="image/x-icon"
           href={APP_IDENTITY.icons.faviconIco}
