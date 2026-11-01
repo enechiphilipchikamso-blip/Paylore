@@ -1080,7 +1080,9 @@ function WalletStandardAuthPanel({
                         return;
                       }
                       setError(
-                        option.label + " did not respond to the connection request. Refresh Paylore in " + option.label + " or connect with its browser extension."
+                        option.label === "Backpack"
+                          ? "Backpack could not connect in this browser. Open Paylore in the Backpack app browser or connect with the Backpack browser extension."
+                          : option.label + " could not connect in this browser. Open Paylore in " + option.label + " or connect with its browser extension."
                       );
                     }}
                   >

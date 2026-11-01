@@ -85,7 +85,7 @@ test("Backpack remains in the unified chooser when its optional deep-link route 
   await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
   await backpackButton.click();
   await expect(page.getByRole("alert")).toContainText(
-    "Backpack did not respond to the connection request. Refresh Paylore in Backpack or connect with its browser extension."
+    "Backpack could not connect in this browser. Open Paylore in the Backpack app browser or connect with the Backpack browser extension."
   );
 });
 
