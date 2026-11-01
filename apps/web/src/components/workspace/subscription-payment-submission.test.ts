@@ -38,8 +38,7 @@ describe("beginSubscriptionWalletApproval", () => {
     expect(fixture.signAndSendTransaction).toHaveBeenCalledWith({
       account: fixture.wallet.account,
       transaction,
-      chain: "solana:devnet",
-      options: { commitment: "confirmed" }
+      chain: "solana:devnet"
     });
     expect(result).toBe(fixture.submission);
     await expect(result).resolves.toHaveLength(1);

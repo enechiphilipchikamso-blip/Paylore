@@ -17,8 +17,7 @@ export function beginSubscriptionWalletApproval(
   return wallet.signAndSendTransaction({
     account: wallet.account,
     transaction: input.transaction,
-    chain: "solana:devnet",
-    options: { commitment: "confirmed" }
+    chain: "solana:devnet"
   });
 }
 

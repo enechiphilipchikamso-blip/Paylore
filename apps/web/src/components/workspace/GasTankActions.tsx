@@ -358,8 +358,7 @@ export function GasTankActions({
           const [signed] = await wallet.signTransaction({
             account: wallet.account,
             transaction: prepared.transaction,
-            chain: "solana:devnet",
-            options: { preflightCommitment: "confirmed" }
+            chain: "solana:devnet"
           });
           if (!signed) {
             throw new Error("The wallet did not return a signed transaction.");
@@ -388,8 +387,7 @@ export function GasTankActions({
         const submission = wallet.signAndSendTransaction({
           account: wallet.account,
           transaction: prepared.transaction,
-          chain: "solana:devnet",
-          options: { commitment: "confirmed" }
+          chain: "solana:devnet"
         });
         setReviewedFunding(null);
         const [sent] = await submission;

@@ -234,8 +234,7 @@ async function submitWorkspaceInitialization(
   const [signed] = await wallet.signTransaction({
     account: wallet.account,
     chain: "solana:devnet",
-    transaction,
-    options: { preflightCommitment: "confirmed" }
+    transaction
   });
   if (!signed) {
     throw new Error("The wallet did not sign the workspace initialization transaction.");
