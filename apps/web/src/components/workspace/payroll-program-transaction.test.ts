@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildPayrollClaimTransactions } from "./payroll-program-transaction";
+import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
+import {
+  buildPayrollClaimTransactions,
+  buildWorkspaceInitializationTransaction
+} from "./payroll-program-transaction";
 
 const workspaceId = "5f7bbaf7-21ab-4e62-95be-84f5d6bf6bb3";
 const programId = "4zYM9ZjwbAz9jxQ2C69Z83n1s4wceCPk7VzDLKoUnT93";
@@ -36,6 +40,54 @@ describe("payroll program transactions", () => {
       })
     ).rejects.toThrow("Claim identifier must be a 32-byte hexadecimal value.");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("builds the workspace initialization transaction with the full workspace PDA", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            context: { slot: 42 },
+            value: {
+              blockhash: "11111111111111111111111111111111",
+              lastValidBlockHeight: 100
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    ));
+
+    const transaction = await buildWorkspaceInitializationTransaction({
+      authorityAddress,
+      workspaceId,
+      programId
+    });
+
+    const workspaceSeed = new Uint8Array(
+      await globalThis.crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(`paylore:workspace:v1:${workspaceId}`)
+      )
+    );
+    const [workspace] = await getProgramDerivedAddress({
+      programAddress: address(programId),
+      seeds: [
+        new TextEncoder().encode("workspace"),
+        getAddressEncoder().encode(address(authorityAddress)),
+        workspaceSeed
+      ]
+    });
+    const workspaceBytes = getAddressEncoder().encode(workspace);
+    const containsWorkspace = Array.from(
+      { length: transaction.length - workspaceBytes.length + 1 },
+      (_, offset) => offset
+    ).some((offset) =>
+      workspaceBytes.every((byte, index) => transaction[offset + index] === byte)
+    );
+    expect(containsWorkspace).toBe(true);
   });
 
   it("includes workspace initialization and separates large claim sets into bounded transactions", async () => {
