@@ -7,6 +7,7 @@ import {
   createTransactionMessage,
   getBase64EncodedWireTransaction,
   getBase58Decoder,
+  getTransactionDecoder,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash
 } from "@solana/kit";
@@ -85,4 +86,35 @@ export function gasTankFundingSignature(
   signature: Uint8Array
 ): string {
   return getBase58Decoder().decode(signature);
+}
+
+export const GAS_TANK_FUNDING_CHANGED =
+  "The wallet changed the funding transaction while signing. No funding was sent.";
+
+/** Confirms the wallet signed the exact reviewed transfer and returns what Paylore submits. */
+export function signedGasTankFunding(
+  reviewed: Uint8Array,
+  signed: Uint8Array,
+  payer: string
+): { signature: string; transactionBase64: string } {
+  const decoder = getTransactionDecoder();
+  const reviewedMessage = Uint8Array.from(decoder.decode(reviewed).messageBytes);
+  const signedTransaction = decoder.decode(signed);
+  const signedMessage = Uint8Array.from(signedTransaction.messageBytes);
+  if (
+    reviewedMessage.length !== signedMessage.length ||
+    reviewedMessage.some((byte, index) => byte !== signedMessage[index])
+  ) {
+    throw new Error(GAS_TANK_FUNDING_CHANGED);
+  }
+  const payerSignature = signedTransaction.signatures[address(payer)];
+  if (!payerSignature || payerSignature.every((byte) => byte === 0)) {
+    throw new Error("The wallet did not sign the funding transaction. No funding was sent.");
+  }
+  return {
+    signature: gasTankFundingSignature(payerSignature),
+    transactionBase64: btoa(
+      Array.from(signed, (byte) => String.fromCharCode(byte)).join("")
+    )
+  };
 }

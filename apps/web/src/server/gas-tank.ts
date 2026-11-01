@@ -1,6 +1,19 @@
 import "server-only";
 
 import {
+  address,
+  createSolanaRpc,
+  getAddressEncoder,
+  getBase64EncodedWireTransaction,
+  getCompiledTransactionMessageDecoder,
+  getSignatureFromTransaction,
+  getTransactionDecoder,
+  isSolanaError,
+  SOLANA_ERROR__JSON_RPC__SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE,
+  verifySignature,
+  type Transaction
+} from "@solana/kit";
+import {
   createWorkspaceGasTank,
   createWorkspaceLedgerEntry,
   createWorkspaceNotificationForFinanceMembers,
@@ -18,6 +31,28 @@ import {
 } from "./reserve-crypto-policy";
 import { readSolanaRpc } from "./solana/rpc";
 import { inspectGasTankFundingTransaction } from "./gas-tank-policy";
+import { createGasTankFundingTransaction } from "../components/workspace/gas-tank-funding-transaction";
+
+const DEVNET_RPC_URL = "https://api.devnet.solana.com";
+
+export class GasTankFundingSubmissionError extends Error {
+  constructor(readonly code:
+    | "gas_tank_not_initialized"
+    | "funding_transaction_invalid"
+    | "funding_transaction_rejected") {
+    super(code);
+    this.name = "GasTankFundingSubmissionError";
+  }
+}
+
+function fundingRpcEndpoint(): string {
+  const config = loadPayloreConfig();
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
+    url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
+  }
+  return url.toString();
+}
 
 function requireGasTankEnvelopeKey(): string {
   const key = loadPayloreConfig().PAYLORE_GAS_TANK_ENVELOPE_KEY;
@@ -248,4 +283,97 @@ export async function verifyWorkspaceGasTankFunding(
     duplicate: !ledger.created,
     balanceLamports: refreshedGasTank.balanceLamports
   };
+}
+
+/**
+ * The administrator wallet only signs the reviewed transfer; Paylore submits it.
+ * The signed message must be byte-for-byte the transfer Paylore prepared, so a
+ * wallet cannot redirect or resize the funding before it is broadcast.
+ */
+export async function submitWorkspaceGasTankFunding(
+  db: Database,
+  input: {
+    workspaceId: string;
+    payer: string;
+    transactionBase64: string;
+    expectedLamports: string;
+  }
+): Promise<{ status: "submitted" | "unconfirmed"; signature: string }> {
+  const gasTank = await getWorkspaceGasTank(db, input.workspaceId);
+  if (!gasTank) {
+    throw new GasTankFundingSubmissionError("gas_tank_not_initialized");
+  }
+
+  let transaction: Transaction;
+  let recentBlockhash: string;
+  try {
+    const wireBytes = Buffer.from(input.transactionBase64, "base64");
+    if (wireBytes.toString("base64") !== input.transactionBase64) {
+      throw new Error("non-canonical encoding");
+    }
+    transaction = getTransactionDecoder().decode(wireBytes);
+    recentBlockhash = getCompiledTransactionMessageDecoder()
+      .decode(transaction.messageBytes).lifetimeToken;
+  } catch {
+    throw new GasTankFundingSubmissionError("funding_transaction_invalid");
+  }
+
+  const expected = getTransactionDecoder().decode(
+    createGasTankFundingTransaction({
+      payer: input.payer,
+      destination: gasTank.address,
+      lamports: input.expectedLamports,
+      blockhash: recentBlockhash,
+      lastValidBlockHeight: 0
+    })
+  );
+  const signedMessage = Uint8Array.from(transaction.messageBytes);
+  const expectedMessage = Uint8Array.from(expected.messageBytes);
+  if (
+    signedMessage.length !== expectedMessage.length ||
+    signedMessage.some((byte, index) => byte !== expectedMessage[index]) ||
+    Object.keys(transaction.signatures).length !== 1
+  ) {
+    throw new GasTankFundingSubmissionError("funding_transaction_invalid");
+  }
+  const payerAddress = address(input.payer);
+  const payerSignature = transaction.signatures[payerAddress];
+  if (!payerSignature || payerSignature.every((byte) => byte === 0)) {
+    throw new GasTankFundingSubmissionError("funding_transaction_invalid");
+  }
+  const publicKey = await crypto.subtle.importKey(
+    "raw",
+    Uint8Array.from(getAddressEncoder().encode(payerAddress)),
+    { name: "Ed25519" },
+    true,
+    ["verify"]
+  );
+  if (!(await verifySignature(publicKey, payerSignature, transaction.messageBytes))) {
+    throw new GasTankFundingSubmissionError("funding_transaction_invalid");
+  }
+
+  const signature = String(getSignatureFromTransaction(transaction));
+  try {
+    const sent = await createSolanaRpc(fundingRpcEndpoint())
+      .sendTransaction(getBase64EncodedWireTransaction(transaction), {
+        encoding: "base64",
+        preflightCommitment: "confirmed",
+        maxRetries: 3n
+      })
+      .send();
+    if (String(sent) !== signature) {
+      throw new GasTankFundingSubmissionError("funding_transaction_invalid");
+    }
+  } catch (error) {
+    if (error instanceof GasTankFundingSubmissionError) throw error;
+    // A failed preflight simulation means the network refused the transfer
+    // and it was never broadcast.
+    if (isSolanaError(error, SOLANA_ERROR__JSON_RPC__SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE)) {
+      throw new GasTankFundingSubmissionError("funding_transaction_rejected");
+    }
+    // The provider may have broadcast the transfer before failing; the signature
+    // is already known, so the caller reconciles it instead of re-signing.
+    return { status: "unconfirmed", signature };
+  }
+  return { status: "submitted", signature };
 }
