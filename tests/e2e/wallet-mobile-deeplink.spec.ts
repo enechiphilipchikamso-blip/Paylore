@@ -28,7 +28,16 @@ test("mobile browser builds a Solflare connect request with the real app and ret
     name: "Connect with Solflare"
   });
   await expect(connectButton).toBeVisible();
-  await expect(page.getByRole("button", { name: "Connect with Backpack" })).toBeEnabled();
+  for (const wallet of ["Phantom", "Solflare", "Backpack", "Jupiter"]) {
+    const walletButton = page.getByRole("button", {
+      name: `Connect with ${wallet}`
+    });
+    await expect(walletButton).toBeVisible();
+    await expect(walletButton).toBeEnabled();
+  }
+  await expect(page.getByText(/connect wallet app/i)).toHaveCount(0);
+  await expect(page.getByText(/connect browser/i)).toHaveCount(0);
+  await expect(page.getByText(/not detected in (?:this )?browser/i)).toHaveCount(0);
   await expect(page.locator(".auth-card")).toHaveCount(1);
   await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
   await expect(page.locator(".wallet-chooser")).toHaveCount(1);
@@ -63,8 +72,16 @@ test("a browser without an injected provider keeps the same sign-in page", async
 }) => {
   await page.goto("/auth");
 
-  await expect(page.getByRole("button", { name: "Connect with Solflare" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Connect with Backpack" })).toBeEnabled();
+  for (const wallet of ["Phantom", "Solflare", "Backpack", "Jupiter"]) {
+    const walletButton = page.getByRole("button", {
+      name: `Connect with ${wallet}`
+    });
+    await expect(walletButton).toBeVisible();
+    await expect(walletButton).toBeEnabled();
+  }
+  await expect(page.getByText(/connect wallet app/i)).toHaveCount(0);
+  await expect(page.getByText(/connect browser/i)).toHaveCount(0);
+  await expect(page.getByText(/not detected in (?:this )?browser/i)).toHaveCount(0);
   await expect(page.locator(".auth-card")).toHaveCount(1);
   await expect(page.locator(".auth-card__header h2")).toHaveCount(1);
   await expect(page.locator(".wallet-chooser")).toHaveCount(1);
@@ -84,7 +101,7 @@ test("Backpack remains in the unified chooser when its optional deep-link route 
   await expect(page.locator(".wallet-choice__icon--muted")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
   await backpackButton.click();
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(page.locator('[role="alert"].error-box')).toContainText(
     "Backpack could not connect in this browser. Open Paylore in the Backpack app browser or connect with the Backpack browser extension."
   );
 });
@@ -109,6 +126,16 @@ test("desktop browser uses the same Solflare row for the connection fallback", a
   await expect(page.getByRole("button", { name: "Refresh wallet list" })).toBeEnabled();
   await expect(page.locator(".wallet-chooser")).toHaveCount(1);
   await expect(page.locator(".wallet-app-links")).toHaveCount(0);
+  for (const wallet of ["Phantom", "Solflare", "Backpack", "Jupiter"]) {
+    const walletButton = page.getByRole("button", {
+      name: `Connect with ${wallet}`
+    });
+    await expect(walletButton).toBeVisible();
+    await expect(walletButton).toBeEnabled();
+  }
+  await expect(page.getByText(/connect wallet app/i)).toHaveCount(0);
+  await expect(page.getByText(/connect browser/i)).toHaveCount(0);
+  await expect(page.getByText(/not detected in (?:this )?browser/i)).toHaveCount(0);
   await page.getByRole("button", { name: "Connect with Solflare" }).click();
   await expect.poll(() => connectUrl).not.toBe("");
   const connect = new URL(connectUrl);
