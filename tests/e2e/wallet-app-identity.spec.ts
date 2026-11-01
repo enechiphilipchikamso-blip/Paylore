@@ -46,7 +46,13 @@ test("wallet-facing page metadata names Paylore and advertises the canonical ico
     sizes: "180x180",
     type: "image/png"
   });
-  expect(identityIconLinks.slice(1)).toEqual([
+  expect(identityIconLinks[1]).toMatchObject({
+    rel: "icon",
+    href: "/icons/paylore-512x512.png",
+    sizes: "512x512",
+    type: "image/png"
+  });
+  expect(identityIconLinks.slice(2)).toEqual([
     {
       rel: "shortcut icon",
       href: "/favicon.ico",
@@ -130,5 +136,20 @@ test("wallet identity icon and manifest URLs are public, direct, and correctly t
         type: "image/png"
       })
     ])
+  );
+});
+
+
+test("the authentication route retains Paylore's browser identity", async ({ page }) => {
+  await page.goto("/auth");
+  await expect(page).toHaveTitle("Sign in | Paylore");
+  await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", "Paylore");
+  await expect(page.locator('link[rel="icon"][type="image/png"][sizes="512x512"]')).toHaveAttribute(
+    "href",
+    "/icons/paylore-512x512.png"
+  );
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+    "href",
+    "/manifest.webmanifest"
   );
 });

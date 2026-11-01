@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -436,7 +435,8 @@ export function MobileWalletAuthPanel({
     createdAt: number
   ): Promise<void> {
     if (provider === "backpack" && !backpackDeepLinkEnabled) {
-      setError("The Backpack app link is turned off for this deployment. Open Paylore inside Backpack to connect through its browser.");
+      setStatus("idle");
+      setError("Open Paylore inside Backpack or connect with its browser extension.");
       return;
     }
     setError(null);
@@ -596,131 +596,30 @@ export function MobileWalletAuthPanel({
     setError(null);
   }
 
-  const mobileWalletOptions = [
-    { label: "Solflare", iconSrc: "/brand/wallets/solflare.svg", provider: "solflare" as const },
-    { label: "Backpack", iconSrc: "/brand/wallets/backpack.png", provider: "backpack" as const }
-  ];
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("paylore:deeplink-wallet-state", {
+      detail: {
+        account: account ? { address: account.address, provider: account.provider } : null,
+        status,
+        error
+      }
+    }));
+  }, [account, status, error]);
 
-  return (
-    <>
-      {account ? (
-        <div className="auth-status auth-status--mobile-wallet" role="status">
-          <span className="status-indicator" data-connected="true" />
-          <div className="auth-status__copy">
-            <strong>Connected with {account.provider === "solflare" ? "Solflare" : "Backpack"}</strong>
-            <span>{account.address.slice(0, 5)}…{account.address.slice(-4)}</span>
-            <small>Paylore sign-in is still required.</small>
-          </div>
-        </div>
-      ) : null}
+  useEffect(() => {
+    const handleAction = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: "connect" | "sign-in" | "disconnect";
+        provider: MobileDeepLinkWallet;
+      }>).detail;
+      if (!detail || (detail.provider !== "solflare" && detail.provider !== "backpack")) return;
+      if (detail.action === "connect") void connectMobileWallet(detail.provider, Date.now());
+      else if (detail.action === "sign-in") void signInWithMobileWallet(detail.provider, Date.now());
+      else if (detail.action === "disconnect") disconnectMobileWallet();
+    };
+    window.addEventListener("paylore:mobile-wallet-action", handleAction);
+    return () => window.removeEventListener("paylore:mobile-wallet-action", handleAction);
+  }, [connectMobileWallet, signInWithMobileWallet, disconnectMobileWallet]);
 
-      <section className="wallet-chooser wallet-app-links" aria-label="Connect with a wallet app">
-        <div className="wallet-chooser__header">
-          <div>
-            <h3>Connect with a wallet app</h3>
-            <p>Open Solflare or Backpack when you want to connect through its app.</p>
-          </div>
-        </div>
-        <div className="wallet-choices">
-          {mobileWalletOptions.map((option) => {
-            const selected = account?.provider === option.provider;
-            const disabledBySetting =
-              option.provider === "backpack" && !backpackDeepLinkEnabled;
-            return (
-              <button
-                className="wallet-choice"
-                key={option.label}
-                type="button"
-                disabled={
-                  status === "connecting" ||
-                  status === "signing" ||
-                  disabledBySetting ||
-                  Boolean(account && !selected)
-                }
-                onClick={() => {
-                  if (!account && !disabledBySetting) {
-                    void connectMobileWallet(option.provider, Date.now());
-                  }
-                }}
-                aria-label={
-                  disabledBySetting
-                    ? "Backpack app link unavailable"
-                    : selected
-                      ? "Connected to " + option.label
-                      : "Connect with " + option.label
-                }
-                aria-pressed={selected}
-                aria-describedby={
-                  disabledBySetting ? "backpack-app-link-note" : undefined
-                }
-              >
-                <span
-                  className={
-                    disabledBySetting
-                      ? "wallet-choice__icon wallet-choice__icon--muted"
-                      : "wallet-choice__icon"
-                  }
-                  aria-hidden="true"
-                >
-                  <Image
-                    src={option.iconSrc}
-                    alt=""
-                    width={44}
-                    height={44}
-                    unoptimized
-                  />
-                </span>
-                <span className="wallet-choice__copy">
-                  <span className="wallet-choice__name">{option.label}</span>
-                  {selected && account ? (
-                    <small>Connected · {account.address.slice(0, 5)}…{account.address.slice(-4)}</small>
-                  ) : disabledBySetting ? (
-                    <small id="backpack-app-link-note">
-                      The app link is turned off for this deployment. Connect through Backpack&apos;s browser instead.
-                    </small>
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {account ? (
-        <div className="auth-actions">
-          <button
-            className="button"
-            type="button"
-            onClick={() => void signInWithMobileWallet(account.provider, Date.now())}
-            disabled={status === "signing" || status === "success"}
-          >
-            {status === "signing" ? (
-              <span className="loading-indicator">
-                <span className="loading-indicator__icon" aria-hidden="true" />
-                Waiting for wallet…
-              </span>
-            ) : status === "success" ? (
-              "Signed in"
-            ) : (
-              "Sign in with wallet"
-            )}
-          </button>
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={disconnectMobileWallet}
-            disabled={status === "signing"}
-          >
-            Disconnect wallet
-          </button>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="error-box" role="alert" aria-live="assertive">
-          {error}
-        </div>
-      ) : null}
-    </>
-  );
+  return null;
 }
