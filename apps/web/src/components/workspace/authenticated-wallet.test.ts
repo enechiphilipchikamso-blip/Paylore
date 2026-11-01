@@ -10,7 +10,10 @@ vi.mock("@wallet-standard/app", () => ({
 }));
 
 import { SolanaSignAndSendTransaction } from "@solana/wallet-standard-features";
-import { findAuthenticatedWallet } from "./authenticated-wallet";
+import {
+  findAuthenticatedWallet,
+  reconnectAuthenticatedWallet
+} from "./authenticated-wallet";
 
 const ADDRESS = "11111111111111111111111111111111";
 const DEVNET = "solana:devnet";
@@ -84,6 +87,60 @@ describe("findAuthenticatedWallet", () => {
 
     expect(() => findAuthenticatedWallet(ADDRESS)).toThrow(
       "Reconnect the wallet you used to sign in, then try again."
+    );
+  });
+});
+
+describe("reconnectAuthenticatedWallet", () => {
+  function disconnectedWallet(name: string, address = ADDRESS) {
+    const registered = wallet({ name, address }).registered;
+    const account = registered.accounts[0];
+    const state = { accounts: [] as typeof registered.accounts };
+    const connect = vi.fn(async () => {
+      state.accounts = [account];
+      return { accounts: state.accounts };
+    });
+    const reloaded = {
+      ...registered,
+      get accounts() {
+        return state.accounts;
+      },
+      features: { ...registered.features, "standard:connect": { connect } }
+    };
+    return { reloaded, connect };
+  }
+
+  it("reconnects the wallet after a reload so the authenticated account can sign again", async () => {
+    const phantom = disconnectedWallet("Phantom");
+    mocks.wallets = [phantom.reloaded];
+
+    expect(() => findAuthenticatedWallet(ADDRESS)).toThrow(
+      "Reconnect the wallet you used to sign in, then try again."
+    );
+    await reconnectAuthenticatedWallet(ADDRESS);
+
+    expect(phantom.connect).toHaveBeenCalledTimes(1);
+    expect(findAuthenticatedWallet(ADDRESS).account.address).toBe(ADDRESS);
+  });
+
+  it("does not prompt a wallet that already exposes the authenticated account", async () => {
+    const phantom = disconnectedWallet("Phantom");
+    await phantom.reloaded.features["standard:connect"].connect();
+    phantom.connect.mockClear();
+    mocks.wallets = [phantom.reloaded];
+
+    await reconnectAuthenticatedWallet(ADDRESS);
+
+    expect(phantom.connect).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reconnected account that is not the signed-in wallet", async () => {
+    mocks.wallets = [
+      disconnectedWallet("Phantom", "So11111111111111111111111111111111111111112").reloaded
+    ];
+
+    await expect(reconnectAuthenticatedWallet(ADDRESS)).rejects.toThrow(
+      "The connected wallet account is not the one you used to sign in."
     );
   });
 });

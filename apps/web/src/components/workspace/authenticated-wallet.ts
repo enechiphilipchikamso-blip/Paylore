@@ -46,6 +46,13 @@ type DisconnectFeature = {
   disconnect: () => Promise<void>;
 };
 
+type ConnectFeature = {
+  connect: () => Promise<unknown>;
+};
+
+export const WALLET_RECONNECT_REQUIRED =
+  "Reconnect the wallet you used to sign in, then try again.";
+
 function isSignAndSendFeature(value: unknown): value is SignAndSendFeature {
   return Boolean(
     value &&
@@ -86,6 +93,19 @@ function isDisconnectFeature(value: unknown): value is DisconnectFeature {
   );
 }
 
+function isConnectFeature(value: unknown): value is ConnectFeature {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "connect" in value &&
+      typeof value.connect === "function"
+  );
+}
+
+function normalizeWalletName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function matchesSupportedWallet(name: string): boolean {
   return [
     "phantom",
@@ -97,7 +117,64 @@ function matchesSupportedWallet(name: string): boolean {
     "jupiter",
     "jupiterwallet",
     "jupiterwalletextension"
-  ].includes(name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  ].includes(normalizeWalletName(name));
+}
+
+function exposesAuthenticatedAccount(
+  wallet: RegisteredWallet,
+  walletAddress: string
+): boolean {
+  return wallet.accounts.some(
+    (account) =>
+      account.address === walletAddress &&
+      account.chains.includes("solana:devnet")
+  );
+}
+
+/**
+ * A page reload keeps the Paylore session but wallets stop exposing their
+ * accounts until the page connects again. Reconnect from a direct click,
+ * starting with the wallet last used to sign in, and stop at the first wallet
+ * that exposes the authenticated account.
+ */
+export async function reconnectAuthenticatedWallet(
+  walletAddress: string
+): Promise<void> {
+  const registry = getWallets() as WalletRegistry;
+  const wallets = registry.get().filter((registeredWallet) =>
+    matchesSupportedWallet(registeredWallet.name) &&
+    isConnectFeature(registeredWallet.features["standard:connect"])
+  );
+  if (wallets.some((wallet) => exposesAuthenticatedAccount(wallet, walletAddress))) {
+    return;
+  }
+  let lastWallet = "";
+  try {
+    lastWallet = normalizeWalletName(localStorage.getItem("paylore-last-wallet") ?? "");
+  } catch {
+    lastWallet = "";
+  }
+  const ordered = lastWallet
+    ? [
+        ...wallets.filter((wallet) => normalizeWalletName(wallet.name).startsWith(lastWallet)),
+        ...wallets.filter((wallet) => !normalizeWalletName(wallet.name).startsWith(lastWallet))
+      ]
+    : wallets;
+  if (ordered.length === 0) {
+    throw new Error(
+      "No supported wallet was found in this browser. Open Paylore in the browser or wallet app you used to sign in."
+    );
+  }
+  for (const wallet of ordered) {
+    const feature = wallet.features["standard:connect"] as ConnectFeature;
+    await feature.connect();
+    if (exposesAuthenticatedAccount(wallet, walletAddress)) {
+      return;
+    }
+  }
+  throw new Error(
+    "The connected wallet account is not the one you used to sign in. Switch to that account in your wallet and reconnect, or sign out and sign in again."
+  );
 }
 
 export function findAuthenticatedWallet(walletAddress: string): {
@@ -110,16 +187,10 @@ export function findAuthenticatedWallet(walletAddress: string): {
   const registry = getWallets() as WalletRegistry;
   const wallet = registry.get().find((registeredWallet) =>
     matchesSupportedWallet(registeredWallet.name) &&
-    registeredWallet.accounts.some(
-      (account) =>
-        account.address === walletAddress &&
-        account.chains.includes("solana:devnet")
-    )
+    exposesAuthenticatedAccount(registeredWallet, walletAddress)
   );
   if (!wallet) {
-    throw new Error(
-      "Reconnect the wallet you used to sign in, then try again."
-    );
+    throw new Error(WALLET_RECONNECT_REQUIRED);
   }
 
   const feature = wallet.features[SolanaSignAndSendTransaction];
@@ -139,9 +210,7 @@ export function findAuthenticatedWallet(walletAddress: string): {
       account.chains.includes("solana:devnet")
   );
   if (!registeredAccount) {
-    throw new Error(
-      "Reconnect the wallet you used to sign in, then try again."
-    );
+    throw new Error(WALLET_RECONNECT_REQUIRED);
   }
   const disconnectFeature = wallet.features["standard:disconnect"];
 
