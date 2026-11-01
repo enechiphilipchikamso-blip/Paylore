@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { isWalletCancellation } from "../auth/walletErrors";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
+import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
 import { usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
@@ -125,7 +126,7 @@ export function getReserveActionErrorMessage(
     reserve_mint_authority_approval_required:
       "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready.",
     workspace_program_not_initialized:
-      "The Paylore Program workspace state is not initialized. Reserve setup stopped before submitting transactions.",
+      "The Paylore Program workspace state is not initialized. Retry Reserve setup to initialize it once with your connected admin wallet.",
     reserve_devnet_rpc_required:
       "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted.",
     reserve_confidential_account_not_ready:
@@ -133,7 +134,7 @@ export function getReserveActionErrorMessage(
     reserve_gas_tank_not_initialized:
       "Set up the workspace Gas Tank before initializing the confidential reserve.",
     reserve_gas_tank_insufficient_funds:
-      "The workspace Gas Tank does not have enough SOL to cover reserve setup fees and account rent. Fund the Gas Tank, then retry.",
+      "The workspace Gas Tank does not have enough SOL to cover Reserve setup fees and reserve account rent. Fund the Gas Tank, then retry.",
     reserve_gas_tank_balance_unavailable:
       "Paylore could not verify the current live SOL balance for the Gas Tank. Reserve setup may be partially complete; refresh the Gas Tank and Reserve status before retrying.",
     reserve_gas_tank_key_mismatch:
@@ -172,6 +173,11 @@ type OnChainAccountState = {
   programReserveConfigured?: boolean;
   signature?: string;
   phase?: ReservePhase;
+  workspaceInitialization?: {
+    authorityAddress: string;
+    workspaceAddress: string;
+    programId: string;
+  };
 };
 
 function fundingStateLabel(state: OnChainAccountState["fundingState"]): string {
@@ -348,8 +354,8 @@ export function ReserveActions({
     };
   }, [workspaceId]);
 
-  async function run(action: ReserveAction) {
-    if (busy || fundingBusy) return;
+  async function run(action: ReserveAction, retryingWorkspace = false) {
+    if ((!retryingWorkspace && busy) || fundingBusy) return;
     setBusy(true);
     setActiveAction(action);
     setNotice(null);
@@ -380,6 +386,11 @@ export function ReserveActions({
         pendingBalanceBaseUnits?: string;
         fundingState?: "unfunded" | "public_funds_available" | "pending_confidential_balance" | "confidential_funds_available";
         programReserveConfigured?: boolean;
+        workspaceInitialization?: {
+          authorityAddress: string;
+          workspaceAddress: string;
+          programId: string;
+        };
         created?: boolean;
         restoredAt?: string | null;
       } | null;
@@ -418,11 +429,49 @@ export function ReserveActions({
         if (result?.status === "workspace_program_not_initialized") {
           setSetupSignature(null);
           setSetupPhase(null);
+          if (!retryingWorkspace && result.workspaceInitialization) {
+            try {
+              const wallet = findAuthenticatedWallet(
+                result.workspaceInitialization.authorityAddress
+              );
+              const transaction = await buildWorkspaceInitializationTransaction({
+                authorityAddress: result.workspaceInitialization.authorityAddress,
+                workspaceId,
+                programId: result.workspaceInitialization.programId
+              });
+              const [sent] = await wallet.signAndSendTransaction({
+                account: wallet.account,
+                chain: "solana:devnet",
+                transaction,
+                options: { commitment: "confirmed" }
+              });
+              if (!sent) {
+                throw new Error("The wallet did not return a workspace initialization signature.");
+              }
+              setNotice({
+                state: "partial",
+                text: "The Payroll Program workspace was initialized. Paylore is continuing confidential Reserve setup."
+              });
+              await new Promise((resolve) => setTimeout(resolve, 2_000));
+              await run(action, true);
+              return;
+            } catch (error) {
+              setNotice({
+                state: isWalletCancellation(error) ? "partial" : "error",
+                text: isWalletCancellation(error)
+                  ? "Workspace initialization was cancelled. No Reserve setup transaction was submitted."
+                  : error instanceof Error
+                    ? error.message
+                    : "The Payroll Program workspace could not be initialized. No Reserve setup transaction was submitted."
+              });
+              return;
+            }
+          }
           setNotice({
             state: "partial",
             text: result.confidentialTransferReady
-              ? "The reserve-owned confidential account is ready, but the Paylore Program workspace state has not been initialized. The program reserve remains unconfigured."
-              : "The Paylore Program workspace state is not initialized. Paylore stopped before submitting reserve setup transactions; complete workspace setup first."
+              ? "The reserve-owned confidential account is ready, but the Paylore Program workspace state is not initialized. Retry to initialize it once and continue reserve setup."
+              : "The Paylore Program workspace state is not initialized. Retry to initialize it once with your connected admin wallet, then continue reserve setup."
           });
           setOnChainAccount(result as OnChainAccountState);
           return;
@@ -648,10 +697,10 @@ export function ReserveActions({
       >
         <span className="state-callout__signal" aria-hidden="true" />
         <div>
-          <h3 id="reserve-gas-tank-status">Gas Tank setup comes first</h3>
+          <h3 id="reserve-gas-tank-status">Gas Tank funding comes first</h3>
           {gasTankPreflight.status === "not_initialized" ? (
             <>
-              <p>Initialize the workspace Gas Tank and fund it with SOL before confidential Reserve setup. The Gas Tank pays setup transaction fees and account rent; the Reserve remains the token owner and authority.</p>
+              <p>Initialize the workspace Gas Tank and fund it with SOL before confidential Reserve setup. The Gas Tank pays setup transaction fees and reserve account rent; the Reserve remains the token owner and authority.</p>
               <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Set up Gas Tank</Link>
             </>
           ) : gasTankPreflight.status === "funding_required" ? (

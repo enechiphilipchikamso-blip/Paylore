@@ -77,6 +77,11 @@ export type WorkspaceConfidentialReserveResult = {
   programReserveConfigured?: boolean;
   signature?: string;
   phase?: WorkspaceReservePhase;
+  workspaceInitialization?: {
+    authorityAddress: string;
+    workspaceAddress: string;
+    programId: string;
+  };
 };
 
 export class WorkspaceReserveInitializationError extends Error {
@@ -468,6 +473,18 @@ function configureWorkspaceReserveInstruction(input: {
     data: discriminator("global:configure_workspace_reserve")
   };
 }
+
+function workspaceInitialization(input: {
+  authorityAddress: string;
+  workspace: string;
+  programId: string;
+}) {
+  return {
+    authorityAddress: input.authorityAddress,
+    workspaceAddress: input.workspace,
+    programId: input.programId
+  };
+}
 async function deriveConfidentialBalanceSnapshot(
   rpc: ReturnType<typeof createSolanaRpc>,
   tokenAddress: string,
@@ -613,7 +630,12 @@ export async function getWorkspaceConfidentialReserveSnapshot(
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
         tokenAccount, confidentialTransferReady, publicBalanceBaseUnits, availableBalanceBaseUnits, pendingBalanceBaseUnits,
-        fundingState, programReserveConfigured: false
+        fundingState, programReserveConfigured: false,
+        workspaceInitialization: workspaceInitialization({
+          authorityAddress: input.workspaceAuthority,
+          workspace: input.workspace,
+          programId: input.programId
+        })
       };
     }
     const reserveStatus = await inspectReserveProgramState(input.rpc, {
@@ -1816,7 +1838,12 @@ export async function initializeWorkspaceConfidentialReserveAccount(
       return {
         status: "workspace_program_not_initialized", reserveAddress: input.reserveAddress,
         tokenAccount: input.reserveTokenAddress, confidentialTransferReady: accountReady,
-        programReserveConfigured: false
+        programReserveConfigured: false,
+        workspaceInitialization: workspaceInitialization({
+          authorityAddress: input.workspaceAuthority,
+          workspace: input.workspace,
+          programId: input.programId
+        })
       };
     }
 
@@ -1896,7 +1923,12 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         publicBalanceBaseUnits: tokenState.publicBalanceBaseUnits,
         availableBalanceBaseUnits: tokenState.availableBalanceBaseUnits,
         pendingBalanceBaseUnits: tokenState.pendingBalanceBaseUnits, fundingState: tokenState.fundingState,
-        programReserveConfigured: false
+        programReserveConfigured: false,
+        workspaceInitialization: workspaceInitialization({
+          authorityAddress: input.workspaceAuthority,
+          workspace: input.workspace,
+          programId: input.programId
+        })
       };
     }
     const existingState = await inspectReserveProgramState(input.rpc, {

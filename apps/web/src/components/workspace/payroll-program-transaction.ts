@@ -38,6 +38,58 @@ export type PayrollRecoveryTransaction = {
   transaction: Uint8Array;
 };
 
+export async function buildWorkspaceInitializationTransaction(input: {
+  authorityAddress: string;
+  workspaceId: string;
+  programId: string;
+}): Promise<Uint8Array> {
+  if (
+    input.workspaceId.trim().length === 0 ||
+    encoder.encode(input.workspaceId).length > 64
+  ) {
+    throw new Error("The workspace identifier must contain 1 to 64 bytes.");
+  }
+  const authority = address(input.authorityAddress);
+  const programId = address(input.programId);
+  const workspaceSeed = new Uint8Array(
+    await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      encoder.encode(`paylore:workspace:v1:${input.workspaceId}`)
+    )
+  );
+  const [workspace] = await deriveWorkspaceAddress(authority, workspaceSeed, programId);
+  const instruction = {
+    programAddress: programId,
+    accounts: [
+      { address: authority, role: AccountRole.WRITABLE_SIGNER },
+      { address: address(workspace), role: AccountRole.WRITABLE },
+      { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY }
+    ],
+    data: concatenate(
+      await anchorDiscriminator("global:initialize_workspace"),
+      encodeAnchorString(input.workspaceId),
+      workspaceSeed
+    )
+  } as const;
+  const rpc = createSolanaRpc("https://api.devnet.solana.com");
+  const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
+  const message = appendTransactionMessageInstructions(
+    [instruction],
+    setTransactionMessageLifetimeUsingBlockhash(
+      {
+        blockhash: blockhash(latest.value.blockhash),
+        lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
+      },
+      setTransactionMessageFeePayer(
+        authority,
+        createTransactionMessage({ version: 0 })
+      )
+    )
+  );
+  const wire = getBase64EncodedWireTransaction(compileTransaction(message));
+  return Uint8Array.from(atob(wire), (character) => character.charCodeAt(0));
+}
+
 function decodeHex32(value: string, field: string): Uint8Array {
   if (!/^[0-9a-f]{64}$/i.test(value)) {
     throw new Error(`${field} must be a 32-byte hexadecimal value.`);
