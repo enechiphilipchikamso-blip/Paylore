@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   initializeWorkspaceGasTank: vi.fn(),
   verifyAndRestoreWorkspaceGasTank: vi.fn(),
   verifyWorkspaceGasTankFunding: vi.fn(),
+  submitWorkspaceGasTankFunding: vi.fn(),
   readSolanaRpc: vi.fn()
 }));
 
@@ -30,6 +31,10 @@ vi.mock("../../../../../server/security", () => ({
 }));
 vi.mock("../../../../../server/db", () => ({ getDatabase: mocks.getDatabase }));
 vi.mock("../../../../../server/gas-tank", () => ({
+  GasTankFundingSubmissionError: class GasTankFundingSubmissionError extends Error {
+    constructor(readonly code: string) { super(code); }
+  },
+  submitWorkspaceGasTankFunding: mocks.submitWorkspaceGasTankFunding,
   getWorkspaceGasTankSnapshot: mocks.getWorkspaceGasTankSnapshot,
   initializeWorkspaceGasTank: mocks.initializeWorkspaceGasTank,
   verifyAndRestoreWorkspaceGasTank: mocks.verifyAndRestoreWorkspaceGasTank,
@@ -148,5 +153,39 @@ describe("workspace Gas Tank API", () => {
       lastValidBlockHeight: 123
     });
     expect(JSON.stringify(body)).not.toContain("do-not-return");
+  });
+
+  it("submits a wallet-signed funding transfer for the session wallet", async () => {
+    mocks.submitWorkspaceGasTankFunding.mockResolvedValue({
+      status: "submitted",
+      signature: "signature-a"
+    });
+    const response = await POST(request({
+      action: "submit_funding",
+      transactionBase64: "AQID",
+      lamports: "50000000"
+    }), context);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "submitted", signature: "signature-a" });
+    expect(mocks.submitWorkspaceGasTankFunding).toHaveBeenCalledWith({}, {
+      workspaceId: "workspace-a",
+      payer: "manager-wallet",
+      transactionBase64: "AQID",
+      expectedLamports: "50000000"
+    });
+  });
+
+  it("reports a funding transfer the network refused without claiming it was sent", async () => {
+    const { GasTankFundingSubmissionError } = await import("../../../../../server/gas-tank");
+    mocks.submitWorkspaceGasTankFunding.mockRejectedValue(
+      new GasTankFundingSubmissionError("funding_transaction_rejected")
+    );
+    const response = await POST(request({
+      action: "submit_funding",
+      transactionBase64: "AQID",
+      lamports: "50000000"
+    }), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "funding_transaction_rejected" });
   });
 });
