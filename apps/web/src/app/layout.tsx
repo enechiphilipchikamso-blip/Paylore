@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
+import { WalletConnectionMonitor } from "../components/workspace/WalletConnectionMonitor";
 import { APP_IDENTITY, createRootMetadata } from "./app-identity";
 import { metadataBase } from "./site";
 import "./globals.css";
@@ -106,6 +107,7 @@ export default function RootLayout({
       </head>
       <body>
         <PublicShell>{children}</PublicShell>
+        <WalletConnectionMonitor />
         <ErudaDevTools />
       </body>
     </html>

@@ -1878,6 +1878,7 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         owner: input.signer,
         mint: address(input.mintAddress),
         token: address(input.reserveTokenAddress),
+        programAddress: TOKEN_2022_PROGRAM_ADDRESS,
         rpc: input.rpc,
         elgamalKeypair: input.elgamal,
         aesKey: input.aesKey,

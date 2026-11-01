@@ -854,6 +854,31 @@ ul {
   color: var(--color-text-muted);
 }
 
+.wallet-connection-notice {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  z-index: 20;
+  width: min(32rem, calc(100vw - 2rem));
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  transform: translateX(-50%);
+}
+
+.wallet-connection-notice strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.wallet-connection-notice p {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-muted);
+}
+
 .feature-list,
 .numbered-list {
   display: grid;
