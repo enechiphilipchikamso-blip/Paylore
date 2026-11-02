@@ -15,6 +15,7 @@ import {
 
 const programId = "payroll-program";
 const authority = "manager-wallet";
+const payer = "gas-tank-wallet";
 const workspaceId = "workspace-a";
 const workspace = "workspace-pda";
 const system = "11111111111111111111111111111111";
@@ -65,6 +66,7 @@ function instructions() {
         programAddress: programId,
         accounts: [
           accounts(authority, AccountRole.WRITABLE_SIGNER),
+          accounts(payer, AccountRole.WRITABLE_SIGNER),
           accounts(workspace, AccountRole.WRITABLE),
           accounts(system, AccountRole.READONLY)
         ],
@@ -74,6 +76,7 @@ function instructions() {
         programAddress: programId,
         accounts: [
           accounts(authority, AccountRole.WRITABLE_SIGNER),
+          accounts(payer, AccountRole.WRITABLE_SIGNER),
           accounts(claim.contributorAddress, AccountRole.READONLY),
           accounts(workspace, AccountRole.READONLY),
           accounts(claim.claimAddress, AccountRole.WRITABLE),
@@ -137,6 +140,7 @@ describe("Gas Tank sponsorship policy", () => {
       instructions: built.values,
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -153,6 +157,7 @@ describe("Gas Tank sponsorship policy", () => {
         : instruction),
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -169,6 +174,7 @@ describe("Gas Tank sponsorship policy", () => {
         : instruction),
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -195,6 +201,7 @@ describe("Gas Tank sponsorship policy", () => {
       instructions: altered,
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -221,6 +228,7 @@ describe("Gas Tank sponsorship policy", () => {
       instructions: altered,
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -239,6 +247,7 @@ describe("Gas Tank sponsorship policy", () => {
       instructions: claimOnly,
       programId,
       authorityAddress: authority,
+      payerAddress: payer,
       workspaceId,
       workspaceAddress: workspace,
       allocationCommitment: commitment,
@@ -258,14 +267,14 @@ describe("Gas Tank sponsorship policy", () => {
     })).toThrow("sponsored_transaction_size_exceeded");
     expect(() => assertSponsoredCost({
       transactionBytes: 500, feeLamports: MAX_SPONSORED_FEE_LAMPORTS + 1n,
-      balanceLamports: 1_000_000n, dailyBookedFeesLamports: 0n, dailyOperationCount: 0
+      balanceLamports: MAX_SPONSORED_FEE_LAMPORTS + 1_000_000n, dailyBookedFeesLamports: 0n, dailyOperationCount: 0
     })).toThrow("sponsored_fee_limit_exceeded");
     expect(() => assertSponsoredCost({
       transactionBytes: 500, feeLamports: 20_000n, balanceLamports: 10_000n,
       dailyBookedFeesLamports: 0n, dailyOperationCount: 0
     })).toThrow("gas_tank_insufficient_balance");
     expect(() => assertSponsoredCost({
-      transactionBytes: 500, feeLamports: MAX_SPONSORED_FEE_LAMPORTS,
+      transactionBytes: 500, feeLamports: 20_000n,
       balanceLamports: 5_000_000n,
       dailyBookedFeesLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS,
       dailyOperationCount: 100

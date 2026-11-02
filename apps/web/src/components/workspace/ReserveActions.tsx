@@ -284,6 +284,7 @@ type OnChainAccountState = {
     authorityAddress: string;
     workspaceAddress: string;
     programId: string;
+    gasTankAddress?: string | null;
   };
 };
 
@@ -567,6 +568,7 @@ export function ReserveActions({
           authorityAddress: string;
           workspaceAddress: string;
           programId: string;
+          gasTankAddress?: string | null;
         };
         created?: boolean;
         restoredAt?: string | null;
@@ -613,6 +615,7 @@ export function ReserveActions({
               );
               const transaction = await buildWorkspaceInitializationTransaction({
                 authorityAddress: result.workspaceInitialization.authorityAddress,
+                payerAddress: result.workspaceInitialization.gasTankAddress ?? undefined,
                 workspaceId,
                 programId: result.workspaceInitialization.programId
               });

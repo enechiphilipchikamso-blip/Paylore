@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { auditPayrollProgramIdl, EXPECTED_PAYLORE_PROGRAM_ID } from "./audit-payroll-program-idl.mjs";
+import { auditPayrollProgramIdl as auditPayrollProgramIdlRaw, EXPECTED_PAYLORE_PROGRAM_ID } from "./audit-payroll-program-idl.mjs";
 
 const byte32 = { array: ["u8", 32] };
 const vecByte32 = { vec: byte32 };
@@ -22,12 +22,25 @@ function instruction(name, accounts, args = []) {
   return { name, accounts: accounts.map((item) => ({ name: item })), args: args.map(([argName, type]) => ({ name: argName, type })) };
 }
 
+function auditPayrollProgramIdl(input) {
+  const source = input.source
+    .replace(
+      "pub struct InitializeWorkspace {\n  pub authority: Signer<'info>,",
+      "pub struct InitializeWorkspace {\n  pub authority: Signer<'info>,\n  pub payer: Signer<'info>,"
+    )
+    .replace(
+      "pub struct CreateClaim {\n  pub authority: Signer<'info>,",
+      "pub struct CreateClaim {\n  pub authority: Signer<'info>,\n  pub payer: Signer<'info>,"
+    );
+  return auditPayrollProgramIdlRaw({ ...input, source });
+}
+
 function validIdl() {
   return {
     address: EXPECTED_PAYLORE_PROGRAM_ID,
     instructions: [
-      instruction("initializeWorkspace", ["authority", "workspace", "systemProgram"], [["workspaceId", "string"], ["workspaceSeed", byte32]]),
-      instruction("createClaim", ["authority", "contributor", "workspace", "claim", "systemProgram"], [["claimId", byte32], ["allocationCommitment", byte32], ["amountCommitment", byte32], ["amountCommitmentLeafIndex", "u32"], ["amountCommitmentProof", vecByte32], ["escrowTokenAccount", "pubkey"]]),
+      instruction("initializeWorkspace", ["authority", "payer", "workspace", "systemProgram"], [["workspaceId", "string"], ["workspaceSeed", byte32]]),
+      instruction("createClaim", ["authority", "payer", "contributor", "workspace", "claim", "systemProgram"], [["claimId", byte32], ["allocationCommitment", byte32], ["amountCommitment", byte32], ["amountCommitmentLeafIndex", "u32"], ["amountCommitmentProof", vecByte32], ["escrowTokenAccount", "pubkey"]]),
       instruction("configureWorkspaceReserve", ["authority", "workspace", "payer", "reserveState", "reserveAuthority", "reserveTokenAccount", "mint", "systemProgram"]),
       instruction("markSettlementPending", ["contributor", "workspace", "reserveState", "reserveAuthority", "reserveTokenAccount", "mint", "claim", "escrowTokenAccount", "destinationTokenAccount", "instructionsSysvar", "amountCommitmentContext"]),
       instruction("markClaimed", ["contributor", "workspace", "reserveState", "reserveAuthority", "reserveTokenAccount", "mint", "claim", "escrowTokenAccount", "destinationTokenAccount", "instructionsSysvar", "amountCommitmentContext"]),

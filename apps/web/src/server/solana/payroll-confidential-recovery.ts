@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  AccountRole, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
+  AccountRole, addSignersToTransactionMessage, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress, isSome,
@@ -31,6 +31,7 @@ import {
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
+import { withWorkspaceGasTankKey } from "../gas-tank";
 import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
@@ -130,13 +131,14 @@ async function waitForFinality(
 }
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
-  signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  feePayer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   plan: InstructionPlan,
-  submitted?: (signature: string) => Promise<void>
+  submitted?: (signature: string) => Promise<void>,
+  additionalSigners: readonly Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>[] = []
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
-      setTransactionMessageFeePayerSigner(signer, createTransactionMessage({ version: 0 })),
+      setTransactionMessageFeePayerSigner(feePayer, createTransactionMessage({ version: 0 })),
     onTransactionMessageUpdated: async (message) => {
       const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
       return setTransactionMessageLifetimeUsingBlockhash({
@@ -150,7 +152,9 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
-      const signed = await partiallySignTransactionMessageWithSigners(message);
+      const signed = await partiallySignTransactionMessageWithSigners(
+        addSignersToTransactionMessage([feePayer, ...additionalSigners], message)
+      );
       const encoded = getBase64EncodedWireTransaction(signed);
       const sig = await rpc.sendTransaction(encoded, {
         encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
@@ -238,6 +242,7 @@ async function cleanupRecoveryProofContexts(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  gasSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   input: { workspaceId: string; allocationId: string; addresses: string[] }
 ): Promise<boolean> {
   let resolved = true;
@@ -251,7 +256,7 @@ async function cleanupRecoveryProofContexts(
         authority: signer,
         destination: address(signer.address)
       });
-      const result = await executePlan(rpc, signer, singleInstructionPlan(close));
+      const result = await executePlan(rpc, gasSigner, singleInstructionPlan(close), undefined, [signer]);
       if (!result.successful || result.pending || result.trackingFailed) resolved = false;
     } catch {
       resolved = false;
@@ -327,6 +332,12 @@ export async function recoverPayrollAllocation(
   return withWorkspaceReserveKey(db, input.workspaceId, async (privateBytes) => {
     const signer = await createKeyPairSignerFromBytes(privateBytes);
     if (signer.address !== reserve.address) throw new PayrollConfidentialRecoveryError("workspace_reserve_key_mismatch", 503);
+    return withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateBytes) => {
+    const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+    const gasBalance = await createSolanaRpc(rpcEndpoint()).getBalance(gasSigner.address, { commitment: "confirmed" }).send();
+    if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+      throw new PayrollConfidentialRecoveryError("gas_tank_insufficient_balance", 409);
+    }
     const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
     if (!escrow || escrow.payrollRunId !== input.runId || escrow.claimId !== allocation.claimId) {
       throw new PayrollConfidentialRecoveryError("payroll_claim_escrow_not_found", 409);
@@ -358,7 +369,7 @@ export async function recoverPayrollAllocation(
     });
 
     if (escrow.recoverySignature) {
-      return reconcileSubmittedRecovery(db, rpc, signer, effectiveInput, {
+      return reconcileSubmittedRecovery(db, rpc, signer, gasSigner, effectiveInput, {
         allocation, escrow, evidence, amount: BigInt(allocation.amountBaseUnits), mint,
         programId, reserveTokenAddress, workspace, reserveState, escrowTokenAddress: escrow.tokenAccountAddress
       });
@@ -379,7 +390,7 @@ export async function recoverPayrollAllocation(
     } else if (input.signature && input.phase === "proof_setup") {
       const finality = await waitForFinality(rpc, input.signature as Signature);
       if (finality === "pending") return { status: "pending", signature: input.signature, phase: "proof_setup" };
-      if (!await cleanupRecoveryProofContexts(db, rpc, signer, {
+      if (!await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId, allocationId: input.allocationId,
         addresses: escrow.recoveryProofContextAddresses ?? []
       })) return { status: "pending", signature: input.signature, phase: "proof_setup", warning: "proof_context_cleanup_pending" };
@@ -388,7 +399,7 @@ export async function recoverPayrollAllocation(
       });
       return released ? { status: "retry_ready", signature: input.signature } : { status: "pending", signature: input.signature, phase: "proof_setup" };
     } else if (input.signature && input.phase === "recovery") {
-      return reconcileSubmittedRecovery(db, rpc, signer, input, {
+      return reconcileSubmittedRecovery(db, rpc, signer, gasSigner, input, {
         allocation, escrow, evidence, amount: BigInt(allocation.amountBaseUnits), mint,
         programId, reserveTokenAddress, workspace, reserveState, escrowTokenAddress: escrow.tokenAccountAddress
       }, input.signature);
@@ -412,7 +423,7 @@ export async function recoverPayrollAllocation(
 
     if (!escrow.recoverySignature && (escrow.recoveryProofContextAddresses ?? []).length > 0 &&
         !(input.signature && input.phase === "proof_setup")) {
-      const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, {
+      const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId,
         allocationId: input.allocationId,
         addresses: escrow.recoveryProofContextAddresses ?? []
@@ -463,7 +474,7 @@ export async function recoverPayrollAllocation(
         }
 
         if (destination.pending > 0n) {
-          const apply = await executePlan(rpc, signer, singleInstructionPlan(
+          const apply = await executePlan(rpc, gasSigner, singleInstructionPlan(
             getApplyConfidentialPendingBalanceInstructionFromToken({
               token: reserveTokenAddress, tokenAccount: destination.token, authority: signer,
               elgamalSecretKey: secret, aesKey
@@ -472,7 +483,7 @@ export async function recoverPayrollAllocation(
             if (!await attachPayrollClaimEscrowRecoveryApplySignature(db, {
               workspaceId: input.workspaceId, allocationId: input.allocationId, signature
             })) throw new Error("The reserve balance reconciliation signature could not be persisted.");
-          });
+          }, [signer]);
           if (apply.pending) return { status: "pending", signature: apply.signatures.at(-1), phase: "reserve_balance_apply" };
           if (!apply.successful || apply.trackingFailed) {
             const sig = apply.signatures.at(-1);
@@ -504,7 +515,7 @@ export async function recoverPayrollAllocation(
           sourceToken: address(escrow.tokenAccountAddress), mint: mintAddress, mintAccount,
           destinationToken: reserveTokenAddress, sourceTokenAccount: source.token,
           destinationTokenAccount: refreshedDestination.token, authority: signer, amount,
-          sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
+          sourceElgamalKeypair: elgamal, aesKey, payer: gasSigner, rpc
         }))();
         // Keep the SDK-generated plan intact because Token-2022 proofs bind the actual encrypted source balance.
         const transferPlan = proofStartedPlan;
@@ -532,16 +543,16 @@ export async function recoverPayrollAllocation(
           throw new PayrollConfidentialRecoveryError("confidential_recovery_transfer_invalid", 503);
         }
 
-        const setup = await executePlan(rpc, signer, transferPlan.plans[0]!, async (signature) => {
+        const setup = await executePlan(rpc, gasSigner, transferPlan.plans[0]!, async (signature) => {
           if (!await appendPayrollClaimEscrowContextSignature(db, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, phase: "recovery", signature
           })) throw new Error("The recovery proof signature could not be persisted.");
-        });
+        }, [signer]);
         if (setup.pending) {
           return { status: "pending", signature: setup.signatures.at(-1), phase: "proof_setup" };
         }
         if (!setup.successful || setup.trackingFailed) {
-          const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, {
+          const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, addresses: proofContexts
           });
           if (cleaned) await releasePayrollRecoveryAttempt(db, {
@@ -560,18 +571,18 @@ export async function recoverPayrollAllocation(
           amountCommitmentContext, reasonCommitment
         });
         const atomic = nonDivisibleSequentialInstructionPlan([transferIx, ix]);
-        const result = await executePlan(rpc, signer, atomic, async (signature) => {
+        const result = await executePlan(rpc, gasSigner, atomic, async (signature) => {
           submittedRecoverySignature = signature;
           await attachPayrollClaimEscrowRecoverySignature(db, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, signature
           });
-        });
+        }, [signer]);
         const signature = result.signatures.at(-1);
         if (!signature) {
           throw new PayrollConfidentialRecoveryError("confidential_recovery_submission_failed", 503);
         }
         if (result.pending) return { status: "pending", signature, phase: "recovery" };
-        return reconcileSubmittedRecovery(db, rpc, signer, effectiveInput, {
+        return reconcileSubmittedRecovery(db, rpc, signer, gasSigner, effectiveInput, {
           allocation, escrow: await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId) ?? escrow,
           evidence, amount, mint, programId, reserveTokenAddress, workspace, reserveState,
           escrowTokenAddress: escrow.tokenAccountAddress
@@ -584,7 +595,7 @@ export async function recoverPayrollAllocation(
         }
         if (current?.status === "recovery_pending") {
           const contexts = current.recoveryProofContextAddresses ?? [];
-          const cleaned = contexts.length === 0 || await cleanupRecoveryProofContexts(db, rpc, signer, {
+          const cleaned = contexts.length === 0 || await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, addresses: contexts
           });
           if (cleaned) {
@@ -603,6 +614,7 @@ export async function recoverPayrollAllocation(
     } finally {
       material.opening.fill(0);
     }
+    });
   });
 }
 
@@ -610,6 +622,7 @@ async function reconcileSubmittedRecovery(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  gasSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   input: {
     workspaceId: string; runId: string; allocationId: string; actorUserId: string;
     reason: "incorrect_allocation" | "contributor_left_before_claim" | "payroll_correction" | "other";
@@ -656,7 +669,7 @@ async function reconcileSubmittedRecovery(
       await attachPayrollClaimEscrowRecoverySignature(db, {
         workspaceId: input.workspaceId, allocationId: input.allocationId, signature
       });
-      const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, {
+      const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId, allocationId: input.allocationId,
         addresses: context.escrow.recoveryProofContextAddresses ?? []
       });
@@ -712,7 +725,7 @@ async function reconcileSubmittedRecovery(
       return { status: "pending", signature, phase: "recovery" };
     }
     if (destination.pending > 0n) {
-      const apply = await executePlan(rpc, signer, singleInstructionPlan(
+      const apply = await executePlan(rpc, gasSigner, singleInstructionPlan(
         getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(context.reserveTokenAddress), tokenAccount: destination.token,
           authority: signer, elgamalSecretKey: secret, aesKey
@@ -721,7 +734,7 @@ async function reconcileSubmittedRecovery(
         if (!await attachPayrollClaimEscrowRecoveryApplySignature(db, {
           workspaceId: input.workspaceId, allocationId: input.allocationId, signature: applySignature
         })) throw new Error("The reserve pending-balance signature could not be persisted.");
-      });
+      }, [signer]);
       const applySignature = apply.signatures.at(-1);
       if (apply.pending) return { status: "pending", signature: applySignature, phase: "reserve_balance_apply" };
       if (!apply.successful || apply.trackingFailed) {
@@ -743,7 +756,7 @@ async function reconcileSubmittedRecovery(
         destination.pending !== 0n) {
       return { status: "pending", signature, phase: "recovery" };
     }
-    const cleanupOk = await cleanupRecoveryProofContexts(db, rpc, signer, {
+    const cleanupOk = await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, allocationId: input.allocationId,
       addresses: escrow.recoveryProofContextAddresses ?? []
     });

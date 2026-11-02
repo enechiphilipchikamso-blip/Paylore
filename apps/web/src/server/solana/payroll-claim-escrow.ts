@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   address,
+  addSignersToTransactionMessage,
   blockhash,
   createKeyPairSignerFromBytes,
   createSolanaRpc,
@@ -45,6 +46,7 @@ import {
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
+import { withWorkspaceGasTankKey } from "../gas-tank";
 import {
   generateReserveKeypair,
   openReserveKey,
@@ -152,7 +154,8 @@ async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
   feePayer: Signer,
   plan: InstructionPlan,
-  onSubmitted?: (signature: string) => Promise<void>
+  onSubmitted?: (signature: string) => Promise<void>,
+  additionalSigners: readonly Signer[] = []
 ): Promise<{ status: Finality; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
@@ -173,7 +176,9 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
-      const signed = await partiallySignTransactionMessageWithSigners(message);
+      const signed = await partiallySignTransactionMessageWithSigners(
+        addSignersToTransactionMessage([feePayer, ...additionalSigners], message)
+      );
       const encoded = getBase64EncodedWireTransaction(signed);
       const signature = await rpc.sendTransaction(encoded, {
         encoding: "base64",
@@ -302,6 +307,10 @@ export async function preparePayrollClaimEscrowAccount(
       if (escrowSigner.address !== escrow.tokenAccountAddress) {
         throw new PayrollClaimEscrowError("payroll_claim_escrow_key_mismatch", 503);
       }
+      return await withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateKey) => {
+      const gasTankSigner = await createKeyPairSignerFromBytes(gasTankPrivateKey);
+      const balance = await createSolanaRpc(rpcEndpoint()).getBalance(gasTankSigner.address, { commitment: "confirmed" }).send();
+      if (balance.value <= 0) throw new PayrollClaimEscrowError("gas_tank_insufficient_balance", 409);
       const rpc = createSolanaRpc(rpcEndpoint());
       const mintAddress = address(input.mintAddress);
       const mint = (await fetchMint(rpc, mintAddress)).data;
@@ -338,7 +347,7 @@ export async function preparePayrollClaimEscrowAccount(
         const rent = await rpc.getMinimumBalanceForRentExemption(space).send();
         const creationPlan = nonDivisibleSequentialInstructionPlan([
           getCreateAccountInstruction({
-            payer: reserveSigner,
+            payer: gasTankSigner,
             newAccount: escrowSigner,
             lamports: rent,
             space,
@@ -351,14 +360,14 @@ export async function preparePayrollClaimEscrowAccount(
             owner: address(reserveSigner.address)
           })
         ]);
-        const creation = await executePlan(rpc, reserveSigner, creationPlan, async (signature) => {
+        const creation = await executePlan(rpc, gasTankSigner, creationPlan, async (signature) => {
           const persisted = await attachPayrollClaimEscrowAccountSetupSignature(db, {
             workspaceId: input.workspaceId,
             allocationId: input.allocationId,
             signature
           });
           if (!persisted) throw new Error("Escrow account setup signature could not be persisted.");
-        });
+        }, [reserveSigner, escrowSigner]);
         if (creation.status === "pending" || creation.trackingFailed) {
           return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
         }
@@ -389,7 +398,7 @@ export async function preparePayrollClaimEscrowAccount(
         const aesKey = AeKey.fromBytes(derived.aeKey);
         try {
           const setupPlan = await getCreateConfidentialTransferAccountInstructionPlan({
-            payer: reserveSigner,
+            payer: gasTankSigner,
             owner: reserveSigner,
             mint: mintAddress,
             token: tokenAddress,
@@ -398,14 +407,14 @@ export async function preparePayrollClaimEscrowAccount(
             aesKey,
             includeConfidentialTransferFeeAmount: extensionList(mint).some((item) => item.__kind === "TransferFeeConfig")
           });
-          const setup = await executePlan(rpc, reserveSigner, setupPlan, async (signature) => {
+          const setup = await executePlan(rpc, gasTankSigner, setupPlan, async (signature) => {
             const persisted = await appendPayrollClaimEscrowConfidentialSetupSignature(db, {
               workspaceId: input.workspaceId,
               allocationId: input.allocationId,
               signature
             });
             if (!persisted) throw new Error("Escrow confidential setup signature could not be persisted.");
-          });
+          }, [reserveSigner]);
           if (setup.status === "pending" || setup.trackingFailed) {
             return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
           }
@@ -434,6 +443,7 @@ export async function preparePayrollClaimEscrowAccount(
         throw new PayrollClaimEscrowError("payroll_claim_escrow_state_conflict", 409);
       }
       return { status: "ready" as const, tokenAccountAddress: escrow.tokenAccountAddress };
+    });
     });
   } finally {
     tempPrivateKey.fill(0);

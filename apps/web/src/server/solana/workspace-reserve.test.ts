@@ -556,7 +556,7 @@ vi.mock("@paylore/database", () => ({
     h.feeReservationCalls.push(input);
     let reservationResult = h.feeReservationResult;
     if (h.feeReservationResult === "reserved" || h.feeReservationResult === "duplicate") {
-      const payload = input as { reservationKeys: string[] };
+      const payload = input as { reservationKeys: string[]; feePerTransactionLamports: string };
       const current = h.currentFeeReservationOperationData ?? {};
       const currentKeys = Array.isArray(current.feeReservationKeys)
         ? current.feeReservationKeys as string[]
@@ -572,8 +572,8 @@ vi.mock("@paylore/database", () => ({
         walletAddress: current.walletAddress ?? h.authority,
         feeBudgetReserved: true,
         actualFeeLamports: String(current.actualFeeLamports ?? "0"),
-        reservedFeeBudgetLamports: (currentReserved + BigInt(newKeys.length) * 100_000n).toString(),
-        feePerTransactionLamports: "100000",
+        reservedFeeBudgetLamports: (currentReserved + BigInt(newKeys.length) * BigInt(payload.feePerTransactionLamports)).toString(),
+        feePerTransactionLamports: payload.feePerTransactionLamports,
         feeReservationKeys: [...currentKeys, ...newKeys],
         feeReservationSettledKeys: Array.isArray(current.feeReservationSettledKeys)
           ? current.feeReservationSettledKeys
@@ -785,7 +785,7 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
     expect(h.feeReservationCalls[0]).toMatchObject({
       workspaceId: "workspace-a",
       reservationKeys: ["deposit:1", "apply:1"],
-      feePerTransactionLamports: "100000",
+      feePerTransactionLamports: "5000000",
       availableBalanceLamports: "1000000000"
     });
     expect(h.submittedSteps).toEqual([]);
@@ -880,7 +880,7 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
     expect(h.feePayerAddresses).toEqual([h.gasTank, h.gasTank]);
     expect(h.feeReservationCalls[0]).toMatchObject({
       reservationKeys: ["deposit:1", "apply:1"],
-      feePerTransactionLamports: "100000"
+      feePerTransactionLamports: "5000000"
     });
     expect(h.currentFeeReservationOperationData).toMatchObject({
       stage: "finalized",
@@ -943,7 +943,7 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
     expect(h.currentFeeReservationOperationData).toMatchObject({
       stage: "deposit_failed",
       feeReservationSettledKeys: ["deposit:1"],
-      reservedFeeBudgetLamports: "100000"
+      reservedFeeBudgetLamports: "5000000"
     });
 
     h.signatureFinality["1".repeat(64)] = "finalized";
@@ -1052,8 +1052,8 @@ describe("ordinary-USDC Reserve confidential-funding Gas Tank budget", () => {
       stage: "deposit_failed",
       depositErrorCode: "blockhash_expired_without_landing",
       feeReservationSettledKeys: ["deposit:1"],
-      reservedFeeBudgetLamports: "100000",
-      feeBudgetReserved: true
+      reservedFeeBudgetLamports: "0",
+      feeBudgetReserved: false
     });
     expect(h.publicBalanceBaseUnits).toBe(5_000_000n);
     expect(h.pendingBalanceBaseUnits).toBe(0n);
