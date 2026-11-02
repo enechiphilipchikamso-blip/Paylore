@@ -14,7 +14,7 @@ import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
 import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
 import { waitForDevnetFinality } from "./payroll-transaction-finality";
-import { usdcToBaseUnits } from "./reserve-funding-amount";
+import { baseUnitsToUsdc, formatBaseUnits, usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
 type ReserveAction = "initialize" | "restore" | "initialize_confidential";
@@ -93,7 +93,107 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_wrap_destination_account_mismatch:
       "The Reserve wrapped-USDC token account owner or mint did not match the configured Reserve. No wallet transaction was submitted.",
     reserve_wrap_source_account_mismatch:
-      "Your ordinary-USDC token account owner or mint did not match the connected wallet. No wallet transaction was submitted."
+      "Your ordinary-USDC token account owner or mint did not match the connected wallet. No wallet transaction was submitted.",
+    reserve_confidential_preapply_instruction_changed:
+      "The Reserve's earlier pending confidential balance changed after Paylore prepared to apply it, so no apply transaction was submitted. Refresh the on-chain check and continue this same operation; if this message returns, contact support. Do not wrap USDC again.",
+    reserve_confidential_preapply_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected result of applying its earlier pending balance. Paylore stopped before depositing this funding. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_funding_balance_changed:
+      "The Reserve's balances changed before the confidential deposit, so no deposit was submitted. Your wrapped USDC remains in the Reserve. Refresh the on-chain check and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_deposit_instruction_changed:
+      "The confidential deposit Paylore prepared no longer matches this funding operation, so no deposit was submitted. Your wrapped USDC remains in the Reserve's public balance. Contact support with this operation's details; do not wrap USDC again.",
+    reserve_confidential_deposit_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected confidential deposit. Paylore stopped before applying it and has not marked the funding complete. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_pending_balance_mismatch:
+      "The Reserve's pending confidential balance does not match this funding amount, so Paylore stopped before applying it. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_apply_instruction_changed:
+      "The Reserve's confidential balance changed after Paylore prepared the apply transaction, so no apply transaction was submitted. The deposit remains in the pending confidential balance. Refresh the on-chain check and continue this same operation; if this message returns, contact support. Do not wrap USDC again.",
+    reserve_confidential_apply_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected apply result, so Paylore has not marked the funding complete. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_funding_transaction_failed:
+      "A confidential Reserve transaction failed on-chain. Paylore recorded the failure and has not marked the funding complete. Continue this same operation to retry it safely; do not wrap USDC again.",
+    reserve_confidential_funding_signature_mismatch:
+      "A Reserve transaction signature did not match the one Paylore recorded for this operation. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_instruction_mismatch:
+      "A finalized Reserve transaction did not contain the instruction Paylore recorded for this operation. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_authority_mismatch:
+      "A finalized Reserve transaction was not authorized by this workspace's Reserve. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_account_mismatch:
+      "A finalized Reserve transaction touched an unexpected token account. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_public_debit_mismatch:
+      "The Reserve's public wrapped-USDC debit did not match the confidential deposit amount. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_failed_transaction_not_verified:
+      "A Reserve transaction failed, but Paylore could not verify that it changed nothing. Paylore stopped for safety; refresh the on-chain check and contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_instruction_data_missing:
+      "Paylore could not prepare the confidential Reserve instruction. No transaction was submitted. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_balance_unavailable:
+      "Paylore could not read the Reserve's finalized token balances. Nothing new was marked complete. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_status_unavailable:
+      "Paylore could not read the status of the submitted Reserve transaction from Devnet. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_signature_unavailable:
+      "Paylore could not sign the confidential Reserve transaction. No transaction was submitted. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_blockhash_unavailable:
+      "Devnet did not return a recent blockhash, so no confidential Reserve transaction was submitted. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_fee_unavailable:
+      "Paylore could not read the network fee of a finalized Reserve transaction. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_unavailable:
+      "Paylore could not complete this confidential Reserve funding step. Nothing new was marked complete. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_operation_unavailable:
+      "Paylore could not load the saved Reserve funding operation. Refresh the page and continue this same operation; do not wrap USDC again.",
+    reserve_wrap_funding_unavailable:
+      "Paylore could not finish checking this Reserve funding step. Nothing new was marked complete. Continue this same operation; do not wrap USDC again.",
+    reserve_wrap_failure_reconciliation_unavailable:
+      "The ordinary-USDC wrap failed on-chain, but Paylore could not record that result yet. Refresh the Reserve before starting a new wrap.",
+    reserve_wrap_transaction_status_unavailable:
+      "Paylore could not read the ordinary-USDC wrap status from Devnet yet. Your signature is saved. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_wrap_signature_invalid:
+      "The saved wrap signature is not a valid Solana signature. Paylore stopped before any confidential Reserve transaction; contact support with this operation's details.",
+    reserve_wrap_signature_mismatch:
+      "The finalized wrap transaction does not carry the signature Paylore recorded. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_wrap_wallet_signature_missing:
+      "The finalized wrap transaction was not signed by your connected admin wallet. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_wrap_instruction_not_verified:
+      "The finalized wrap transaction did not contain the expected Token Wrap instruction. Paylore stopped before any confidential Reserve transaction; contact support. Do not wrap USDC again.",
+    reserve_wrap_token_account_identity_mismatch:
+      "A token account in the finalized wrap did not match the expected wallet, escrow, or Reserve account. Paylore stopped for safety; contact support. Do not wrap USDC again.",
+    reserve_wrap_token_balance_not_verified:
+      "Paylore could not find exactly one matching token balance in the finalized wrap. Paylore stopped before any confidential Reserve transaction; contact support. Do not wrap USDC again.",
+    reserve_wrap_balance_delta_invalid:
+      "The finalized wrap's USDC debit, escrow credit, and Reserve credit did not match this funding amount. Paylore stopped for safety; contact support. Do not wrap USDC again.",
+    reserve_wrap_escrow_account_mismatch:
+      "The Token Wrap escrow account did not match the approved Devnet identity. No wallet transaction was submitted.",
+    reserve_wrap_mint_program_mismatch:
+      "A configured mint is not owned by the expected token program. No wallet transaction was submitted.",
+    reserve_wrap_operation_conflict:
+      "This wrap signature belongs to a different Reserve funding operation or amount. Refresh the page and continue the saved operation; do not wrap USDC again.",
+    reserve_wrap_amount_invalid:
+      "The amount is outside the supported USDC range. Enter a positive amount with up to six decimal places.",
+    reserve_token_account_program_mismatch:
+      "The Reserve token account is not owned by the Token-2022 program. Paylore stopped before any confidential Reserve transaction; contact support.",
+    reserve_program_configuration_not_verified:
+      "Paylore could not verify the Paylore Program reserve configuration on Devnet. Nothing new was marked complete. Refresh the on-chain check and continue this same operation; do not wrap USDC again.",
+    invalid_reserve_wrap_request:
+      "The Reserve funding request was incomplete. Refresh the page and continue the saved operation; do not wrap USDC again.",
+    request_not_allowed:
+      "This browser request was blocked by Paylore's request checks. Reload the Reserve page from Paylore and continue this same operation; do not wrap USDC again.",
+    reserve_devnet_rpc_required:
+      "Reserve funding is restricted to the configured Devnet RPC. No confidential Reserve transaction was submitted.",
+    reserve_not_found:
+      "This workspace has no Reserve key custody. Configure Reserve key custody before funding it.",
+    reserve_program_not_configured:
+      "The Paylore Program reserve state is not configured. Complete Reserve setup and refresh its on-chain status before funding.",
+    reserve_program_state_invalid:
+      "The Paylore Program reserve state could not be verified. Paylore stopped before any confidential Reserve transaction; refresh the on-chain check.",
+    reserve_program_state_malformed:
+      "The Paylore Program reserve state could not be verified. Paylore stopped before any confidential Reserve transaction; refresh the on-chain check.",
+    reserve_program_state_mismatch:
+      "The Paylore Program reserve state does not match this workspace's Reserve. Paylore stopped before any confidential Reserve transaction; contact support.",
+    workspace_read_only:
+      "This workspace is read-only. Activate or renew it, then continue this same Reserve funding operation; do not wrap USDC again.",
+    authentication_required:
+      "Your session has ended. Sign in again, then continue this same Reserve funding operation; do not wrap USDC again.",
+    workspace_access_denied:
+      "Only a workspace organization admin can fund the Reserve."
   };
   return {
     state: "error",
@@ -209,6 +309,40 @@ function fundingStateDescription(state: OnChainAccountState["fundingState"]): st
       return "No public, pending, or available wrapped-USDC funds were found in finalized state. Fund this reserve before expecting a payroll claim to settle.";
     default:
       return "Funding state is unavailable. Refresh the finalized on-chain check before relying on reserve readiness.";
+  }
+}
+
+/** Shows exact base units as readable USDC with the grouped base-unit value beside it. */
+export function ReserveAmount({ baseUnits }: { baseUnits?: string | null }) {
+  const usdc = typeof baseUnits === "string" ? baseUnitsToUsdc(baseUnits) : null;
+  if (usdc === null || typeof baseUnits !== "string") {
+    return <span className="reserve-amount reserve-amount--unavailable">Unavailable</span>;
+  }
+  return (
+    <span className="reserve-amount">
+      <span className="reserve-amount__value financial-value">{usdc} USDC</span>
+      <span className="reserve-amount__base numeric">{formatBaseUnits(baseUnits)} base units</span>
+    </span>
+  );
+}
+
+const FUNDING_STEPS = [
+  "Wrap ordinary USDC",
+  "Deposit into the confidential pending balance",
+  "Apply to the available confidential balance"
+] as const;
+
+/** Index of the funding step still in progress; earlier steps are finalized and verified. */
+export function reserveFundingStepIndex(phase: ReserveFundingPhase | undefined): number {
+  switch (phase) {
+    case "wrap_verified":
+    case "preapply":
+    case "deposit":
+      return 1;
+    case "apply":
+      return 2;
+    default:
+      return 0;
   }
 }
 
@@ -664,7 +798,13 @@ export function ReserveActions({
           });
         } else {
           if (activeSignature) {
-            setPendingWrap({ signature: activeSignature, amountBaseUnits });
+            const signature = activeSignature;
+            setPendingWrap((current) => ({
+              signature,
+              amountBaseUnits,
+              phase: current?.signature === signature ? current.phase : undefined,
+              stage: current?.signature === signature ? current.stage : undefined
+            }));
           }
           setFundingNotice(getReserveFundingOutcomeMessage({
             status: "error",
@@ -715,6 +855,14 @@ export function ReserveActions({
   }
 
 
+  const fundingAvailable = canStartOrdinaryUsdcReserveFunding(
+    onChainAccount.status,
+    onChainAccount.confidentialTransferReady === true,
+    gasTankPreflight.status
+  ) && Boolean(onChainAccount.tokenAccount);
+  const fundingStep = reserveFundingStepIndex(pendingWrap?.phase);
+  const setupBusy = busy && (activeAction === "restore" || activeAction === "initialize_confidential");
+
   return (
     <div className="reserve-actions">
       {notice ? (
@@ -724,7 +872,7 @@ export function ReserveActions({
         </div>
       ) : null}
       <section
-        className="state-callout"
+        className="state-callout reserve-gas-tank"
         data-state={
           gasTankPreflight.status === "ready"
             ? "success"
@@ -735,185 +883,259 @@ export function ReserveActions({
         aria-labelledby="reserve-gas-tank-status"
       >
         <span className="state-callout__signal" aria-hidden="true" />
-        <div>
+        <div className="reserve-gas-tank__body">
           <h3 id="reserve-gas-tank-status">Gas Tank funding comes first</h3>
           {gasTankPreflight.status === "not_initialized" ? (
             <>
               <p>Initialize the workspace Gas Tank and fund it with SOL before confidential Reserve setup. The Gas Tank pays setup transaction fees and reserve account rent; the Reserve remains the token owner and authority.</p>
-              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Set up Gas Tank</Link>
+              <div className="reserve-panel__actions">
+                <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Set up Gas Tank</Link>
+              </div>
             </>
           ) : gasTankPreflight.status === "funding_required" ? (
             <>
               <p>The current Gas Tank balance is {gasTankPreflight.balanceSol} SOL, below the 0.05 SOL low-balance warning threshold used by Paylore. This threshold is a warning, not a fee quote: Paylore checks a conservative rent allowance plus a network-fee buffer before submitting setup transactions and stops if the balance is insufficient.</p>
-              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Review and fund Gas Tank</Link>
+              <div className="reserve-panel__actions">
+                <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Review and fund Gas Tank</Link>
+              </div>
             </>
           ) : gasTankPreflight.status === "unavailable" ? (
             <>
               <p>Paylore could not verify the current live SOL balance for the Gas Tank. Confidential Reserve initialization is disabled until the current balance can be checked.</p>
-              <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Check Gas Tank</Link>
+              <div className="reserve-panel__actions">
+                <Link className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>Check Gas Tank</Link>
+              </div>
             </>
           ) : (
             <>
               <p>The Gas Tank is initialized and its current balance is {gasTankPreflight.balanceSol} SOL. Paylore will check a conservative rent allowance and network-fee buffer immediately before any Reserve setup transaction.</p>
-              {gasTankPreflight.address ? <p>Gas Tank address: <code>{gasTankPreflight.address}</code></p> : null}
+              {gasTankPreflight.address ? <p className="reserve-address">Gas Tank address: <code>{gasTankPreflight.address}</code></p> : null}
             </>
           )}
         </div>
       </section>
-      {busy ? (
-        <p className="loading-indicator" role="status">
-          <span className="loading-indicator__icon" aria-hidden="true" />
-          {activeAction === "restore"
-            ? "Verifying reserve signing-key backup…"
-            : activeAction === "initialize_confidential"
-              ? setupPhase === "program_configure"
-                ? "Verifying the Paylore Program reserve…"
-                : "Configuring the reserve confidential account…"
-              : "Configuring reserve signing-key custody…"}
-        </p>
-      ) : null}
       {reserve ? (
-        <section className="reserve-summary">
-          <h2>Reserve key custody configured</h2>
-          <dl className="billing-period">
-            <div><dt>Signing-key custody</dt><dd>Configured</dd></div>
-            <div><dt>Reserve signing address</dt><dd><code>{reserve.address}</code></dd></div>
-            <div><dt>Key custody configured</dt><dd>{new Date(reserve.createdAt).toLocaleString()}</dd></div>
-            <div><dt>Key custody last updated</dt><dd>{new Date(reserve.updatedAt).toLocaleString()}</dd></div>
-          </dl>
-          <h3>Confidential reserve readiness</h3>
-          {checkingOnChain ? (
-            <p role="status">Checking finalized Devnet account and program state…</p>
-          ) : onChainAccount.status === "account_missing" ? (
-            <p role="status">The expected reserve-owned wrapped-USDC Token-2022 account does not exist. Confidential settlement is unavailable.</p>
-          ) : onChainAccount.status === "workspace_program_not_initialized" ? (
-            <p role="status">The reserve confidential token account is ready, but the Paylore Program workspace account has not been initialized. The reserve program state is not configured.</p>
-          ) : onChainAccount.status === "confidential_account_ready" ? (
-            <p role="status">The reserve confidential token account is configured, but the Paylore Program reserve state is not yet verified.</p>
-          ) : onChainAccount.status === "program_configured" ? (
-            <>
-              <p role="status">The finalized reserve token account and Paylore Program reserve state match. The state check does not by itself mean the reserve is funded.</p>
+        <>
+          <section className="reserve-panel" aria-labelledby="reserve-custody-heading">
+            <header className="reserve-panel__header">
+              <h2 id="reserve-custody-heading">Reserve key custody configured</h2>
+            </header>
+            <dl className="reserve-facts">
+              <div><dt>Signing-key custody</dt><dd>Configured</dd></div>
+              <div className="reserve-facts__wide"><dt>Reserve signing address</dt><dd><code>{reserve.address}</code></dd></div>
+              <div><dt>Key custody configured</dt><dd>{new Date(reserve.createdAt).toLocaleString()}</dd></div>
+              <div><dt>Key custody last updated</dt><dd>{new Date(reserve.updatedAt).toLocaleString()}</dd></div>
+            </dl>
+          </section>
 
-              <dl className="billing-period">
-                <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
-                <div><dt>Funding readiness</dt><dd>{fundingStateLabel(onChainAccount.fundingState)}</dd></div>
-                <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
-                <div><dt>Available confidential balance</dt><dd>{onChainAccount.availableBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
-                <div><dt>Pending confidential balance</dt><dd>{onChainAccount.pendingBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
-              </dl>
-              <p role="status">{fundingStateDescription(onChainAccount.fundingState)}</p>
-            </>
-          ) : onChainAccount.status === "not_configured" ? (
-            <p role="status">The wrapped-USDC mint or Payroll Program is not configured. On-chain reserve setup is unavailable.</p>
-          ) : onChainAccount.status === "no_reserve" ? (
-            <p role="status">No reserve signing address exists to reconcile.</p>
-          ) : onChainAccount.status === "not_checked" ? (
-            <p role="status">The on-chain reserve state could not be checked in this session.</p>
-          ) : (
-            <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
-          )}
-          {canStartOrdinaryUsdcReserveFunding(
-            onChainAccount.status,
-            onChainAccount.confidentialTransferReady === true,
-            gasTankPreflight.status
-          ) && onChainAccount.tokenAccount ? (
-            <section className="reserve-summary" aria-label="Fund Reserve with ordinary Circle USDC">
-              <h3>Fund the Reserve with ordinary USDC</h3>
-              <p>
-                Enter the amount of Circle Devnet USDC in your connected wallet.
-                Paylore checks the token accounts, asks your wallet to approve the
-                wrap, and verifies the finalized USDC debit, Token Wrap escrow
-                credit, and Reserve wrapped-USDC credit. A verified public credit
-                is not the same as a verified confidential balance.
+          <section className="reserve-panel" aria-labelledby="reserve-readiness-heading">
+            <header className="reserve-panel__header reserve-panel__header--split">
+              <h3 id="reserve-readiness-heading">Confidential reserve readiness</h3>
+              <div className="reserve-panel__actions">
+                <button className="button button--secondary" disabled={checkingOnChain || busy || fundingBusy} aria-busy={checkingOnChain} onClick={() => {
+                  setCheckingOnChain(true);
+                  void refreshOnChainState();
+                }} type="button">
+                  Refresh on-chain check
+                </button>
+              </div>
+            </header>
+            {checkingOnChain ? (
+              <p className="loading-indicator" role="status">
+                <span className="loading-indicator__icon" aria-hidden="true" />
+                Checking finalized Devnet account and program state…
               </p>
-              <p>Current public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
-              <label htmlFor="reserve-ordinary-usdc-amount">Amount (USDC)</label>
-              <input
-                id="reserve-ordinary-usdc-amount"
-                name="reserve-ordinary-usdc-amount"
-                inputMode="decimal"
-                autoComplete="off"
-                value={fundingAmount}
-                disabled={busy || fundingBusy || Boolean(pendingWrap)}
-                onChange={(event) => setFundingAmount(event.target.value)}
-                placeholder="0.00"
-                aria-describedby="reserve-ordinary-usdc-help"
-              />
-              <p id="reserve-ordinary-usdc-help">
-                Use up to six decimal places. Your wallet must approve the transaction and pay its network fees.
-              </p>
-              {fundingBusy ? (
-                <p className="loading-indicator" role="status" aria-live="polite">
-                  <span className="loading-indicator__icon" aria-hidden="true" />
-                  {pendingWrap?.phase === "wrap_pending"
-                    ? "Checking the finalized ordinary-USDC wrap transaction…"
-                    : pendingWrap?.phase === "wrap_verified"
-                      ? "Preparing the verified wrap for confidential deposit…"
-                      : pendingWrap?.phase === "preapply"
-                        ? "Applying the Reserve's earlier pending confidential balance…"
-                        : pendingWrap?.phase === "deposit"
-                      ? "Depositing wrapped USDC into the confidential pending balance…"
-                        : pendingWrap?.phase === "apply"
-                          ? "Applying the new confidential balance…"
-                          : pendingWrap
-                            ? "Verifying and continuing the submitted Reserve funding…"
-                            : "Checking USDC and preparing the wallet transaction…"}
+            ) : onChainAccount.status === "account_missing" ? (
+              <p role="status">The expected reserve-owned wrapped-USDC Token-2022 account does not exist. Confidential settlement is unavailable.</p>
+            ) : onChainAccount.status === "workspace_program_not_initialized" ? (
+              <p role="status">The reserve confidential token account is ready, but the Paylore Program workspace account has not been initialized. The reserve program state is not configured.</p>
+            ) : onChainAccount.status === "confidential_account_ready" ? (
+              <p role="status">The reserve confidential token account is configured, but the Paylore Program reserve state is not yet verified.</p>
+            ) : onChainAccount.status === "program_configured" ? (
+              <>
+                <p role="status">The finalized reserve token account and Paylore Program reserve state match. The state check does not by itself mean the reserve is funded.</p>
+                <dl className="reserve-facts">
+                  <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
+                  <div><dt>Funding readiness</dt><dd>{fundingStateLabel(onChainAccount.fundingState)}</dd></div>
+                </dl>
+                <dl className="reserve-balances">
+                  <div><dt>Public wrapped-USDC balance</dt><dd><ReserveAmount baseUnits={onChainAccount.publicBalanceBaseUnits} /></dd></div>
+                  <div><dt>Available confidential balance</dt><dd><ReserveAmount baseUnits={onChainAccount.availableBalanceBaseUnits} /></dd></div>
+                  <div><dt>Pending confidential balance</dt><dd><ReserveAmount baseUnits={onChainAccount.pendingBalanceBaseUnits} /></dd></div>
+                </dl>
+                <p className="reserve-panel__note">{fundingStateDescription(onChainAccount.fundingState)}</p>
+              </>
+            ) : onChainAccount.status === "not_configured" ? (
+              <p role="status">The wrapped-USDC mint or Payroll Program is not configured. On-chain reserve setup is unavailable.</p>
+            ) : onChainAccount.status === "no_reserve" ? (
+              <p role="status">No reserve signing address exists to reconcile.</p>
+            ) : onChainAccount.status === "not_checked" ? (
+              <p role="status">The on-chain reserve state could not be checked in this session.</p>
+            ) : (
+              <p role="alert">On-chain reserve state is not verified. Do not report the confidential reserve as ready or funded.</p>
+            )}
+          </section>
+
+          {fundingAvailable ? (
+            <section className="reserve-panel" aria-labelledby="reserve-funding-heading">
+              <header className="reserve-panel__header">
+                <h3 id="reserve-funding-heading">Fund the Reserve with ordinary USDC</h3>
+                <p>
+                  Enter the amount of Circle Devnet USDC in your connected wallet.
+                  Paylore checks the token accounts, asks your wallet to approve the
+                  wrap, and verifies the finalized USDC debit, Token Wrap escrow
+                  credit, and Reserve wrapped-USDC credit. A verified public credit
+                  is not the same as a verified confidential balance.
                 </p>
-              ) : null}
-              {fundingNotice ? (
-                <div className="state-callout" data-state={fundingNotice.state}
-                  role={fundingNotice.state === "error" ? "alert" : "status"} aria-live="polite">
-                  <span className="state-callout__signal" aria-hidden="true" />
-                  <p>{fundingNotice.text}</p>
+              </header>
+              {pendingWrap ? (
+                <>
+                  <ol className="reserve-steps" aria-label="Reserve funding progress">
+                    {FUNDING_STEPS.map((label, index) => {
+                      const state = index < fundingStep ? "done" : index === fundingStep ? "current" : "upcoming";
+                      return (
+                        <li key={label} className="reserve-steps__item" data-state={state}
+                          aria-current={state === "current" ? "step" : undefined}>
+                          <span className="reserve-steps__marker" aria-hidden="true">{index + 1}</span>
+                          <span>{label}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  <dl className="reserve-facts">
+                    <div><dt>Amount in this funding operation</dt><dd><ReserveAmount baseUnits={pendingWrap.amountBaseUnits} /></dd></div>
+                    <div className="reserve-facts__wide"><dt>Saved wrap signature</dt><dd><code>{pendingWrap.signature}</code></dd></div>
+                  </dl>
+                </>
+              ) : (
+                <div className="field reserve-funding__field">
+                  <label htmlFor="reserve-ordinary-usdc-amount">Amount (USDC)</label>
+                  <input
+                    id="reserve-ordinary-usdc-amount"
+                    name="reserve-ordinary-usdc-amount"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={fundingAmount}
+                    disabled={busy || fundingBusy}
+                    onChange={(event) => setFundingAmount(event.target.value)}
+                    placeholder="0.00"
+                    aria-describedby="reserve-ordinary-usdc-help"
+                  />
+                  <p id="reserve-ordinary-usdc-help" className="field__helper">
+                    Current public wrapped-USDC balance: <ReserveAmount baseUnits={onChainAccount.publicBalanceBaseUnits} />.
+                    Use up to six decimal places. Your wallet must approve the transaction and pay its network fees.
+                  </p>
                 </div>
-              ) : null}
-              <button className="button" type="button"
-                disabled={busy || fundingBusy || checkingOnChain} aria-busy={fundingBusy}
-                onClick={() => void fundReserveWithOrdinaryUsdc()}>
-                {fundingBusy ? "Working…" : pendingWrap ? "Continue confidential funding" : "Wrap USDC and fund Reserve"}
-              </button>
+              )}
+              <div className="reserve-panel__status" aria-live="polite">
+                {fundingBusy ? (
+                  <p className="loading-indicator" role="status">
+                    <span className="loading-indicator__icon" aria-hidden="true" />
+                    {pendingWrap?.phase === "wrap_pending"
+                      ? "Checking the finalized ordinary-USDC wrap transaction…"
+                      : pendingWrap?.phase === "wrap_verified"
+                        ? "Preparing the verified wrap for confidential deposit…"
+                        : pendingWrap?.phase === "preapply"
+                          ? "Applying the Reserve's earlier pending confidential balance…"
+                          : pendingWrap?.phase === "deposit"
+                            ? "Depositing wrapped USDC into the confidential pending balance…"
+                            : pendingWrap?.phase === "apply"
+                              ? "Applying the new confidential balance…"
+                              : pendingWrap
+                                ? "Verifying and continuing the submitted Reserve funding…"
+                                : "Checking USDC and preparing the wallet transaction…"}
+                  </p>
+                ) : fundingNotice ? (
+                  <div className="state-callout" data-state={fundingNotice.state}
+                    role={fundingNotice.state === "error" ? "alert" : "status"}>
+                    <span className="state-callout__signal" aria-hidden="true" />
+                    <p>{fundingNotice.text}</p>
+                  </div>
+                ) : null}
+              </div>
+              <div className="reserve-panel__actions reserve-panel__actions--footer">
+                <button className="button" type="button"
+                  disabled={busy || fundingBusy || checkingOnChain} aria-busy={fundingBusy}
+                  onClick={() => void fundReserveWithOrdinaryUsdc()}>
+                  {fundingBusy ? "Working…" : pendingWrap ? "Continue confidential funding" : "Wrap USDC and fund Reserve"}
+                </button>
+              </div>
             </section>
           ) : null}
-          <button className="button button--secondary" disabled={checkingOnChain || busy || fundingBusy} aria-busy={checkingOnChain} onClick={() => {
-            setCheckingOnChain(true);
-            void refreshOnChainState();
-          }} type="button">
-            Refresh on-chain check
-          </button>
+
           {canInitialize ? (
-            <>
-              <button className="button button--secondary" disabled={busy || fundingBusy} aria-busy={busy} onClick={() => void run("restore")} type="button">
-                Verify encrypted backup
-              </button>
-              <button
-                className="button"
-                disabled={
-                  busy ||
-                  fundingBusy ||
-                  checkingOnChain ||
-                  !gasTankAllowsReserveInitialization(gasTankPreflight.status)
-                }
-                aria-busy={busy}
-                onClick={() => void run("initialize_confidential")}
-                type="button"
-              >
-                {setupSignature ? "Check reserve initialization status" : "Initialize confidential reserve"}
-              </button>
-            </>
+            <section className="reserve-panel" aria-labelledby="reserve-setup-heading">
+              <header className="reserve-panel__header">
+                <h3 id="reserve-setup-heading">Reserve setup and recovery</h3>
+              </header>
+              <div className="reserve-setup">
+                <div className="reserve-setup__item">
+                  <h4>Confidential reserve account</h4>
+                  <p>Creates or checks the reserve-owned Token-2022 account and the matching Paylore Program reserve state. It does not fund the Reserve.</p>
+                  <div className="reserve-panel__actions">
+                    <button
+                      className="button"
+                      disabled={
+                        busy ||
+                        fundingBusy ||
+                        checkingOnChain ||
+                        !gasTankAllowsReserveInitialization(gasTankPreflight.status)
+                      }
+                      aria-busy={busy && activeAction === "initialize_confidential"}
+                      onClick={() => void run("initialize_confidential")}
+                      type="button"
+                    >
+                      {setupSignature ? "Check reserve initialization status" : "Initialize confidential reserve"}
+                    </button>
+                  </div>
+                </div>
+                <div className="reserve-setup__item">
+                  <h4>Encrypted key backup</h4>
+                  <p>Opens the encrypted reserve signing-key backup on the server, confirms it matches this Reserve address, and restores custody from it. No key material is shown.</p>
+                  <div className="reserve-panel__actions">
+                    <button className="button button--secondary" disabled={busy || fundingBusy}
+                      aria-busy={busy && activeAction === "restore"} onClick={() => void run("restore")} type="button">
+                      Verify encrypted backup
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {setupBusy ? (
+                <p className="loading-indicator reserve-panel__status" role="status">
+                  <span className="loading-indicator__icon" aria-hidden="true" />
+                  {activeAction === "restore"
+                    ? "Verifying reserve signing-key backup…"
+                    : setupPhase === "program_configure"
+                      ? "Verifying the Paylore Program reserve…"
+                      : "Configuring the reserve confidential account…"}
+                </p>
+              ) : null}
+            </section>
           ) : null}
-        </section>
+        </>
       ) : (
-        <section className="reserve-summary">
-          <h2>Reserve key custody not configured</h2>
-          <p>Configure encrypted custody for the reserve signing key. This action does not create or fund an on-chain confidential reserve.</p>
+        <section className="reserve-panel" aria-labelledby="reserve-custody-heading">
+          <header className="reserve-panel__header">
+            <h2 id="reserve-custody-heading">Reserve key custody not configured</h2>
+            <p>Configure encrypted custody for the reserve signing key. This action does not create or fund an on-chain confidential reserve.</p>
+          </header>
+          {busy && activeAction === "initialize" ? (
+            <p className="loading-indicator" role="status">
+              <span className="loading-indicator__icon" aria-hidden="true" />
+              Configuring reserve signing-key custody…
+            </p>
+          ) : null}
           {canInitialize ? (
-            <button className="button" disabled={busy || fundingBusy} aria-busy={busy} onClick={() => void run("initialize")} type="button">
-              Configure reserve key custody
-            </button>
+            <div className="reserve-panel__actions reserve-panel__actions--footer">
+              <button className="button" disabled={busy || fundingBusy} aria-busy={busy} onClick={() => void run("initialize")} type="button">
+                Configure reserve key custody
+              </button>
+            </div>
           ) : null}
         </section>
       )}
-      <p className="notice">
+      <p className="reserve-privacy">
+        <span className="reserve-privacy__icon" aria-hidden="true" />
         Paylore does not display reserve private keys, envelope secrets, provider API keys, database credentials, or session tokens.
       </p>
     </div>

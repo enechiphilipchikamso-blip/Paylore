@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { usdcToBaseUnits } from "./reserve-funding-amount";
+import { baseUnitsToUsdc, formatBaseUnits, usdcToBaseUnits } from "./reserve-funding-amount";
 
 describe("ordinary USDC Reserve funding amounts", () => {
   it("converts exact six-decimal amounts without floating-point rounding", () => {
@@ -12,4 +12,13 @@ describe("ordinary USDC Reserve funding amounts", () => {
     "rejects invalid or zero amount %s",
     (value) => expect(() => usdcToBaseUnits(value)).toThrow()
   );
+
+  it("formats exact base units as readable USDC beside grouped base units", () => {
+    expect(baseUnitsToUsdc("50000000")).toBe("50.00");
+    expect(baseUnitsToUsdc("0")).toBe("0.00");
+    expect(baseUnitsToUsdc("1")).toBe("0.000001");
+    expect(baseUnitsToUsdc("1234567890123")).toBe("1,234,567.890123");
+    expect(baseUnitsToUsdc("not-a-number")).toBeNull();
+    expect(formatBaseUnits("50000000")).toBe("50,000,000");
+  });
 });
