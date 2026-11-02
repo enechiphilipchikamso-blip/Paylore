@@ -14,7 +14,7 @@ import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
 import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
 import { waitForDevnetFinality } from "./payroll-transaction-finality";
-import { usdcToBaseUnits } from "./reserve-funding-amount";
+import { baseUnitsToUsdc, formatBaseUnits, usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
 type ReserveAction = "initialize" | "restore" | "initialize_confidential";
@@ -93,7 +93,75 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_wrap_destination_account_mismatch:
       "The Reserve wrapped-USDC token account owner or mint did not match the configured Reserve. No wallet transaction was submitted.",
     reserve_wrap_source_account_mismatch:
-      "Your ordinary-USDC token account owner or mint did not match the connected wallet. No wallet transaction was submitted."
+      "Your ordinary-USDC token account owner or mint did not match the connected wallet. No wallet transaction was submitted.",
+    reserve_confidential_preapply_instruction_changed:
+      "The Reserve's earlier pending confidential balance changed after Paylore prepared to apply it, so no apply transaction was submitted. Refresh the on-chain check and continue this same operation; if this message returns, contact support. Do not wrap USDC again.",
+    reserve_confidential_preapply_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected result of applying its earlier pending balance. Paylore stopped before depositing this funding. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_funding_balance_changed:
+      "The Reserve's balances changed before the confidential deposit, so no deposit was submitted. Your wrapped USDC remains in the Reserve. Refresh the on-chain check and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_deposit_instruction_changed:
+      "The confidential deposit Paylore prepared no longer matches this funding operation, so no deposit was submitted. Your wrapped USDC remains in the Reserve's public balance. Contact support with this operation's details; do not wrap USDC again.",
+    reserve_confidential_deposit_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected confidential deposit. Paylore stopped before applying it and has not marked the funding complete. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_pending_balance_mismatch:
+      "The Reserve's pending confidential balance does not match this funding amount, so Paylore stopped before applying it. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_apply_instruction_changed:
+      "The Reserve's confidential balance changed after Paylore prepared the apply transaction, so no apply transaction was submitted. The deposit remains in the pending confidential balance. Refresh the on-chain check and continue this same operation; if this message returns, contact support. Do not wrap USDC again.",
+    reserve_confidential_apply_balance_mismatch:
+      "The Reserve's finalized balances did not match the expected apply result, so Paylore has not marked the funding complete. Refresh the on-chain check and contact support if this message returns; do not wrap USDC again.",
+    reserve_confidential_funding_transaction_failed:
+      "A confidential Reserve transaction failed on-chain. Paylore recorded the failure and has not marked the funding complete. Continue this same operation to retry it safely; do not wrap USDC again.",
+    reserve_confidential_funding_signature_mismatch:
+      "A Reserve transaction signature did not match the one Paylore recorded for this operation. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_instruction_mismatch:
+      "A finalized Reserve transaction did not contain the instruction Paylore recorded for this operation. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_authority_mismatch:
+      "A finalized Reserve transaction was not authorized by this workspace's Reserve. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_account_mismatch:
+      "A finalized Reserve transaction touched an unexpected token account. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_public_debit_mismatch:
+      "The Reserve's public wrapped-USDC debit did not match the confidential deposit amount. Paylore stopped for safety; contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_failed_transaction_not_verified:
+      "A Reserve transaction failed, but Paylore could not verify that it changed nothing. Paylore stopped for safety; refresh the on-chain check and contact support before continuing. Do not wrap USDC again.",
+    reserve_confidential_funding_instruction_data_missing:
+      "Paylore could not prepare the confidential Reserve instruction. No transaction was submitted. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_balance_unavailable:
+      "Paylore could not read the Reserve's finalized token balances. Nothing new was marked complete. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_status_unavailable:
+      "Paylore could not read the status of the submitted Reserve transaction from Devnet. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_signature_unavailable:
+      "Paylore could not sign the confidential Reserve transaction. No transaction was submitted. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_blockhash_unavailable:
+      "Devnet did not return a recent blockhash, so no confidential Reserve transaction was submitted. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_fee_unavailable:
+      "Paylore could not read the network fee of a finalized Reserve transaction. Wait a moment and continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_unavailable:
+      "Paylore could not complete this confidential Reserve funding step. Nothing new was marked complete. Continue this same operation; do not wrap USDC again.",
+    reserve_confidential_funding_operation_unavailable:
+      "Paylore could not load the saved Reserve funding operation. Refresh the page and continue this same operation; do not wrap USDC again.",
+    reserve_wrap_funding_unavailable:
+      "Paylore could not finish checking this Reserve funding step. Nothing new was marked complete. Continue this same operation; do not wrap USDC again.",
+    reserve_wrap_failure_reconciliation_unavailable:
+      "The ordinary-USDC wrap failed on-chain, but Paylore could not record that result yet. Refresh the Reserve before starting a new wrap.",
+    reserve_devnet_rpc_required:
+      "Reserve funding is restricted to the configured Devnet RPC. No confidential Reserve transaction was submitted.",
+    reserve_not_found:
+      "This workspace has no Reserve key custody. Configure Reserve key custody before funding it.",
+    reserve_program_not_configured:
+      "The Paylore Program reserve state is not configured. Complete Reserve setup and refresh its on-chain status before funding.",
+    reserve_program_state_invalid:
+      "The Paylore Program reserve state could not be verified. Paylore stopped before any confidential Reserve transaction; refresh the on-chain check.",
+    reserve_program_state_malformed:
+      "The Paylore Program reserve state could not be verified. Paylore stopped before any confidential Reserve transaction; refresh the on-chain check.",
+    reserve_program_state_mismatch:
+      "The Paylore Program reserve state does not match this workspace's Reserve. Paylore stopped before any confidential Reserve transaction; contact support.",
+    workspace_read_only:
+      "This workspace is read-only. Activate or renew it, then continue this same Reserve funding operation; do not wrap USDC again.",
+    authentication_required:
+      "Your session has ended. Sign in again, then continue this same Reserve funding operation; do not wrap USDC again.",
+    workspace_access_denied:
+      "Only a workspace organization admin can fund the Reserve."
   };
   return {
     state: "error",
@@ -209,6 +277,34 @@ function fundingStateDescription(state: OnChainAccountState["fundingState"]): st
       return "No public, pending, or available wrapped-USDC funds were found in finalized state. Fund this reserve before expecting a payroll claim to settle.";
     default:
       return "Funding state is unavailable. Refresh the finalized on-chain check before relying on reserve readiness.";
+  }
+}
+
+/** Shows exact base units as readable USDC with the grouped base-unit value beside it. */
+export function ReserveAmount({ baseUnits }: { baseUnits?: string | null }) {
+  const usdc = typeof baseUnits === "string" ? baseUnitsToUsdc(baseUnits) : null;
+  if (usdc === null || typeof baseUnits !== "string") {
+    return <span className="reserve-amount reserve-amount--unavailable">Unavailable</span>;
+  }
+  return (
+    <span className="reserve-amount">
+      <span className="reserve-amount__value financial-value">{usdc} USDC</span>
+      <span className="reserve-amount__base numeric">{formatBaseUnits(baseUnits)} base units</span>
+    </span>
+  );
+}
+
+/** Index of the funding step still in progress; earlier steps are finalized and verified. */
+export function reserveFundingStepIndex(phase: ReserveFundingPhase | undefined): number {
+  switch (phase) {
+    case "wrap_verified":
+    case "preapply":
+    case "deposit":
+      return 1;
+    case "apply":
+      return 2;
+    default:
+      return 0;
   }
 }
 
@@ -664,7 +760,13 @@ export function ReserveActions({
           });
         } else {
           if (activeSignature) {
-            setPendingWrap({ signature: activeSignature, amountBaseUnits });
+            const signature = activeSignature;
+            setPendingWrap((current) => ({
+              signature,
+              amountBaseUnits,
+              phase: current?.signature === signature ? current.phase : undefined,
+              stage: current?.signature === signature ? current.stage : undefined
+            }));
           }
           setFundingNotice(getReserveFundingOutcomeMessage({
             status: "error",
@@ -797,9 +899,9 @@ export function ReserveActions({
               <dl className="billing-period">
                 <div><dt>Confidential transfers ready</dt><dd>{onChainAccount.confidentialTransferReady ? "Yes" : "No"}</dd></div>
                 <div><dt>Funding readiness</dt><dd>{fundingStateLabel(onChainAccount.fundingState)}</dd></div>
-                <div><dt>Public wrapped-USDC balance</dt><dd>{onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
-                <div><dt>Available confidential balance</dt><dd>{onChainAccount.availableBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
-                <div><dt>Pending confidential balance</dt><dd>{onChainAccount.pendingBalanceBaseUnits ?? "Unavailable"} base units</dd></div>
+                <div><dt>Public wrapped-USDC balance</dt><dd><ReserveAmount baseUnits={onChainAccount.publicBalanceBaseUnits} /></dd></div>
+                <div><dt>Available confidential balance</dt><dd><ReserveAmount baseUnits={onChainAccount.availableBalanceBaseUnits} /></dd></div>
+                <div><dt>Pending confidential balance</dt><dd><ReserveAmount baseUnits={onChainAccount.pendingBalanceBaseUnits} /></dd></div>
               </dl>
               <p role="status">{fundingStateDescription(onChainAccount.fundingState)}</p>
             </>
@@ -826,7 +928,7 @@ export function ReserveActions({
                 credit, and Reserve wrapped-USDC credit. A verified public credit
                 is not the same as a verified confidential balance.
               </p>
-              <p>Current public wrapped-USDC balance: {onChainAccount.publicBalanceBaseUnits ?? "Unavailable"} base units.</p>
+              <p>Current public wrapped-USDC balance: <ReserveAmount baseUnits={onChainAccount.publicBalanceBaseUnits} /></p>
               <label htmlFor="reserve-ordinary-usdc-amount">Amount (USDC)</label>
               <input
                 id="reserve-ordinary-usdc-amount"

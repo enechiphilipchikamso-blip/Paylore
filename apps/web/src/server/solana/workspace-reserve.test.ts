@@ -383,6 +383,14 @@ vi.mock("@solana-program/token-2022", () => ({
     }
   })),
   findAssociatedTokenPda: vi.fn(async () => [h.reserveToken, 255]),
+  getApplyConfidentialPendingBalanceInstructionDataDecoder: () => ({
+    decode: (bytes: Uint8Array) => ({
+      discriminator: bytes[0],
+      confidentialTransferDiscriminator: bytes[1],
+      expectedPendingBalanceCreditCounter: BigInt(bytes[2]!),
+      newDecryptableAvailableBalance: bytes.slice(3)
+    })
+  }),
   getConfidentialDepositInstruction: vi.fn((input: any) => {
     h.transactionAmount = input.amount;
     return {
@@ -424,13 +432,18 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
       }
     };
   }),
+  // Like the real instruction, every build encrypts the same new available balance with a fresh nonce.
   getApplyConfidentialPendingBalanceInstructionFromToken: vi.fn((input: any) => ({
     programAddress: h.tokenProgram,
     accounts: [
       { address: input.token, role: 1 },
       { address: input.authority.address, role: 2 }
     ],
-    data: new Uint8Array([202])
+    data: new Uint8Array([
+      202, 8, 1,
+      Math.floor(Math.random() * 256),
+      Number((h.availableBalanceBaseUnits + h.pendingBalanceBaseUnits) & 0xffn)
+    ])
   }))
 }));
 
@@ -440,7 +453,16 @@ vi.mock("@solana/zk-sdk/bundler", () => {
     static fromBytes() { return new KeyMaterial(); }
     static fromSecretKey() { return new KeyMaterial(); }
   }
-  return { AeKey: KeyMaterial, ElGamalKeypair: KeyMaterial, ElGamalSecretKey: KeyMaterial };
+  class AeKey extends KeyMaterial {
+    static fromBytes() { return new AeKey(); }
+    // The mocked ciphertext is [random nonce, balance], so decryption ignores the nonce.
+    decrypt(ciphertext: { bytes: Uint8Array }) { return BigInt(ciphertext.bytes[1]!); }
+  }
+  class AeCiphertext {
+    constructor(readonly bytes: Uint8Array) {}
+    static fromBytes(bytes: Uint8Array) { return bytes.length === 2 ? new AeCiphertext(bytes) : undefined; }
+  }
+  return { AeKey, AeCiphertext, ElGamalKeypair: KeyMaterial, ElGamalSecretKey: KeyMaterial };
 });
 
 vi.mock("@paylore/database", () => ({
