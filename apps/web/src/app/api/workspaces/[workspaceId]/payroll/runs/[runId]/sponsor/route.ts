@@ -32,7 +32,10 @@ import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../..
 import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
 import { classifyPreparedSponsorshipState } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
-import { preparePayrollClaimEscrowAccount } from "../../../../../../../../server/solana/payroll-claim-escrow";
+import {
+  PayrollClaimEscrowError,
+  preparePayrollClaimEscrowAccount
+} from "../../../../../../../../server/solana/payroll-claim-escrow";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -689,7 +692,15 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
+    if (error instanceof PayrollClaimEscrowError) {
+      console.error(JSON.stringify({ event: "payroll_claim_escrow_preparation_failed", code: error.code }));
+      return NextResponse.json(
+        { error: error.code },
+        { status: error.statusCode, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     if (error instanceof GasTankSponsorshipPolicyError) {
+      console.error(JSON.stringify({ event: "gas_tank_sponsorship_policy_rejected", code: error.code }));
       const status = error.code === "gas_tank_insufficient_balance" ? 409
         : error.code === "gas_tank_daily_sponsorship_limit" ? 429
         : error.code === "sponsored_simulation_failed" || error.code === "sponsored_simulation_unavailable" ? 503

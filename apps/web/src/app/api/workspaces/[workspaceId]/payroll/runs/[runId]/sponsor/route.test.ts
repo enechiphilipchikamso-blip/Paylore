@@ -59,6 +59,11 @@ vi.mock("../../../../../../../../server/gas-tank-sponsorship", () => ({
   prepareSponsoredPayrollClaimTransaction: mocks.prepareSponsoredPayrollClaimTransaction
 }));
 vi.mock("../../../../../../../../server/solana/payroll-claim-escrow", () => ({
+  PayrollClaimEscrowError: class PayrollClaimEscrowError extends Error {
+    constructor(readonly code: string, readonly statusCode: number) {
+      super(code);
+    }
+  },
   preparePayrollClaimEscrowAccount: mocks.preparePayrollClaimEscrowAccount
 }));
 
@@ -208,6 +213,30 @@ describe("payroll sponsor route", () => {
     expect(body.transactionBase64).toBe("AQIDBA==");
     expect(JSON.stringify(body)).not.toContain("privateKey");
     expect(mocks.prepareSponsoredPayrollClaimTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("reports the specific escrow preparation failure instead of a generic Gas Tank error", async () => {
+    const { PayrollClaimEscrowError } = await import("../../../../../../../../server/solana/payroll-claim-escrow");
+    mocks.preparePayrollClaimEscrowAccount.mockRejectedValue(
+      new PayrollClaimEscrowError("payroll_claim_escrow_mint_not_approved", 409)
+    );
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "payroll_claim_escrow_mint_not_approved" });
+    expect(mocks.beginGasTankOperationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("returns a resumable pending state while escrow accounts await finality", async () => {
+    mocks.preparePayrollClaimEscrowAccount.mockResolvedValue({
+      status: "pending",
+      tokenAccountAddress: "So11111111111111111111111111111111111111112"
+    });
+    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "pending",
+      error: "payroll_claim_escrow_setup_pending"
+    });
   });
 
   it("replays the same transaction while its blockhash remains valid", async () => {

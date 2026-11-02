@@ -3206,3 +3206,98 @@ button[aria-busy="true"]::before {
     justify-content: stretch;
   }
 }
+
+/* Shared status pill for payroll runs, allocations, invitations and Gas Tank operations. */
+.payroll-status {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-2);
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.payroll-status::before {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.payroll-status[data-tone="success"] {
+  border-color: #23824a;
+  color: #1b6b3c;
+}
+
+.payroll-status[data-tone="partial"] {
+  border-color: #b86a12;
+  color: #8f520d;
+}
+
+.payroll-status[data-tone="error"] {
+  border-color: #c33d45;
+  color: #a5323a;
+}
+
+.payroll-allocations,
+.invitation-groups {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.payroll-allocation,
+.invitation-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.payroll-allocation__header,
+.invitation-group__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.payroll-allocation__who,
+.invitation-group__who {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.payroll-allocation__who code,
+.payroll-allocation code,
+.invitation-group code {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.invitation-group__meta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 42rem) {
+  .payroll-allocation__header,
+  .invitation-group__header {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}
