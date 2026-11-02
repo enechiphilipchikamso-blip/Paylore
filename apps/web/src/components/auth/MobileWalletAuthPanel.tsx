@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   buildWalletConnectDeepLink,
@@ -430,10 +430,10 @@ export function MobileWalletAuthPanel({
     };
   }, [nextPath, router]);
 
-  async function connectMobileWallet(
+  const connectMobileWallet = useCallback(async (
     provider: MobileDeepLinkWallet,
     createdAt: number
-  ): Promise<void> {
+  ): Promise<void> => {
     if (provider === "backpack" && !backpackDeepLinkEnabled) {
       setStatus("idle");
       setError("Open Paylore inside Backpack or connect with its browser extension.");
@@ -482,12 +482,12 @@ export function MobileWalletAuthPanel({
           : "Paylore could not open the wallet app. Try again."
       );
     }
-  }
+  }, [backpackDeepLinkEnabled, nextPath, reason, walletCluster]);
 
-  async function signInWithMobileWallet(
+  const signInWithMobileWallet = useCallback(async (
     provider: MobileDeepLinkWallet,
     createdAt: number
-  ): Promise<void> {
+  ): Promise<void> => {
     const connection = readMobileConnection();
     if (!connection || connection.provider !== provider || !account || account.provider !== provider) {
       setAccount(null);
@@ -576,9 +576,9 @@ export function MobileWalletAuthPanel({
           : "Paylore could not open the wallet sign-in request. Try again."
       );
     }
-  }
+  }, [account, nextPath, reason]);
 
-  function disconnectMobileWallet(): void {
+  const disconnectMobileWallet = useCallback((): void => {
     try {
       const storage = getSessionStorage();
       storage.removeItem(MOBILE_CONNECTION_KEY);
@@ -594,7 +594,7 @@ export function MobileWalletAuthPanel({
     setAccount(null);
     setStatus("idle");
     setError(null);
-  }
+  }, []);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("paylore:deeplink-wallet-state", {
