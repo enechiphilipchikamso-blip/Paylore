@@ -19,7 +19,9 @@ import {
   getReserveFundingOutcomeMessage,
   gasTankAllowsReserveInitialization,
   getReserveActionErrorMessage,
-  ReserveActions
+  ReserveActions,
+  ReserveAmount,
+  reserveFundingStepIndex
 } from "./ReserveActions";
 
 const baseProps = {
@@ -246,5 +248,45 @@ describe("ReserveActions Gas Tank preflight", () => {
     expect(html).toContain("conservative rent allowance and network-fee buffer");
     expect(html).toContain("Gas Tank address:");
     expect(html).toContain("gas-tank-address");
+  });
+});
+
+describe("ReserveActions readable amounts and layout", () => {
+  it("shows readable USDC beside the grouped base units", () => {
+    const html = renderToStaticMarkup(<ReserveAmount baseUnits="50000000" />);
+    expect(html).toContain("50.00 USDC");
+    expect(html).toContain("50,000,000 base units");
+    expect(renderToStaticMarkup(<ReserveAmount baseUnits={undefined} />)).toContain("Unavailable");
+  });
+
+  it("maps each funding phase to its in-progress step", () => {
+    expect(reserveFundingStepIndex("wrap_pending")).toBe(0);
+    expect(reserveFundingStepIndex("deposit")).toBe(1);
+    expect(reserveFundingStepIndex("apply")).toBe(2);
+  });
+
+  it("gives a specific message for wrap verification failures instead of the generic fallback", () => {
+    const generic = getReserveFundingOutcomeMessage({ status: "error" }).text;
+    for (const errorCode of [
+      "reserve_wrap_transaction_status_unavailable",
+      "reserve_wrap_operation_conflict",
+      "reserve_program_configuration_not_verified",
+      "request_not_allowed"
+    ]) {
+      expect(getReserveFundingOutcomeMessage({ status: "error", errorCode }).text).not.toBe(generic);
+    }
+  });
+
+  it("keeps setup, backup, and refresh buttons in their own labelled action areas", () => {
+    const html = renderToStaticMarkup(
+      <ReserveActions
+        {...baseProps}
+        gasTankPreflight={{ status: "ready", address: "gas-tank-address", balanceSol: "0.2" }}
+      />
+    );
+    expect(html).toContain('aria-labelledby="reserve-readiness-heading"');
+    expect(html).toContain('aria-labelledby="reserve-setup-heading"');
+    expect(html).toMatch(/reserve-setup__item[\s\S]*Initialize confidential reserve[\s\S]*reserve-setup__item[\s\S]*Verify encrypted backup/);
+    expect(html).toContain('class="reserve-privacy"');
   });
 });
