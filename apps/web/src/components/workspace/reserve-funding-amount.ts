@@ -11,3 +11,18 @@ export function usdcToBaseUnits(value: string): string {
   }
   return amount.toString();
 }
+
+const groupDigits = (digits: string) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/** Formats exact base units as readable USDC without floating-point rounding. */
+export function baseUnitsToUsdc(value: string): string | null {
+  if (!/^(0|[1-9]\d*)$/.test(value)) return null;
+  const amount = BigInt(value);
+  const whole = (amount / 1_000_000n).toString();
+  const fraction = (amount % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return groupDigits(whole) + "." + fraction.padEnd(2, "0");
+}
+
+export function formatBaseUnits(value: string): string {
+  return /^\d+$/.test(value) ? groupDigits(value) : value;
+}

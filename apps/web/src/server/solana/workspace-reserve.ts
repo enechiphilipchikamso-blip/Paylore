@@ -11,14 +11,15 @@ import {
   type Instruction, type InstructionPlan, type Signature
 } from "@solana/kit";
 import {
-  fetchMint, fetchToken, findAssociatedTokenPda, getConfidentialDepositInstruction, TOKEN_2022_PROGRAM_ADDRESS
+  fetchMint, fetchToken, findAssociatedTokenPda, getApplyConfidentialPendingBalanceInstructionDataDecoder,
+  getConfidentialDepositInstruction, TOKEN_2022_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 import {
   deriveConfidentialKeys, fetchConfidentialTransferBalance,
   getApplyConfidentialPendingBalanceInstructionFromToken,
   getCreateConfidentialTransferAccountInstructionPlan
 } from "@solana-program/token-2022/confidential";
-import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
+import { AeCiphertext, AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
   attachWorkspaceReserveSetupSignature, clearWorkspaceReserveSetupSignature,
   advanceWorkspaceReserveFundingOperation, beginWorkspaceReserveFundingOperation,
@@ -695,6 +696,42 @@ function serializeReserveInstruction(instruction: Instruction): SerializedReserv
     dataBase64: Buffer.from(Array.from(instruction.data)).toString("base64"),
     accountAddresses: (instruction.accounts ?? []).map((account) => account.address)
   };
+}
+
+/**
+ * Apply instructions carry a randomized AES ciphertext, so a rebuilt instruction never has the
+ * same bytes as the saved one. The saved instruction is reused only when it targets the same
+ * accounts, the same pending credit counter, and decrypts to the same new available balance.
+ */
+function resumableApplyInstruction(
+  rebuilt: Instruction,
+  saved: SerializedReserveInstruction | null,
+  aesKey: AeKey
+): Instruction | null {
+  if (!saved || typeof saved.dataBase64 !== "string" || !Array.isArray(saved.accountAddresses)) return null;
+  const current = serializeReserveInstruction(rebuilt);
+  if (
+    saved.programAddress !== current.programAddress ||
+    JSON.stringify(saved.accountAddresses) !== JSON.stringify(current.accountAddresses)
+  ) return null;
+  try {
+    const savedBytes = Uint8Array.from(Buffer.from(saved.dataBase64, "base64"));
+    const decoder = getApplyConfidentialPendingBalanceInstructionDataDecoder();
+    const savedData = decoder.decode(savedBytes);
+    const currentData = decoder.decode(rebuilt.data!);
+    const savedCiphertext = AeCiphertext.fromBytes(Uint8Array.from(savedData.newDecryptableAvailableBalance));
+    const currentCiphertext = AeCiphertext.fromBytes(Uint8Array.from(currentData.newDecryptableAvailableBalance));
+    if (
+      !savedCiphertext || !currentCiphertext ||
+      savedData.discriminator !== currentData.discriminator ||
+      savedData.confidentialTransferDiscriminator !== currentData.confidentialTransferDiscriminator ||
+      savedData.expectedPendingBalanceCreditCounter !== currentData.expectedPendingBalanceCreditCounter ||
+      aesKey.decrypt(savedCiphertext) !== aesKey.decrypt(currentCiphertext)
+    ) return null;
+    return { ...rebuilt, data: savedBytes };
+  } catch {
+    return null;
+  }
 }
 
 function reserveFundingTransactionKeys(
@@ -1380,9 +1417,12 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        const expected = object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction;
-        const actual = serializeReserveInstruction(instruction);
-        if (!expected || JSON.stringify(expected) !== JSON.stringify(actual)) {
+        const saved = resumableApplyInstruction(
+          instruction,
+          object(operationData.preapplyInstruction) as unknown as SerializedReserveInstruction | null,
+          context.aesKey
+        );
+        if (!saved) {
           throw new WorkspaceReserveInitializationError("reserve_confidential_preapply_instruction_changed", 409);
         }
         const marker = String(operationData.preapplyMarker);
@@ -1390,7 +1430,7 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           const submission = await executePlan(
             context.rpc,
             context.feePayerSigner,
-            singleInstructionPlan(instruction),
+            singleInstructionPlan(saved),
             undefined,
             [context.signer],
             marker,
@@ -1618,15 +1658,19 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
           elgamalSecretKey: context.secret,
           aesKey: context.aesKey
         });
-        const expected = object(operationData.applyInstruction) as unknown as SerializedReserveInstruction;
-        if (!expected || JSON.stringify(expected) !== JSON.stringify(serializeReserveInstruction(instruction))) {
+        const saved = resumableApplyInstruction(
+          instruction,
+          object(operationData.applyInstruction) as unknown as SerializedReserveInstruction | null,
+          context.aesKey
+        );
+        if (!saved) {
           throw new WorkspaceReserveInitializationError("reserve_confidential_apply_instruction_changed", 409);
         }
         if (typeof operationData.applySignature !== "string") {
           const submission = await executePlan(
             context.rpc,
             context.feePayerSigner,
-            singleInstructionPlan(instruction),
+            singleInstructionPlan(saved),
             undefined,
             [context.signer],
             String(operationData.applyMarker),
