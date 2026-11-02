@@ -5,8 +5,27 @@ import { isWalletCancellation } from "../auth/walletErrors";
 import { useState } from "react";
 import { getBase58Decoder } from "@solana/kit";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
+import { BusyActionButton } from "./BusyActionButton";
 const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
 import { waitForDevnetFinality } from "./payroll-transaction-finality";
+import {
+  describeGasTankError,
+  GAS_TANK_RETRYABLE_PENDING_CODES
+} from "./gas-tank-error-messages";
+
+/** Escrow accounts finalize across several Devnet transactions; resume preparation this many times. */
+const ESCROW_PENDING_MAX_ATTEMPTS = 12;
+const ESCROW_PENDING_RETRY_DELAY_MS = 5_000;
+/** Outcomes where earlier work is recorded and the same action can be resumed. */
+const PARTIAL_OUTCOME_CODES = new Set([
+  "payroll_claim_escrow_setup_pending",
+  "sponsorship_transaction_pending_finality",
+  "sponsorship_transaction_still_live",
+  "gas_tank_operation_preparing",
+  "previous_sponsored_transaction_failed_retry_allowed"
+]);
+
+class PartialOutcomeError extends Error {}
 
 type Claim = {
   claimId: string;
@@ -61,7 +80,7 @@ export function PayrollClaimCommitAction({
     }
     if (
       !window.confirm(
-        `Prepare ${claims.length} Claim PDA entitlements for this payroll run? The workspace Gas Tank will pay the network fee and Claim PDA rent. Your wallet must still approve the transaction as workspace authority. This does not send USDC or complete payroll settlement.`
+        `Prepare ${claims.length} Claim PDA entitlements for this payroll run? The workspace Gas Tank pays the network fees and the rent for each confidential allocation account and Claim PDA. Your wallet must still approve the transaction as workspace authority. This does not send USDC or complete payroll settlement.`
       )
     ) {
       return;
@@ -80,19 +99,11 @@ export function PayrollClaimCommitAction({
           index * claimsPerTransaction,
           (index + 1) * claimsPerTransaction
         );
-        const sponsorshipResponse = await fetch(
-          `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              action: "prepare",
-              claimIds: claimBatch.map((claim) => claim.claimId)
-            })
-          }
+        setProgress(
+          `Preparing batch ${index + 1} of ${batchCount}: the Gas Tank is creating the confidential allocation accounts and checking the sponsorship policy…`
         );
-        const sponsorship = await sponsorshipResponse.json().catch(() => null) as {
+        let sponsorshipResponse: Response | null = null;
+        let sponsorship: {
           status?: string;
           error?: string;
           submittedCount?: number;
@@ -103,7 +114,37 @@ export function PayrollClaimCommitAction({
           feeLamports?: string;
           gasTankAddress?: string;
           claims?: Array<{ claimId: string; claimAddress: string }>;
-        } | null;
+        } | null = null;
+        for (let attempt = 1; attempt <= ESCROW_PENDING_MAX_ATTEMPTS; attempt += 1) {
+          sponsorshipResponse = await fetch(
+            `/api/workspaces/${workspaceId}/payroll/runs/${runId}/sponsor`,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                action: "prepare",
+                claimIds: claimBatch.map((claim) => claim.claimId)
+              })
+            }
+          ).catch(() => null);
+          sponsorship = sponsorshipResponse
+            ? await sponsorshipResponse.json().catch(() => null)
+            : null;
+          const stillPreparing =
+            (sponsorship?.status === "pending" &&
+              GAS_TANK_RETRYABLE_PENDING_CODES.has(sponsorship.error ?? "")) ||
+            // A platform timeout means escrow setup outlived the request; its signatures are persisted and resumable.
+            (sponsorshipResponse !== null && (sponsorshipResponse.status === 502 || sponsorshipResponse.status === 504) && !sponsorship);
+          if (!stillPreparing || attempt === ESCROW_PENDING_MAX_ATTEMPTS) break;
+          setProgress(
+            `Batch ${index + 1} of ${batchCount}: confidential allocation accounts are awaiting Devnet finality (check ${attempt} of ${ESCROW_PENDING_MAX_ATTEMPTS - 1}). Paylore resumes automatically; keep this page open.`
+          );
+          await new Promise((resolve) => setTimeout(resolve, ESCROW_PENDING_RETRY_DELAY_MS));
+        }
+        if (!sponsorshipResponse) {
+          throw new Error(describeGasTankError(null));
+        }
         if (sponsorshipResponse.ok && sponsorship?.status === "reconciled") {
           if (!sponsorship.signature) {
             throw new Error("A prior sponsored transaction was reconciled without a transaction reference. Refresh the payroll run before continuing.");
@@ -117,32 +158,11 @@ export function PayrollClaimCommitAction({
             !sponsorship.operationId || !sponsorship.signature ||
             !Array.isArray(sponsorship.claims) ||
             sponsorship.claims.length !== claimBatch.length) {
-          const reason = sponsorship?.error;
-          if (reason === "gas_tank_insufficient_balance") {
-            throw new Error("The workspace Gas Tank balance is too low to sponsor this transaction. Fund the Gas Tank, then retry the payroll commitment.");
-          }
-          if (reason === "gas_tank_not_initialized") {
-            throw new Error("The workspace Gas Tank has not been initialized. Set it up before requesting sponsored payroll transactions.");
-          }
-          if (reason === "gas_tank_daily_sponsorship_limit") {
-            throw new Error("The workspace Gas Tank sponsorship limit has been reached for the last 24 hours. Try again after the budget window resets.");
-          }
-          if (reason === "sponsorship_transaction_pending_finality") {
-            throw new Error("An earlier sponsored transaction has been submitted and is awaiting finality. Paylore will not create another transaction while that attempt is unresolved.");
-          }
-          if (reason === "sponsorship_transaction_still_live" || reason === "gas_tank_operation_preparing") {
-            throw new Error("A prepared Gas Tank transaction is still active. Do not retry or approve another transaction until the existing attempt is reconciled.");
-          }
-          if (reason === "previous_sponsored_transaction_failed_retry_allowed") {
-            throw new Error("The earlier sponsored transaction finalized with an on-chain failure. Its actual network fee was recorded; you can safely retry the same payroll batch.");
-          }
-          if (reason === "payroll_run_already_committed") {
-            throw new Error("This payroll run is already committed. Refresh to view its recorded state; Paylore will not prepare another transaction.");
-          }
-          if (reason === "gas_tank_operation_already_prepared" || reason === "gas_tank_operation_already_finalized") {
-            throw new Error("An earlier sponsored attempt exists for this payroll batch. Refresh and reconcile that attempt before submitting another transaction.");
-          }
-          throw new Error("The Gas Tank could not prepare a permitted sponsored transaction. No arbitrary transaction was signed.");
+          const code = sponsorship?.error;
+          const text = sponsorshipResponse.ok && !code
+            ? "The Gas Tank returned an incomplete sponsored transaction. Nothing was signed by your wallet. Refresh and retry."
+            : describeGasTankError(code, sponsorshipResponse.status);
+          throw code && PARTIAL_OUTCOME_CODES.has(code) ? new PartialOutcomeError(text) : new Error(text);
         }
         const transaction = Uint8Array.from(
           atob(sponsorship.transactionBase64),
@@ -199,11 +219,12 @@ export function PayrollClaimCommitAction({
           }
         );
         if (!response.ok) {
-          const resultBody = await response.json();
-          throw new Error(
-            resultBody.error === "payroll_program_not_configured"
-              ? "The Devnet Payroll Program is not configured. No database completion was recorded."
-              : `Transaction ${index + 1} finalized but its Claim PDA records could not be reconciled. Keep this signature and retry the idempotent submission: ${transactionSignature}`
+          const resultBody = await response.json().catch(() => null) as { error?: string } | null;
+          if (resultBody?.error === "payroll_program_not_configured") {
+            throw new Error("The Devnet Payroll Program is not configured. No database completion was recorded.");
+          }
+          throw new PartialOutcomeError(
+            `Transaction ${index + 1} finalized but its Claim PDA records could not be reconciled yet. Retry Submit Claim PDAs; Paylore reconciles the same finalized transaction instead of sending a new one. Signature: ${transactionSignature}`
           );
         }
       }
@@ -216,7 +237,7 @@ export function PayrollClaimCommitAction({
     } catch (error) {
       setMessage({
         state:
-          error instanceof Error && (
+          error instanceof PartialOutcomeError || error instanceof Error && (
             error.message.includes("is not finalized yet") ||
             error.message.includes("reconcile this attempt")
           )
@@ -233,47 +254,59 @@ export function PayrollClaimCommitAction({
   }
 
   if (!canCommit) return null;
+  const blocked = !programId || !allocationCommitment || claims.length === 0;
   return (
-    <div>
-      <button
-        className="button"
-        disabled={
-          busy ||
-          !programId ||
-          !allocationCommitment ||
-          claims.length === 0
-        }
-        aria-busy={busy}
-        onClick={() => void submitClaims()}
-        type="button"
-      >
-        {busy ? "Submitting Claim PDAs…" : "Submit Claim PDAs"}
-      </button>
+    <section className="reserve-panel" aria-labelledby="payroll-claims-heading">
+      <header className="reserve-panel__header">
+        <h3 id="payroll-claims-heading">Submit Claim PDAs</h3>
+        <p>
+          Creates one confidential allocation account and one Claim PDA per
+          allocation on Devnet. The workspace Gas Tank pays every network fee
+          and account rent; your wallet approves only as workspace authority.
+          No USDC moves in this step.
+        </p>
+      </header>
       {!programId ? (
-        <p className="notice">
-          Configure the verified Devnet Payroll Program ID before submitting
-          payroll claims.
-        </p>
-      ) : null}
-      {canCommit ? (
-        <p className="notice">
-          Sponsored network fees and account rent are limited to approved
-          payroll Claim PDA creation. The manager wallet remains the authority
-          only.{" "}
-          <a href={`/workspace/${workspaceId}/gas-tank`}>Manage Gas Tank</a>
-        </p>
-      ) : null}
-      {progress ? <p role="status">{progress}</p> : null}
-      {message ? (
-        <div
-          className="state-callout"
-          data-state={message.state}
-          role={message.state === "error" ? "alert" : "status"}
-        >
+        <div className="state-callout" data-state="error" role="alert">
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>{message.text}</p>
+          <p>Configure the verified Devnet Payroll Program ID before submitting payroll claims.</p>
         </div>
       ) : null}
-    </div>
+      <div className="reserve-panel__status" aria-live="polite">
+        {busy ? (
+          <p className="loading-indicator" role="status">
+            <span className="loading-indicator__icon" aria-hidden="true" />
+            {progress || "Preparing the sponsored Claim PDA transaction…"}
+          </p>
+        ) : message ? (
+          <div
+            className="state-callout"
+            data-state={message.state}
+            role={message.state === "error" ? "alert" : "status"}
+          >
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>{message.text}</p>
+          </div>
+        ) : null}
+      </div>
+      <div className="reserve-panel__actions reserve-panel__actions--footer">
+        <a className="button button--secondary" href={`/workspace/${workspaceId}/gas-tank`}>
+          Manage Gas Tank
+        </a>
+        <BusyActionButton
+          className="button"
+          busy={busy}
+          disabled={blocked}
+          onClick={() => void submitClaims()}
+          type="button"
+        >
+          {busy
+            ? "Submitting Claim PDAs…"
+            : message?.state === "error" || message?.state === "partial"
+              ? "Retry Submit Claim PDAs"
+              : "Submit Claim PDAs"}
+        </BusyActionButton>
+      </div>
+    </section>
   );
 }

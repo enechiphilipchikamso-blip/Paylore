@@ -38,6 +38,7 @@ export function SignOutButton() {
         void signOut()
       }
       disabled={busy}
+      aria-busy={busy || undefined}
     >
       {busy
         ? "Signing out…"

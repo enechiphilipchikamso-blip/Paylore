@@ -170,10 +170,7 @@ export default async function InvitationEntryPage({
         title="Wrong Wallet Connected"
         description="The authenticated wallet does not match the wallet associated with this invitation target."
       >
-        <div
-          className="invite-state"
-          role="alert"
-        >
+        <div className="invite-state">
           <p>
             Switch to the wallet associated
             with this invitation, then retry
@@ -182,7 +179,7 @@ export default async function InvitationEntryPage({
 
           <InvitationActions
             authPath={authPath}
-            retryPath={`/invite/${token}`}
+            sessionWalletAddress={sessionState.session.walletAddress}
           />
         </div>
       </PublicPage>

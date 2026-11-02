@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { BusyActionButton } from "./BusyActionButton";
 
 export function PayrollRunActions({
   workspaceId,
@@ -14,7 +15,10 @@ export function PayrollRunActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{
+    state: "success" | "error" | "partial";
+    text: string;
+  } | null>(null);
 
   async function cancelRun() {
     if (
@@ -41,40 +45,55 @@ export function PayrollRunActions({
       if (!response.ok) {
         setMessage(
           response.status === 409
-            ? "This run can no longer be cancelled because commitment has started."
-            : "The run could not be cancelled. Its current status has not been changed by this message."
+            ? { state: "partial", text: "This run can no longer be cancelled because commitment has started." }
+            : { state: "error", text: "The run could not be cancelled. Its current status has not been changed." }
         );
         return;
       }
+      setMessage({ state: "success", text: "The payroll run was cancelled. No on-chain commitment was submitted." });
       router.refresh();
     } catch {
-      setMessage(
-        "The cancellation result could not be verified. Refresh the run before retrying."
-      );
+      setMessage({
+        state: "partial",
+        text: "The cancellation result could not be verified. Refresh the run before retrying."
+      });
     } finally {
       setBusy(false);
     }
   }
 
+  if (!canCancel && !message) return null;
   return (
-    <div>
-      {canCancel ? (
-        <button
-          className="button button--secondary"
-          disabled={busy}
-          aria-busy={busy}
-          onClick={() => void cancelRun()}
-          type="button"
-        >
-          {busy ? "Cancelling…" : "Cancel before commitment"}
-        </button>
-      ) : null}
+    <section className="reserve-panel" aria-labelledby="payroll-cancel-heading">
+      <header className="reserve-panel__header">
+        <h3 id="payroll-cancel-heading">Cancel before commitment</h3>
+        <p>
+          A confirmed run can be cancelled only while no Claim PDA or escrow
+          transaction has been submitted. Cancellation cannot be undone.
+        </p>
+      </header>
       {message ? (
-        <div className="state-callout" data-state="partial" role="status">
+        <div
+          className="state-callout"
+          data-state={message.state}
+          role={message.state === "error" ? "alert" : "status"}
+        >
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>{message}</p>
+          <p>{message.text}</p>
         </div>
       ) : null}
-    </div>
+      {canCancel ? (
+        <div className="reserve-panel__actions reserve-panel__actions--footer">
+          <BusyActionButton
+            className="button button--secondary"
+            busy={busy}
+            onClick={() => void cancelRun()}
+            type="button"
+          >
+            {busy ? "Cancelling…" : "Cancel payroll run"}
+          </BusyActionButton>
+        </div>
+      ) : null}
+    </section>
   );
 }

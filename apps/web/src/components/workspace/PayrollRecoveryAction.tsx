@@ -1,5 +1,6 @@
 "use client";
 
+import { describeGasTankError } from "./gas-tank-error-messages";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -203,9 +204,7 @@ export function PayrollRecoveryAction({
             state: "error",
             text: result?.error === "workspace_busy"
               ? "Another payroll claim or recovery is being reconciled for this workspace. Check again after it finishes."
-              : result?.error === "payroll_allocation_not_recoverable"
-                ? "This allocation is no longer eligible for recovery."
-                : "The recovery request could not be completed. Review the allocation state and try again."
+              : describeGasTankError(result?.error, response.status)
           });
         }
         return;

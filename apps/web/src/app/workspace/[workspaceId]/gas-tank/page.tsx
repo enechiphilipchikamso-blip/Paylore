@@ -103,8 +103,10 @@ export default async function WorkspaceGasTankPage({
         <p className="eyebrow">Gas Tank</p>
         <h2>Gas Tank</h2>
         <p>
-          Manage the network fees Paylore can sponsor for approved workspace
-          operations. Funding is manual. Paylore does not automatically refill
+          The Gas Tank is this workspace&apos;s fee payer. It pays the network
+          fees and account rent for workspace operations started by
+          administrators and contributors, within per-operation and 24-hour
+          limits. Funding is manual. Paylore does not automatically refill
           this balance.
         </p>
       </header>
