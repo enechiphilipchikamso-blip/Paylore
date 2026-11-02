@@ -721,12 +721,13 @@ function resumableApplyInstruction(
     const currentData = decoder.decode(rebuilt.data!);
     const savedCiphertext = AeCiphertext.fromBytes(Uint8Array.from(savedData.newDecryptableAvailableBalance));
     const currentCiphertext = AeCiphertext.fromBytes(Uint8Array.from(currentData.newDecryptableAvailableBalance));
+    const savedBalance = savedCiphertext ? aesKey.decrypt(savedCiphertext) : undefined;
+    const currentBalance = currentCiphertext ? aesKey.decrypt(currentCiphertext) : undefined;
     if (
-      !savedCiphertext || !currentCiphertext ||
+      savedBalance === undefined || savedBalance !== currentBalance ||
       savedData.discriminator !== currentData.discriminator ||
       savedData.confidentialTransferDiscriminator !== currentData.confidentialTransferDiscriminator ||
-      savedData.expectedPendingBalanceCreditCounter !== currentData.expectedPendingBalanceCreditCounter ||
-      aesKey.decrypt(savedCiphertext) !== aesKey.decrypt(currentCiphertext)
+      savedData.expectedPendingBalanceCreditCounter !== currentData.expectedPendingBalanceCreditCounter
     ) return null;
     return { ...rebuilt, data: savedBytes };
   } catch {
