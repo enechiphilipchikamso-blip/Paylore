@@ -27,6 +27,8 @@ import {
 
 const SYSTEM_PROGRAM_ADDRESS = "11111111111111111111111111111111";
 const ENCODER = new TextEncoder();
+const WORKSPACE_RENT_BYTES = 8 + 32 + 4 + 64 + 32 + 1;
+const CLAIM_RENT_BYTES = 8 + 32 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 1;
 
 function concat(...parts: Uint8Array[]): Uint8Array {
   const output = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));
@@ -120,6 +122,7 @@ async function prepareSponsoredInstructionTransaction(input: {
   balanceLamports: string;
   dailyBookedFeesLamports: bigint;
   dailyOperationCount: number;
+  rentLamports: bigint;
 }): Promise<{
   transactionBase64: string;
   signature: string;
@@ -168,6 +171,7 @@ async function prepareSponsoredInstructionTransaction(input: {
     assertSponsoredCost({
       transactionBytes: wireBytes.length,
       feeLamports: BigInt(fee.value),
+      rentLamports: input.rentLamports,
       balanceLamports: BigInt(input.balanceLamports),
       dailyBookedFeesLamports: input.dailyBookedFeesLamports,
       dailyOperationCount: input.dailyOperationCount
@@ -235,6 +239,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       programAddress: programId,
       accounts: [
         { address: authority, role: AccountRole.WRITABLE_SIGNER },
+        { address: address(input.gasTankAddress), role: AccountRole.WRITABLE_SIGNER },
         { address: workspace, role: AccountRole.WRITABLE },
         { address: address(SYSTEM_PROGRAM_ADDRESS), role: AccountRole.READONLY }
       ],
@@ -260,6 +265,7 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
           programAddress: programId,
           accounts: [
             { address: authority, role: AccountRole.WRITABLE_SIGNER },
+            { address: address(input.gasTankAddress), role: AccountRole.WRITABLE_SIGNER },
             { address: contributor, role: AccountRole.READONLY },
             { address: workspace, role: AccountRole.READONLY },
             { address: claimAddress, role: AccountRole.WRITABLE },
@@ -326,9 +332,21 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       initializeDiscriminator,
       createClaimDiscriminator,
       includeWorkspaceInitialization: !existingWorkspace,
-      systemProgramAddress: SYSTEM_PROGRAM_ADDRESS
+      systemProgramAddress: SYSTEM_PROGRAM_ADDRESS,
+      payerAddress: input.gasTankAddress
     });
 
+    let rentLamports = 0n;
+    if (!existingWorkspace) {
+      const workspaceRent = await readSolanaRpc<{ value: number }>(
+        "getMinimumBalanceForRentExemption", [WORKSPACE_RENT_BYTES]
+      );
+      rentLamports += BigInt(workspaceRent.value);
+    }
+    const claimRent = await readSolanaRpc<{ value: number }>(
+      "getMinimumBalanceForRentExemption", [CLAIM_RENT_BYTES]
+    );
+    rentLamports += BigInt(claimRent.value) * BigInt(derivedClaims.length);
     const prepared = await prepareSponsoredInstructionTransaction({
       instructions: instructionPlan,
       validateInstructions: validateInstructionPlan,
@@ -336,7 +354,8 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       gasTankPrivateKey: secretCopy,
       balanceLamports: input.balanceLamports,
       dailyBookedFeesLamports: input.dailyBookedFeesLamports,
-      dailyOperationCount: input.dailyOperationCount
+      dailyOperationCount: input.dailyOperationCount,
+      rentLamports
     });
     return {
       ...prepared,

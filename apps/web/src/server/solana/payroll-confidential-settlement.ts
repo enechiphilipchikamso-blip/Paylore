@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  AccountRole, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
+  AccountRole, addSignersToTransactionMessage, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
   createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress, isSome,
@@ -35,6 +35,7 @@ import {
 } from "@paylore/database";
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
+import { withWorkspaceGasTankKey } from "../gas-tank";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality,
@@ -147,13 +148,14 @@ async function waitForFinality(rpc: ReturnType<typeof createSolanaRpc>, sig: Sig
 }
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
-  signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  feePayer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   plan: InstructionPlan,
-  submitted?: (signature: string) => Promise<void>
+  submitted?: (signature: string) => Promise<void>,
+  additionalSigners: readonly Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>[] = []
 ): Promise<{ successful: boolean; pending: boolean; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
-      setTransactionMessageFeePayerSigner(signer, createTransactionMessage({ version: 0 })),
+      setTransactionMessageFeePayerSigner(feePayer, createTransactionMessage({ version: 0 })),
     onTransactionMessageUpdated: async (message) => {
       const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
       return setTransactionMessageLifetimeUsingBlockhash({
@@ -167,7 +169,9 @@ async function executePlan(
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
     executeTransactionMessage: async (_context, message) => {
-      const signed = await partiallySignTransactionMessageWithSigners(message);
+      const signed = await partiallySignTransactionMessageWithSigners(
+        addSignersToTransactionMessage([feePayer, ...additionalSigners], message)
+      );
       const encoded = getBase64EncodedWireTransaction(signed);
       const sig = await rpc.sendTransaction(encoded, {
         encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
@@ -630,6 +634,7 @@ async function fundPayrollClaimEscrow(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  gasSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   secret: ElGamalSecretKey,
   elgamal: ElGamalKeypair,
   aesKey: AeKey,
@@ -723,12 +728,12 @@ async function fundPayrollClaimEscrow(
     });
 
     if (destinationPending > 0n) {
-      const applied = await executePlan(rpc, signer, singleInstructionPlan(
+      const applied = await executePlan(rpc, gasSigner, singleInstructionPlan(
         getApplyConfidentialPendingBalanceInstructionFromToken({
           token: address(input.escrowTokenAccount), tokenAccount: balances.destination.token,
           authority: signer, elgamalSecretKey: secret, aesKey
         })
-      ));
+      ), undefined, [signer]);
       if (!applied.successful || applied.pending || applied.trackingFailed) {
         return { status: "pending" as const, signature };
       }
@@ -899,7 +904,7 @@ async function fundPayrollClaimEscrow(
       throw new PayrollConfidentialSettlementError("confidential_transfer_instruction_invalid", 503);
     }
 
-    const setup = await executePlan(rpc, signer, transferPlan.plans[0]!, async (signature) => {
+    const setup = await executePlan(rpc, gasSigner, transferPlan.plans[0]!, async (signature) => {
       if (!await appendPayrollSettlementContextSignature(db, {
         workspaceId: input.workspaceId, runId: input.runId,
         allocationId: input.allocationId, signature
@@ -929,7 +934,7 @@ async function fundPayrollClaimEscrow(
         amountCommitmentContext: amountContext
       })
     ]);
-    const submission = await executePlan(rpc, signer, atomicPlan, async (signature) => {
+    const submission = await executePlan(rpc, gasSigner, atomicPlan, async (signature) => {
       const attached = await attachPayrollClaimEscrowFundingSignature(db, {
         workspaceId: input.workspaceId, allocationId: input.allocationId, signature,
         sourceAvailableBefore: sourceBefore, destinationAvailableBefore: destinationBefore
@@ -1026,6 +1031,7 @@ async function reconcileSettlement(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
   signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  gasSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   secret: ElGamalSecretKey,
   aesKey: AeKey,
   input: {
@@ -1114,10 +1120,10 @@ async function reconcileSettlement(
       amountCommitment: input.amountCommitment, escrowTokenAccount: input.escrowTokenAccount
     }).then((claim) => claim.status),
     finalizeClaimed: async () => {
-      const tx = await executePlan(rpc, signer, singleInstructionPlan(finalizeClaimedInstruction({
+      const tx = await executePlan(rpc, gasSigner, singleInstructionPlan(finalizeClaimedInstruction({
         programId: input.programId, contributor: input.contributor, workspace: input.workspace,
         reserveState: input.reserveState, reserveAuthority: signer.address, claim: input.claim
-      })));
+      })), undefined, [signer]);
       return tx.successful && !tx.pending && !tx.trackingFailed ? "finalized" : "pending";
     },
     attachSignature: async () => {
@@ -1217,12 +1223,18 @@ export async function settleContributorPayrollAllocation(
     if (!reserve || reserve.address !== signer.address) {
       throw new PayrollConfidentialSettlementError("workspace_reserve_key_mismatch", 503);
     }
+    return withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateBytes) => {
+    const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+    const rpc = createSolanaRpc(rpcEndpoint());
+    const gasBalance = await rpc.getBalance(gasSigner.address, { commitment: "confirmed" }).send();
+    if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+      throw new PayrollConfidentialSettlementError("gas_tank_insufficient_balance", 409);
+    }
     const derived: DerivedKeys = await deriveConfidentialKeys({ signer });
     const secret = ElGamalSecretKey.fromBytes(derived.elgamalKeypair.secretKey);
     const elgamal = ElGamalKeypair.fromSecretKey(secret);
     const aesKey = AeKey.fromBytes(derived.aeKey);
     try {
-      const rpc = createSolanaRpc(rpcEndpoint());
       const mintAddress = address(mint);
       const mintAccount = (await fetchMint(rpc, mintAddress)).data;
       if (mintAccount.decimals !== 6 ||
@@ -1248,7 +1260,7 @@ export async function settleContributorPayrollAllocation(
         throw new PayrollConfidentialSettlementError("payroll_claim_state_conflict", 409);
       }
       if (allocation.status === "settlement_pending" && allocation.settlementSignature) {
-        return reconcileSettlement(db, rpc, signer, secret, aesKey, {
+        return reconcileSettlement(db, rpc, signer, gasSigner, secret, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
           contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
           claim: claimAddress, claimId: allocation.claimId,
@@ -1293,7 +1305,7 @@ export async function settleContributorPayrollAllocation(
             if (attached.status !== "attached" && attached.status !== "duplicate") {
               return { status: "pending", signature };
             }
-            return reconcileSettlement(db, rpc, signer, secret, aesKey, {
+            return reconcileSettlement(db, rpc, signer, gasSigner, secret, aesKey, {
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
               contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
               claim: claimAddress, claimId: allocation.claimId,
@@ -1369,10 +1381,10 @@ export async function settleContributorPayrollAllocation(
         const reserveTokenAccount = (await fetchToken(rpc, address(reserveToken))).data;
         assertConfidentialAccount(reserveTokenAccount, signer.address, mint, "workspace_reserve_confidential_account_not_ready");
         assertConfidentialStepAllowed(sequence, "reserve_configure");
-        const configured = await executePlan(rpc, signer, singleInstructionPlan(configureReserveInstruction({
+        const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
           programId, authority: evidence.authorityAddress, workspace, reserveState,
           reserveAuthority: signer.address, reserveToken, mint
-        })));
+        })), undefined, [signer]);
         if (!configured.successful || configured.pending || configured.trackingFailed) {
           throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
         }
@@ -1381,12 +1393,12 @@ export async function settleContributorPayrollAllocation(
         let reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         if (reserveBalance.confidential.pendingBalance > 0n) {
           assertConfidentialStepAllowed(sequence, "pending_apply_before_deposit");
-          const apply = await executePlan(rpc, signer, singleInstructionPlan(
+          const apply = await executePlan(rpc, gasSigner, singleInstructionPlan(
             getApplyConfidentialPendingBalanceInstructionFromToken({
               token: address(reserveToken), tokenAccount: reserveBalance.token,
               authority: signer, elgamalSecretKey: secret, aesKey
             })
-          ));
+          ), undefined, [signer]);
           if (!apply.successful || apply.pending || apply.trackingFailed) {
             throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
           }
@@ -1409,10 +1421,10 @@ export async function settleContributorPayrollAllocation(
             throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
           }
           assertConfidentialStepAllowed(sequence, "deposit");
-          const deposit = await executePlan(rpc, signer, singleInstructionPlan(getConfidentialDepositInstruction({
+          const deposit = await executePlan(rpc, gasSigner, singleInstructionPlan(getConfidentialDepositInstruction({
             token: address(reserveToken), mint: mintAddress, authority: signer,
             amount: shortfall, decimals: mintAccount.decimals
-          })));
+          })), undefined, [signer]);
           if (!deposit.successful || deposit.pending || deposit.trackingFailed) {
             throw new PayrollConfidentialSettlementError("reserve_confidential_deposit_failed", 503);
           }
@@ -1420,12 +1432,12 @@ export async function settleContributorPayrollAllocation(
           reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           if (reserveBalance.confidential.pendingBalance > 0n) {
             assertConfidentialStepAllowed(sequence, "pending_apply_after_deposit");
-            const applied = await executePlan(rpc, signer, singleInstructionPlan(
+            const applied = await executePlan(rpc, gasSigner, singleInstructionPlan(
               getApplyConfidentialPendingBalanceInstructionFromToken({
                 token: address(reserveToken), tokenAccount: reserveBalance.token,
                 authority: signer, elgamalSecretKey: secret, aesKey
               })
-            ));
+            ), undefined, [signer]);
             if (!applied.successful || applied.pending || applied.trackingFailed) {
               throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
             }
@@ -1437,7 +1449,7 @@ export async function settleContributorPayrollAllocation(
           throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
         }
 
-        const funding = await fundPayrollClaimEscrow(db, rpc, signer, secret, elgamal, aesKey, {
+        const funding = await fundPayrollClaimEscrow(db, rpc, signer, gasSigner, secret, elgamal, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
           claimId: allocation.claimId, claim: claimAddress, contributor: input.contributorAddress,
           programId, authority: evidence.authorityAddress, workspace, reserveState, reserveToken,
@@ -1458,12 +1470,12 @@ export async function settleContributorPayrollAllocation(
         let escrowBalance = await readReserveBalance(rpc, escrowTokenAccount, secret, aesKey);
         assertConfidentialAccount(escrowBalance.token, signer.address, mint, "payroll_claim_escrow_account_not_ready");
         if (escrowBalance.confidential.pendingBalance > 0n) {
-          const applyEscrow = await executePlan(rpc, signer, singleInstructionPlan(
+          const applyEscrow = await executePlan(rpc, gasSigner, singleInstructionPlan(
             getApplyConfidentialPendingBalanceInstructionFromToken({
               token: address(escrowTokenAccount), tokenAccount: escrowBalance.token,
               authority: signer, elgamalSecretKey: secret, aesKey
             })
-          ));
+          ), undefined, [signer]);
           if (!applyEscrow.successful || applyEscrow.pending || applyEscrow.trackingFailed) {
             return { status: "pending" };
           }
@@ -1487,7 +1499,7 @@ export async function settleContributorPayrollAllocation(
           sourceToken: address(escrowTokenAccount), mint: mintAddress, mintAccount,
           destinationToken: address(destination), sourceTokenAccount: source.data,
           destinationTokenAccount: target.data, authority: signer, amount,
-          sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
+          sourceElgamalKeypair: elgamal, aesKey, payer: gasSigner, rpc
         });
         const transferPlan = rawTransferPlan;
         proofDurationMs = Math.max(0, performance.now() - proofStarted);
@@ -1512,11 +1524,11 @@ export async function settleContributorPayrollAllocation(
         }
 
         assertConfidentialStepAllowed(sequence, "proof_setup");
-        const setup = await executePlan(rpc, signer, transferPlan.plans[0]!, async (signature) => {
+        const setup = await executePlan(rpc, gasSigner, transferPlan.plans[0]!, async (signature) => {
           if (!await appendPayrollSettlementContextSignature(db, {
             workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, signature
           })) throw new Error("Claim proof setup signature persistence failed.");
-        });
+        }, [signer]);
         if (setup.pending) return { status: "pending", signature: setup.signatures.at(-1) };
         if (!setup.successful || setup.trackingFailed) {
           const cleaned = await cleanupProofContexts(db, rpc, signer, {
@@ -1546,7 +1558,7 @@ export async function settleContributorPayrollAllocation(
         const atomicPlan = boundPlan.plans[1];
         let attached = false;
         assertConfidentialStepAllowed(sequence, "confidential_transfer");
-        const result = await executePlan(rpc, signer, atomicPlan, async (signature) => {
+        const result = await executePlan(rpc, gasSigner, atomicPlan, async (signature) => {
           submittedSignature = signature;
           try {
             const tracked = await attachPayrollSettlementSignature(db, {
@@ -1563,7 +1575,7 @@ export async function settleContributorPayrollAllocation(
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, signature
             }).catch(() => false);
           }
-        });
+        }, [signer]);
         if (result.pending) return {
           status: "pending", signature: submittedSignature, proofDurationMs,
           warning: "proof_context_cleanup_pending"
@@ -1571,7 +1583,7 @@ export async function settleContributorPayrollAllocation(
         if (!submittedSignature || !result.signatures.includes(submittedSignature)) {
           throw new PayrollConfidentialSettlementError("confidential_transfer_submission_failed", 503);
         }
-        const reconciled = await reconcileSettlement(db, rpc, signer, secret, aesKey, {
+        const reconciled = await reconcileSettlement(db, rpc, signer, gasSigner, secret, aesKey, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
           contributorUserId: input.contributorUserId, contributor: input.contributorAddress,
           claim: claimAddress, claimId: allocation.claimId, creationSignature: claimCreationSignature,
@@ -1609,5 +1621,6 @@ export async function settleContributorPayrollAllocation(
       secret.free(); elgamal.free(); aesKey.free();
       derived.elgamalKeypair.secretKey.fill(0); derived.aeKey.fill(0);
     }
+    });
   });
 }

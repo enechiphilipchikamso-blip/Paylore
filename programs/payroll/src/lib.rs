@@ -464,9 +464,12 @@ fn validate_identifier(value: &str) -> Result<()> {
 pub struct InitializeWorkspace<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+    /// The workspace Gas Tank pays network fees and workspace rent.
+    #[account(mut)]
+    pub payer: Signer<'info>,
     #[account(
         init_if_needed,
-        payer = authority,
+        payer = payer,
         space = WorkspaceState::SPACE,
         seeds = [
             b"workspace",
@@ -484,6 +487,9 @@ pub struct InitializeWorkspace<'info> {
 pub struct CreateClaim<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+    /// The workspace Gas Tank pays network fees and Claim PDA rent.
+    #[account(mut)]
+    pub payer: Signer<'info>,
     /// CHECK: The contributor is an identity key, not an account the program reads.
     pub contributor: UncheckedAccount<'info>,
     #[account(
@@ -498,7 +504,7 @@ pub struct CreateClaim<'info> {
     pub workspace: Account<'info, WorkspaceState>,
     #[account(
         init_if_needed,
-        payer = authority,
+        payer = payer,
         space = ClaimState::SPACE,
         seeds = [
             b"claim",

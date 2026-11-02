@@ -61,7 +61,7 @@ export function PayrollClaimCommitAction({
     }
     if (
       !window.confirm(
-        `Prepare ${claims.length} Claim PDA entitlements for this payroll run? The workspace Gas Tank will pay the network fee up to the displayed limit. Your wallet must still approve the transaction and pays any Claim PDA rent. This does not send USDC or complete payroll settlement.`
+        `Prepare ${claims.length} Claim PDA entitlements for this payroll run? The workspace Gas Tank will pay the network fee and Claim PDA rent. Your wallet must still approve the transaction as workspace authority. This does not send USDC or complete payroll settlement.`
       )
     ) {
       return;
@@ -149,7 +149,7 @@ export function PayrollClaimCommitAction({
           (character) => character.charCodeAt(0)
         );
         setProgress(
-          `Your wallet must approve transaction ${index + 1} of ${batchCount}. The Gas Tank pays a ${sponsorship.feeLamports} lamport network fee; your wallet remains the authority and pays Claim PDA rent.`
+          `Your wallet must approve transaction ${index + 1} of ${batchCount}. The Gas Tank pays the network fee and Claim PDA rent; your wallet remains the workspace authority.`
         );
         let result;
         try {
@@ -257,9 +257,9 @@ export function PayrollClaimCommitAction({
       ) : null}
       {canCommit ? (
         <p className="notice">
-          Sponsored network fees are limited to approved payroll Claim PDA
-          creation. The manager wallet remains the authority and pays account
-          rent.{" "}
+          Sponsored network fees and account rent are limited to approved
+          payroll Claim PDA creation. The manager wallet remains the authority
+          only.{" "}
           <a href={`/workspace/${workspaceId}/gas-tank`}>Manage Gas Tank</a>
         </p>
       ) : null}

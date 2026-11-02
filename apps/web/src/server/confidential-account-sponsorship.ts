@@ -129,6 +129,7 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
     assertSponsoredCost({
       transactionBytes: wireBytes.length,
       feeLamports: BigInt(fee.value),
+      rentLamports: reservedRentLamports,
       balanceLamports: BigInt(input.balanceLamports),
       dailyBookedFeesLamports: input.dailyBookedFeesLamports,
       dailyOperationCount: input.dailyOperationCount

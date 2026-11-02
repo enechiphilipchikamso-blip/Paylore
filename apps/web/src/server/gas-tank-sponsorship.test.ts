@@ -96,6 +96,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
     mocks.getSignatureFromTransaction.mockReturnValue("prepared-signature");
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }
@@ -182,6 +183,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
   it("fails closed when simulation reports a transaction error", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }
@@ -195,6 +197,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
   it("rejects an unavailable network fee estimate without presenting a prepared transaction", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }

@@ -301,6 +301,7 @@ vi.mock("@solana/kit", () => ({
   blockhash: (value: string) => value,
   createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserveAuthority })),
   createSolanaRpc: vi.fn(() => ({
+    getBalance: () => ({ send: async () => ({ value: 1_000_000_000 }) }),
     getSignatureStatuses: (signatures: string[]) => ({
       send: async () => ({
         value: signatures.map((signature) => ({
@@ -388,6 +389,7 @@ vi.mock("@solana/kit", () => ({
     await options.executeTransactionMessage({}, plan);
   },
   partiallySignTransactionMessageWithSigners: async (message: any) => message,
+  addSignersToTransactionMessage: (_signers: any, message: any) => message,
   getBase64EncodedWireTransaction: () => "dGVzdC10cmFuc2FjdGlvbg==",
   setTransactionMessageFeePayerSigner: (_signer: any, message: any) => message,
   setTransactionMessageLifetimeUsingBlockhash: (_lifetime: any, message: any) => message,
@@ -542,6 +544,7 @@ vi.mock("@paylore/database", () => ({
     allocationCommitment: h.allocationCommitment
   })),
   getWorkspaceReserve: vi.fn(async () => ({ address: h.reserveAuthority })),
+  getWorkspaceGasTank: vi.fn(async () => ({ address: h.reserveAuthority })),
   getPayrollClaimEscrow: vi.fn(async () => ({
     workspaceId: input.workspaceId, payrollRunId: input.runId, allocationId: input.allocationId,
     claimId: h.claimId, tokenAccountAddress: h.escrowToken, status: h.escrowStatus,
@@ -669,6 +672,10 @@ vi.mock("../config", () => ({
 }));
 vi.mock("../reserve", () => ({
   withWorkspaceReserveKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
+    run(new Uint8Array(64).fill(9))
+}));
+vi.mock("../gas-tank", () => ({
+  withWorkspaceGasTankKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
     run(new Uint8Array(64).fill(9))
 }));
 vi.mock("./payroll-program-verification", () => ({

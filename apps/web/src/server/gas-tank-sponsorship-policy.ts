@@ -7,8 +7,11 @@ import {
 
 export const MAX_SPONSORED_CLAIMS = 2;
 export const MAX_SPONSORED_TRANSACTION_BYTES = 1_232;
-export const MAX_SPONSORED_FEE_LAMPORTS = 100_000n;
-export const MAX_DAILY_SPONSORED_FEE_LAMPORTS = 5_000_000n;
+export const SPONSORED_COST_MARGIN_LAMPORTS = 10_000n;
+export const MAX_SPONSORED_TRANSACTION_COST_LAMPORTS = 5_000_000n;
+export const MAX_DAILY_SPONSORED_COST_LAMPORTS = 5_000_000n;
+export const MAX_SPONSORED_FEE_LAMPORTS = 5_000_000n;
+export const MAX_DAILY_SPONSORED_FEE_LAMPORTS = MAX_DAILY_SPONSORED_COST_LAMPORTS;
 export const MAX_DAILY_SPONSORED_OPERATIONS = 100;
 export const MAX_SIMULATED_COMPUTE_UNITS = 1_400_000;
 const TEXT = new TextEncoder();
@@ -142,6 +145,7 @@ export function assertAllowedPayrollInstructionSet(input: {
   instructions: readonly unknown[];
   programId: string;
   authorityAddress: string;
+  payerAddress?: string;
   workspaceId: string;
   workspaceAddress: string;
   allocationCommitment: string;
@@ -168,7 +172,7 @@ export function assertAllowedPayrollInstructionSet(input: {
     !init ||
     init.programAddress !== input.programId ||
     !Array.isArray(init.accounts) ||
-    init.accounts.length !== 3 ||
+    init.accounts.length !== 4 ||
     !(init.data instanceof Uint8Array) ||
     !bytesEqual(
       init.data,
@@ -179,8 +183,9 @@ export function assertAllowedPayrollInstructionSet(input: {
       )
     ) ||
     !expectInstructionAccount(init.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
-    !expectInstructionAccount(init.accounts[1], input.workspaceAddress, AccountRole.WRITABLE) ||
-    !expectInstructionAccount(init.accounts[2], input.systemProgramAddress, AccountRole.READONLY)
+    !expectInstructionAccount(init.accounts[1], input.payerAddress ?? input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
+    !expectInstructionAccount(init.accounts[2], input.workspaceAddress, AccountRole.WRITABLE) ||
+    !expectInstructionAccount(init.accounts[3], input.systemProgramAddress, AccountRole.READONLY)
   ) {
       throw new GasTankSponsorshipPolicyError("sponsored_initialize_instruction_denied");
     }
@@ -197,7 +202,7 @@ export function assertAllowedPayrollInstructionSet(input: {
       !instruction ||
       instruction.programAddress !== input.programId ||
       !Array.isArray(instruction.accounts) ||
-      instruction.accounts.length !== 5 ||
+      instruction.accounts.length !== 6 ||
       !(instruction.data instanceof Uint8Array) ||
       !bytesEqual(
         instruction.data,
@@ -215,10 +220,11 @@ export function assertAllowedPayrollInstructionSet(input: {
         )
       ) ||
       !expectInstructionAccount(instruction.accounts[0], input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
-      !expectInstructionAccount(instruction.accounts[1], claim.contributorAddress, AccountRole.READONLY) ||
-      !expectInstructionAccount(instruction.accounts[2], input.workspaceAddress, AccountRole.READONLY) ||
-      !expectInstructionAccount(instruction.accounts[3], claim.claimAddress!, AccountRole.WRITABLE) ||
-      !expectInstructionAccount(instruction.accounts[4], input.systemProgramAddress, AccountRole.READONLY)
+      !expectInstructionAccount(instruction.accounts[1], input.payerAddress ?? input.authorityAddress, AccountRole.WRITABLE_SIGNER) ||
+      !expectInstructionAccount(instruction.accounts[2], claim.contributorAddress, AccountRole.READONLY) ||
+      !expectInstructionAccount(instruction.accounts[3], input.workspaceAddress, AccountRole.READONLY) ||
+      !expectInstructionAccount(instruction.accounts[4], claim.claimAddress!, AccountRole.WRITABLE) ||
+      !expectInstructionAccount(instruction.accounts[5], input.systemProgramAddress, AccountRole.READONLY)
     ) {
       throw new GasTankSponsorshipPolicyError("sponsored_claim_instruction_denied");
     }
@@ -228,6 +234,7 @@ export function assertAllowedPayrollInstructionSet(input: {
 export function assertSponsoredCost(input: {
   transactionBytes: number;
   feeLamports: bigint;
+  rentLamports?: bigint;
   balanceLamports: bigint;
   dailyBookedFeesLamports: bigint;
   dailyOperationCount: number;
@@ -247,16 +254,21 @@ export function assertSponsoredCost(input: {
   ) {
     throw new GasTankSponsorshipPolicyError("sponsored_transaction_size_exceeded");
   }
-  if (input.feeLamports < 0n || input.feeLamports > MAX_SPONSORED_FEE_LAMPORTS) {
+  const rentLamports = input.rentLamports ?? 0n;
+  if (input.feeLamports < 0n || rentLamports < 0n) {
+    throw new GasTankSponsorshipPolicyError("sponsored_cost_invalid");
+  }
+  const total = input.feeLamports + rentLamports + SPONSORED_COST_MARGIN_LAMPORTS;
+  if (total > MAX_SPONSORED_TRANSACTION_COST_LAMPORTS) {
     throw new GasTankSponsorshipPolicyError("sponsored_fee_limit_exceeded");
   }
-  if (input.balanceLamports < input.feeLamports) {
+  if (input.balanceLamports < total) {
     throw new GasTankSponsorshipPolicyError("gas_tank_insufficient_balance");
   }
   if (
     input.dailyOperationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
-    input.dailyBookedFeesLamports + input.feeLamports >=
-      MAX_DAILY_SPONSORED_FEE_LAMPORTS
+    input.dailyBookedFeesLamports + total >
+      MAX_DAILY_SPONSORED_COST_LAMPORTS
   ) {
     throw new GasTankSponsorshipPolicyError("gas_tank_daily_sponsorship_limit");
   }

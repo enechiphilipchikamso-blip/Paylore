@@ -40,6 +40,7 @@ export type PayrollRecoveryTransaction = {
 
 export async function buildWorkspaceInitializationTransaction(input: {
   authorityAddress: string;
+  payerAddress?: string;
   workspaceId: string;
   programId: string;
 }): Promise<Uint8Array> {
@@ -50,6 +51,7 @@ export async function buildWorkspaceInitializationTransaction(input: {
     throw new Error("The workspace identifier must contain 1 to 64 bytes.");
   }
   const authority = address(input.authorityAddress);
+  const payer = address(input.payerAddress ?? input.authorityAddress);
   const programId = address(input.programId);
   const workspaceSeed = new Uint8Array(
     await globalThis.crypto.subtle.digest(
@@ -62,6 +64,7 @@ export async function buildWorkspaceInitializationTransaction(input: {
     programAddress: programId,
     accounts: [
       { address: authority, role: AccountRole.WRITABLE_SIGNER },
+      { address: payer, role: AccountRole.WRITABLE_SIGNER },
       { address: workspace, role: AccountRole.WRITABLE },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY }
     ],
@@ -81,7 +84,7 @@ export async function buildWorkspaceInitializationTransaction(input: {
         lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
       },
       setTransactionMessageFeePayer(
-        authority,
+        payer,
         createTransactionMessage({ version: 0 })
       )
     )
@@ -171,6 +174,7 @@ async function deriveClaimAddress(
 
 export async function buildPayrollClaimTransactions(input: {
   authorityAddress: string;
+  payerAddress?: string;
   workspaceId: string;
   allocationCommitment: string;
   claims: PayrollClaimInput[];
@@ -200,6 +204,7 @@ export async function buildPayrollClaimTransactions(input: {
   }
 
   const authority = address(input.authorityAddress);
+  const payer = address(input.payerAddress ?? input.authorityAddress);
   const programId = address(input.programId);
   const workspaceSeed = new Uint8Array(
     await globalThis.crypto.subtle.digest(
@@ -225,6 +230,7 @@ export async function buildPayrollClaimTransactions(input: {
     programAddress: programId,
     accounts: [
       { address: authority, role: AccountRole.WRITABLE_SIGNER },
+      { address: payer, role: AccountRole.WRITABLE_SIGNER },
       { address: workspace, role: AccountRole.WRITABLE },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY }
     ],
@@ -259,6 +265,7 @@ export async function buildPayrollClaimTransactions(input: {
           programAddress: programId,
           accounts: [
             { address: authority, role: AccountRole.WRITABLE_SIGNER },
+            { address: payer, role: AccountRole.WRITABLE_SIGNER },
             { address: contributor, role: AccountRole.READONLY },
             { address: workspace, role: AccountRole.READONLY },
             { address: claimAddress, role: AccountRole.WRITABLE },
@@ -315,7 +322,7 @@ export async function buildPayrollClaimTransactions(input: {
           lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
         },
         setTransactionMessageFeePayer(
-          authority,
+          payer,
           createTransactionMessage({ version: 0 })
         )
       )
@@ -334,6 +341,7 @@ export async function buildPayrollClaimTransactions(input: {
 
 export async function buildPayrollRecoveryTransaction(input: {
   authorityAddress: string;
+  payerAddress?: string;
   contributorAddress: string;
   workspaceId: string;
   claimId: string;
@@ -341,6 +349,7 @@ export async function buildPayrollRecoveryTransaction(input: {
   programId: string;
 }): Promise<PayrollRecoveryTransaction> {
   const authority = address(input.authorityAddress);
+  const payer = address(input.payerAddress ?? input.authorityAddress);
   const contributor = address(input.contributorAddress);
   const programId = address(input.programId);
   const claimId = decodeHex32(input.claimId, "Claim identifier");
@@ -390,7 +399,7 @@ export async function buildPayrollRecoveryTransaction(input: {
         lastValidBlockHeight: BigInt(latest.value.lastValidBlockHeight)
       },
       setTransactionMessageFeePayer(
-        authority,
+        payer,
         createTransactionMessage({ version: 0 })
       )
     )

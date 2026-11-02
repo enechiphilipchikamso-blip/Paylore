@@ -529,7 +529,10 @@ export function GasTankActions({
               <h3>Fund Gas Tank</h3>
               <p>
                 Funding is manual. Paylore does not automatically refill this balance.
-                Only SOL is accepted for network fees.
+                Only SOL is accepted. The Gas Tank pays network fees and account
+                rent for approved workspace operations, including workspace and
+                Claim PDA creation, Reserve setup, escrow funding, settlement,
+                and recovery.
               </p>
               <label className="form-field">
                 <span>Amount in SOL</span>
@@ -714,7 +717,8 @@ export function GasTankActions({
         )}
         <p className="notice">
           Only approved workspace-scoped payroll Claim PDA creation is eligible for sponsorship.
-          Other operations are not eligible for sponsored network fees.
+          Only approved workspace operations are eligible: workspace and Claim
+          PDA creation, Reserve setup, escrow funding, settlement, and recovery.
         </p>
       </section>
     </div>

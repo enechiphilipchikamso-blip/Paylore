@@ -82,6 +82,7 @@ export type WorkspaceConfidentialReserveResult = {
     authorityAddress: string;
     workspaceAddress: string;
     programId: string;
+    gasTankAddress: string | null;
   };
 };
 
@@ -479,11 +480,13 @@ function workspaceInitialization(input: {
   authorityAddress: string;
   workspace: string;
   programId: string;
+  gasTankAddress?: string | null;
 }) {
   return {
     authorityAddress: input.authorityAddress,
     workspaceAddress: input.workspace,
-    programId: input.programId
+    programId: input.programId,
+    gasTankAddress: input.gasTankAddress ?? null
   };
 }
 async function deriveConfidentialBalanceSnapshot(
@@ -635,7 +638,8 @@ export async function getWorkspaceConfidentialReserveSnapshot(
         workspaceInitialization: workspaceInitialization({
           authorityAddress: input.workspaceAuthority,
           workspace: input.workspace,
-          programId: input.programId
+          programId: input.programId,
+          gasTankAddress: input.gasTankAddress
         })
       };
     }
@@ -1887,7 +1891,8 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         workspaceInitialization: workspaceInitialization({
           authorityAddress: input.workspaceAuthority,
           workspace: input.workspace,
-          programId: input.programId
+          programId: input.programId,
+          gasTankAddress: input.gasTankAddress
         })
       };
     }
@@ -1973,7 +1978,8 @@ export async function initializeWorkspaceConfidentialReserveAccount(
         workspaceInitialization: workspaceInitialization({
           authorityAddress: input.workspaceAuthority,
           workspace: input.workspace,
-          programId: input.programId
+          programId: input.programId,
+          gasTankAddress: input.gasTankAddress
         })
       };
     }

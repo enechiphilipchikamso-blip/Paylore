@@ -170,9 +170,9 @@ function requiredInstruction(idlInstructions, expected, source) {
 
 const BYTE32 = { array: ["u8", 32] };
 const EXPECTED_INSTRUCTIONS = [
-  { name: "initialize_workspace", context: "InitializeWorkspace", accounts: ["authority", "workspace", "system_program"],
+  { name: "initialize_workspace", context: "InitializeWorkspace", accounts: ["authority", "payer", "workspace", "system_program"],
     args: [{ name: "workspace_id", type: "string" }, { name: "workspace_seed", type: BYTE32 }] },
-  { name: "create_claim", context: "CreateClaim", accounts: ["authority", "contributor", "workspace", "claim", "system_program"],
+  { name: "create_claim", context: "CreateClaim", accounts: ["authority", "payer", "contributor", "workspace", "claim", "system_program"],
     args: [
       { name: "claim_id", type: BYTE32 }, { name: "allocation_commitment", type: BYTE32 },
       { name: "amount_commitment", type: BYTE32 }, { name: "amount_commitment_leaf_index", type: "u32" },
