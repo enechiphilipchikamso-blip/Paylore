@@ -16,6 +16,7 @@ import {
   WorkspaceNavigation
 } from "../../../../components/workspace/WorkspaceNavigation";
 import { getWorkspacePageContext } from "../../../../server/workspace-page-context";
+import { solanaExplorerTransactionUrl } from "../../../../components/workspace/solana-network";
 
 export const metadata: Metadata = {
   title: "Workspace ledger",
@@ -250,7 +251,7 @@ export default async function WorkspaceLedgerPage({
                     <td>
                       {entry.transactionSignature ? (
                         <a
-                          href={`https://explorer.solana.com/tx/${encodeURIComponent(entry.transactionSignature)}?cluster=devnet`}
+                          href={solanaExplorerTransactionUrl(entry.transactionSignature)}
                           rel="noreferrer"
                           target="_blank"
                         >

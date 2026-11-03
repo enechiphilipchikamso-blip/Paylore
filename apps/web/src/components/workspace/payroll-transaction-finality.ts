@@ -1,10 +1,10 @@
 import { createSolanaRpc, signature } from "@solana/kit";
+import { browserSolanaRpcUrl } from "./solana-network";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
 
-export async function waitForDevnetFinality(transactionSignature: string) {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+export async function waitForTransactionFinality(transactionSignature: string) {
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const expectedSignature = signature(transactionSignature);
   const deadline = Date.now() + FINALITY_TIMEOUT_MS;
   while (Date.now() < deadline) {

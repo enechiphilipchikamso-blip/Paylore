@@ -6,8 +6,9 @@ import { useState } from "react";
 import { getBase58Decoder } from "@solana/kit";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { BusyActionButton } from "./BusyActionButton";
+import { SOLANA_WALLET_CHAIN } from "./solana-network";
 const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
-import { waitForDevnetFinality } from "./payroll-transaction-finality";
+import { waitForTransactionFinality } from "./payroll-transaction-finality";
 import {
   describeGasTankError,
   GAS_TANK_RETRYABLE_PENDING_CODES
@@ -175,7 +176,7 @@ export function PayrollClaimCommitAction({
         try {
           [result] = await wallet.signAndSendTransaction({
             account: wallet.account,
-            chain: "solana:devnet",
+            chain: SOLANA_WALLET_CHAIN,
             transaction
           });
         } catch (error) {
@@ -203,7 +204,7 @@ export function PayrollClaimCommitAction({
         setProgress(
           `Waiting for transaction ${index + 1} of ${batchCount} to finalize.`
         );
-        await waitForDevnetFinality(transactionSignature);
+        await waitForTransactionFinality(transactionSignature);
 
         const response = await fetch(
           `/api/workspaces/${workspaceId}/payroll/runs/${runId}/commit`,

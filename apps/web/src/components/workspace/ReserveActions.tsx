@@ -13,8 +13,9 @@ import { isWalletCancellation } from "../auth/walletErrors";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
 import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
-import { waitForDevnetFinality } from "./payroll-transaction-finality";
+import { waitForTransactionFinality } from "./payroll-transaction-finality";
 import { baseUnitsToUsdc, formatBaseUnits, usdcToBaseUnits } from "./reserve-funding-amount";
+import { SOLANA_WALLET_CHAIN, browserSolanaRpcUrl } from "./solana-network";
 
 type ReservePhase = "account_setup" | "program_configure";
 type ReserveAction = "initialize" | "restore" | "initialize_confidential";
@@ -358,7 +359,7 @@ async function submitWorkspaceInitialization(
   if (!wallet.signTransaction) {
     const [sent] = await wallet.signAndSendTransaction({
       account: wallet.account,
-      chain: "solana:devnet",
+      chain: SOLANA_WALLET_CHAIN,
       transaction
     });
     if (!sent) {
@@ -368,14 +369,14 @@ async function submitWorkspaceInitialization(
   }
   const [signed] = await wallet.signTransaction({
     account: wallet.account,
-    chain: "solana:devnet",
+    chain: SOLANA_WALLET_CHAIN,
     transaction
   });
   if (!signed) {
     throw new Error("The wallet did not sign the workspace initialization transaction.");
   }
   const decoded = getTransactionDecoder().decode(signed.signedTransaction);
-  return await createSolanaRpc("https://api.devnet.solana.com")
+  return await createSolanaRpc(browserSolanaRpcUrl())
     .sendTransaction(getBase64EncodedWireTransaction(decoded), {
       encoding: "base64",
       preflightCommitment: "confirmed"
@@ -628,7 +629,7 @@ export function ReserveActions({
                 text: "The Payroll Program workspace initialization was submitted. Paylore is waiting for network finality before continuing confidential Reserve setup."
               });
               // The server verifies the workspace account at finalized commitment.
-              await waitForDevnetFinality(initializationSignature);
+              await waitForTransactionFinality(initializationSignature);
               await run(action, true);
               return;
             } catch (error) {

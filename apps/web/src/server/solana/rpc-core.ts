@@ -20,17 +20,23 @@ const APPROVED_METHODS = new Set([
   "getSignaturesForAddress",
   "getSignatureStatuses",
   "getSlot",
+  "getTokenAccountBalance",
   "getTokenAccountsByOwner",
+  "getTokenSupply",
   "getTransaction",
   "isBlockhashValid",
   "sendTransaction",
   "simulateTransaction"
 ]);
 
+export type SolanaRpcErrorDetail = { code: number; message: string; data?: unknown };
+
 export class SolanaRpcError extends Error {
   constructor(
     message: string,
-    readonly provider?: string
+    readonly provider?: string,
+    /** The provider's JSON-RPC error object, when the provider answered with one. */
+    readonly rpcError?: SolanaRpcErrorDetail
   ) {
     super(message);
     this.name = "SolanaRpcError";
@@ -83,19 +89,25 @@ async function requestProvider<T>(
     }
 
     const envelope: unknown = await response.json();
-    if (
-      !envelope ||
-      typeof envelope !== "object" ||
-      !("result" in envelope)
-    ) {
+    if (!envelope || typeof envelope !== "object") {
       throw new SolanaRpcError(
         "The Solana provider returned an invalid response.",
         provider.name
       );
     }
     if ("error" in envelope && envelope.error) {
+      const detail = envelope.error as Partial<SolanaRpcErrorDetail>;
       throw new SolanaRpcError(
         "The Solana provider could not complete the request.",
+        provider.name,
+        typeof detail.code === "number" && typeof detail.message === "string"
+          ? { code: detail.code, message: detail.message, data: detail.data }
+          : undefined
+      );
+    }
+    if (!("result" in envelope)) {
+      throw new SolanaRpcError(
+        "The Solana provider returned an invalid response.",
         provider.name
       );
     }
@@ -132,7 +144,7 @@ export async function readSolanaRpcWithProviders<T>(
     } catch (error) {
       if (!(error instanceof SolanaRpcError)) throw error;
       lastError = error;
-      if (index === providers.length - 1) throw error;
+      if (error.rpcError || index === providers.length - 1) throw error;
     }
   }
   throw lastError ?? new SolanaRpcError("No Solana RPC provider is configured.");

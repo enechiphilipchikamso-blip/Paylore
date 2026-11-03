@@ -13,6 +13,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   type Address
 } from "@solana/kit";
+import { browserSolanaRpcUrl } from "./solana-network";
 
 const SYSTEM_PROGRAM_ADDRESS = address("11111111111111111111111111111111");
 export const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
@@ -74,7 +75,7 @@ export async function buildWorkspaceInitializationTransaction(input: {
       workspaceSeed
     )
   } as const;
-  const rpc = createSolanaRpc("https://api.devnet.solana.com");
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const latest = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
   const message = appendTransactionMessageInstructions(
     [instruction],
@@ -288,7 +289,7 @@ export async function buildPayrollClaimTransactions(input: {
     })
   );
 
-  const rpc = createSolanaRpc("https://api.devnet.solana.com");
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const claimsPerTransaction = input.claims.some((claim) => claim.amountCommitmentProof.length > 8)
     ? 1
     : PAYROLL_CLAIMS_PER_TRANSACTION;
@@ -388,7 +389,7 @@ export async function buildPayrollRecoveryTransaction(input: {
     ],
     data: concatenate(discriminator, reasonCommitment)
   } as const;
-  const latest = await createSolanaRpc("https://api.devnet.solana.com")
+  const latest = await createSolanaRpc(browserSolanaRpcUrl())
     .getLatestBlockhash({ commitment: "confirmed" })
     .send();
   const message = appendTransactionMessageInstructions(

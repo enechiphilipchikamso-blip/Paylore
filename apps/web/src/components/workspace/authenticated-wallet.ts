@@ -10,6 +10,7 @@ import {
   type SolanaSignMessageMethod,
   type SolanaSignTransactionMethod
 } from "@solana/wallet-standard-features";
+import { SOLANA_WALLET_CHAIN } from "./solana-network";
 
 type WalletAccount = SolanaSignAndSendTransactionInput["account"];
 
@@ -135,7 +136,7 @@ function exposesAuthenticatedAccount(
   return wallet.accounts.some(
     (account) =>
       account.address === walletAddress &&
-      account.chains.includes("solana:devnet")
+      account.chains.includes(SOLANA_WALLET_CHAIN)
   );
 }
 
@@ -215,7 +216,7 @@ export function findAuthenticatedWallet(walletAddress: string): {
   const registeredAccount = wallet.accounts.find(
     (account) =>
       account.address === walletAddress &&
-      account.chains.includes("solana:devnet")
+      account.chains.includes(SOLANA_WALLET_CHAIN)
   );
   if (!registeredAccount) {
     throw new Error(WALLET_RECONNECT_REQUIRED);

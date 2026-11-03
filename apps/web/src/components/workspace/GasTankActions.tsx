@@ -13,6 +13,7 @@ import {
   signedGasTankFunding,
   solToLamports
 } from "./gas-tank-funding-transaction";
+import { SOLANA_WALLET_CHAIN, solanaExplorerTransactionUrl } from "./solana-network";
 
 type Notice = {
   state: "success" | "error" | "partial";
@@ -364,7 +365,7 @@ export function GasTankActions({
           const [signed] = await wallet.signTransaction({
             account: wallet.account,
             transaction: prepared.transaction,
-            chain: "solana:devnet"
+            chain: SOLANA_WALLET_CHAIN
           });
           if (!signed) {
             throw new Error("The wallet did not return a signed transaction.");
@@ -393,7 +394,7 @@ export function GasTankActions({
         const submission = wallet.signAndSendTransaction({
           account: wallet.account,
           transaction: prepared.transaction,
-          chain: "solana:devnet"
+          chain: SOLANA_WALLET_CHAIN
         });
         setReviewedFunding(null);
         const [sent] = await submission;
@@ -645,7 +646,7 @@ export function GasTankActions({
               <dt>Transaction</dt>
               <dd>
                 <a
-                  href={`https://explorer.solana.com/tx/${encodeURIComponent(latestFunding.signature)}?cluster=devnet`}
+                  href={solanaExplorerTransactionUrl(latestFunding.signature)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -699,7 +700,7 @@ export function GasTankActions({
                         ? `${formatSol(operation.feeLamports)} SOL`
                         : "Pending"}</td>
                       <td>{operation.transactionSignature ? (
-                        <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.transactionSignature)}?cluster=devnet`} target="_blank" rel="noreferrer">
+                        <a href={solanaExplorerTransactionUrl(operation.transactionSignature)} target="_blank" rel="noreferrer">
                           View transaction
                         </a>
                       ) : "Not submitted"}</td>

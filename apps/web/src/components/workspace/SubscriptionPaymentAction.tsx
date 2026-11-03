@@ -17,6 +17,7 @@ import {
   isConfirmedWalletCancellation,
   SUBSCRIPTION_PAYMENT_MISMATCH
 } from "./subscription-payment-submission";
+import { solanaExplorerTransactionUrl } from "./solana-network";
 
 type PreparedActivationPayment = {
   attemptId: string;
@@ -382,7 +383,7 @@ export function SubscriptionPaymentAction({
           <div className="subscription-payment-review-actions">
             <a
               className="button button--secondary"
-              href={`https://explorer.solana.com/tx/${encodeURIComponent(failedSignature)}?cluster=devnet`}
+              href={solanaExplorerTransactionUrl(failedSignature)}
               target="_blank"
               rel="noreferrer"
             >
