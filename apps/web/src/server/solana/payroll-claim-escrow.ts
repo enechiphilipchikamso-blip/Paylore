@@ -268,9 +268,6 @@ export async function preparePayrollClaimEscrowAccount(
   const config = loadPayloreConfig();
   const envelopeKey = config.PAYLORE_RESERVE_ENVELOPE_KEY;
   if (!envelopeKey) throw new PayrollClaimEscrowError("reserve_envelope_key_not_configured", 503);
-  if (config.PAYLORE_NETWORK !== "devnet") {
-    throw new PayrollClaimEscrowError("payroll_claim_escrow_devnet_only", 503);
-  }
   if (config.PAYLORE_PAYROLL_PROGRAM_ID !== input.programId) {
     throw new PayrollClaimEscrowError("payroll_program_identity_mismatch", 409);
   }
