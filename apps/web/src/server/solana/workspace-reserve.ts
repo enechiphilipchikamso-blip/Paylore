@@ -46,7 +46,10 @@ import { classifyTransactionFinality } from "./payroll-confidential-settlement-p
 import { readSolanaRpc } from "./rpc";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
-const FINALITY_TIMEOUT_MS = 120_000;
+// Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
+// the platform cut the response off; a slower finality is returned as the
+// existing resumable "pending" state and continued from its persisted signature.
+const FINALITY_TIMEOUT_MS = 40_000;
 const SYSTEM_PROGRAM = address("11111111111111111111111111111111");
 const encoder = new TextEncoder();
 

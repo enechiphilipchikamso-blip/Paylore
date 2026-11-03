@@ -83,7 +83,8 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
       {
         id: invitation.id,
         invitePath: `/invite/${token}`,
-        expiresAt: expiresAt.toISOString()
+        expiresAt: expiresAt.toISOString(),
+        supersededCount: invitation.supersededCount
       },
       { status: 201, headers: { "Cache-Control": "no-store" } }
     );
@@ -93,6 +94,9 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
     }
     if (error instanceof Error && error.message === "Contributor is not eligible for an invitation.") {
       return NextResponse.json({ error: "contributor_not_eligible_for_invitation" }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "Contributor has already accepted an invitation.") {
+      return NextResponse.json({ error: "contributor_already_joined" }, { status: 409 });
     }
     console.error(JSON.stringify({ event: "contributor_invitation_create_failed" }));
     return NextResponse.json({ error: "invitation_could_not_be_prepared" }, { status: 500 });

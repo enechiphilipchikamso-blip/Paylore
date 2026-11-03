@@ -1,5 +1,6 @@
 "use client";
 
+import { describeContributorSponsoredError } from "./gas-tank-error-messages";
 import {
   getCreateConfidentialTransferAccountInstructionPlan,
   fetchConfidentialTransferBalance,
@@ -207,13 +208,13 @@ async function executePlan(
           body: JSON.stringify({ transactionBase64 })
         });
         let response = await submit();
-        let result = await response.json();
+        let result = await response.json().catch(() => ({}));
         if ((response.ok || response.status === 202) &&
             typeof result.signature === "string") {
           const submittedSignature = signature(getBase58Decoder().decode(result.signature));
           await waitForFinality(rpc, submittedSignature);
           response = await submit();
-          result = await response.json();
+          result = await response.json().catch(() => ({}));
         }
         if (!response.ok || typeof result.signature !== "string" || result.status !== "finalized") {
           throw new Error(
@@ -223,7 +224,9 @@ async function executePlan(
                 ? "Company-sponsored setup is unavailable under the workspace's current sponsorship policy. No contributor-paid fallback was used."
                 : result.error === "confidential_setup_sponsorship_pending" || response.status === 202
                   ? "The sponsored transaction is still awaiting network finality. Refresh this account's status before trying setup again."
-                  : "Company-sponsored account setup could not be reconciled. Keep the setup screen open and retry verification before starting another setup."
+                  : typeof result.error === "string"
+                    ? describeContributorSponsoredError(result.error, response.status)
+                    : "Company-sponsored account setup could not be reconciled. Keep the setup screen open and retry verification before starting another setup."
           );
         }
         const encodedSignature = getBase58Decoder().decode(result.signature);

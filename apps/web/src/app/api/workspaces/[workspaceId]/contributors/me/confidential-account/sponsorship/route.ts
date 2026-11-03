@@ -503,11 +503,10 @@ export async function POST(
       const status = error.code === "gas_tank_insufficient_balance" ? 409
         : error.code.includes("owner_signature") || error.code.includes("owner_signature_invalid") ? 403
         : error.code.includes("encoding_invalid") ? 400 : 409;
-      return NextResponse.json({
-        error: error.code === "gas_tank_insufficient_balance"
-          ? "gas_tank_insufficient_balance"
-          : "confidential_setup_sponsorship_unavailable"
-      }, { status });
+      console.error(JSON.stringify({ event: "confidential_setup_sponsorship_policy_rejected", code: error.code }));
+      // Policy codes are non-sensitive identifiers; returning them lets the
+      // contributor see the actual reason instead of a generic fallback.
+      return NextResponse.json({ error: error.code }, { status });
     }
     console.error(JSON.stringify({ event: "confidential_setup_sponsorship_failed" }));
     return NextResponse.json({ error: "confidential_setup_sponsorship_unavailable" }, { status: 503 });

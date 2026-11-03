@@ -16,6 +16,7 @@ import {
   isNull,
   lte,
   lt,
+  ne,
   notInArray,
   or,
   sql
@@ -2359,6 +2360,46 @@ export async function cleanupEligibleContributorAssociations(
   return { removed, deferred };
 }
 
+/**
+ * Closes every other still-open invitation link for the same contributor by
+ * expiring it (and its pre-authentication entry target) now. Rows are kept for
+ * audit; expired links are already rejected by every invitation lookup.
+ */
+async function expireOpenContributorInvitations(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  input: {
+    workspaceId: string;
+    contributorId: string;
+    exceptInvitationId?: string;
+    now: Date;
+  }
+) {
+  const superseded = await tx
+    .update(contributorInvitations)
+    .set({ expiresAt: input.now })
+    .where(and(
+      eq(contributorInvitations.workspaceId, input.workspaceId),
+      eq(contributorInvitations.contributorId, input.contributorId),
+      isNull(contributorInvitations.acceptedAt),
+      gt(contributorInvitations.expiresAt, input.now),
+      ...(input.exceptInvitationId
+        ? [ne(contributorInvitations.id, input.exceptInvitationId)]
+        : [])
+    ))
+    .returning({ tokenHash: contributorInvitations.tokenHash });
+  const tokenHashes = (superseded ?? []).map((row) => row.tokenHash);
+  if (tokenHashes.length > 0) {
+    await tx
+      .update(invitationEntryTargets)
+      .set({ expiresAt: input.now })
+      .where(and(
+        eq(invitationEntryTargets.workspaceId, input.workspaceId),
+        inArray(invitationEntryTargets.tokenHash, tokenHashes)
+      ));
+  }
+  return tokenHashes.length;
+}
+
 export async function createContributorInvitation(
   db: Database,
   input: {
@@ -2394,6 +2435,26 @@ export async function createContributorInvitation(
       throw new Error("Contributor is not eligible for an invitation.");
     }
 
+    const acceptedRows = await tx
+      .select({ id: contributorInvitations.id })
+      .from(contributorInvitations)
+      .where(and(
+        eq(contributorInvitations.workspaceId, input.workspaceId),
+        eq(contributorInvitations.contributorId, input.contributorId),
+        isNotNull(contributorInvitations.acceptedAt)
+      ))
+      .limit(1);
+    if (acceptedRows[0]) {
+      throw new Error("Contributor has already accepted an invitation.");
+    }
+
+    // One open link per contributor: a new invitation supersedes earlier ones.
+    const supersededCount = await expireOpenContributorInvitations(tx, {
+      workspaceId: input.workspaceId,
+      contributorId: input.contributorId,
+      now
+    });
+
     const [invitation] =
       await tx
         .insert(contributorInvitations)
@@ -2419,7 +2480,7 @@ export async function createContributorInvitation(
         createdAt: now
       });
 
-    return invitation;
+    return { ...invitation, supersededCount };
   });
 }
 
@@ -2602,6 +2663,14 @@ export async function acceptContributorInvitation(
         eq(contributors.id, invitation.contributorId),
         eq(contributors.workspaceId, invitation.workspaceId)
       ));
+
+    // The contributor has joined; any other link issued for them is now redundant.
+    await expireOpenContributorInvitations(tx, {
+      workspaceId: invitation.workspaceId,
+      contributorId: invitation.contributorId,
+      exceptInvitationId: invitation.id,
+      now
+    });
 
     return {
       workspaceId: invitation.workspaceId,
@@ -7651,7 +7720,9 @@ export async function createPayrollClaimEscrow(
     eq(payrollAllocations.workspaceId, input.workspaceId),
     eq(payrollAllocations.payrollRunId, input.payrollRunId),
     eq(payrollAllocations.claimId, input.claimId),
-    eq(payrollAllocations.status, "unclaimed")
+    // The escrow token account is bound into the Claim PDA instruction, so it
+    // must be creatable while the allocation is still a confirmed draft.
+    inArray(payrollAllocations.status, ["draft", "unclaimed"])
   )).limit(1);
   if (!allocationRows[0]) return { status: "allocation_ineligible" as const };
 

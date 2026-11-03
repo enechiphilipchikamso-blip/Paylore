@@ -54,7 +54,14 @@ import {
 } from "../reserve-crypto-policy";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
-const FINALITY_TIMEOUT_MS = 120_000;
+/**
+ * Synchronous Netlify functions stop at 60 seconds. Escrow setup waits for
+ * finality inside the request only within this budget; anything slower is
+ * returned as "pending" and resumed from the persisted signatures on retry.
+ */
+const ESCROW_REQUEST_FINALITY_BUDGET_MS = 35_000;
+/** A Devnet blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
+const DROPPED_SIGNATURE_AFTER_MS = 3 * 60 * 1000;
 
 type Finality = "finalized" | "failed" | "pending";
 type Signer = Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
@@ -137,11 +144,32 @@ async function checkSignatureFinality(
   }
 }
 
+/** Distinguishes a signature the cluster has never seen from one that is still confirming. */
+async function persistedSignatureState(
+  rpc: ReturnType<typeof createSolanaRpc>,
+  signature: string,
+  recordedAt: Date
+): Promise<Finality | "dropped"> {
+  let status: { err?: unknown; confirmationStatus?: string | null } | null | undefined;
+  try {
+    status = (await rpc.getSignatureStatuses(
+      [signature as Signature],
+      { searchTransactionHistory: true }
+    ).send()).value[0];
+  } catch {
+    return "pending";
+  }
+  if (!status) {
+    return Date.now() - recordedAt.getTime() > DROPPED_SIGNATURE_AFTER_MS ? "dropped" : "pending";
+  }
+  return transactionFinality(status);
+}
+
 async function waitForFinality(
   rpc: ReturnType<typeof createSolanaRpc>,
-  signature: Signature
+  signature: Signature,
+  deadline: number
 ): Promise<Finality> {
-  const deadline = Date.now() + FINALITY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const result = await checkSignatureFinality(rpc, [String(signature)]);
     if (result !== "pending") return result;
@@ -154,8 +182,9 @@ async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
   feePayer: Signer,
   plan: InstructionPlan,
-  onSubmitted?: (signature: string) => Promise<void>,
-  additionalSigners: readonly Signer[] = []
+  onSubmitted: ((signature: string) => Promise<void>) | undefined,
+  additionalSigners: readonly Signer[],
+  deadline: number
 ): Promise<{ status: Finality; signatures: string[]; trackingFailed: boolean }> {
   const planner = createTransactionPlanner({
     createTransactionMessage: () =>
@@ -194,7 +223,7 @@ async function executePlan(
           trackingFailed = true;
         }
       }
-      const finality = await waitForFinality(rpc, signature);
+      const finality = await waitForFinality(rpc, signature, deadline);
       if (finality === "pending") throw new FinalityPendingError(signatureText);
       if (finality === "failed") throw new FinalityFailedError(signatureText);
       return { signature };
@@ -283,6 +312,7 @@ export async function preparePayrollClaimEscrowAccount(
     }
   }
   if (!escrow) throw new PayrollClaimEscrowError("payroll_claim_escrow_not_persisted", 503);
+  const finalityDeadline = Date.now() + ESCROW_REQUEST_FINALITY_BUDGET_MS;
   if (["ready", "funding", "funded", "settlement_pending", "recovery_pending", "claimed", "recovered"].includes(escrow.status)) {
     return { status: "ready", tokenAccountAddress: escrow.tokenAccountAddress };
   }
@@ -325,6 +355,22 @@ export async function preparePayrollClaimEscrowAccount(
       }
       const tokenAddress = address(escrow.tokenAccountAddress);
       const existingAccount = await fetchEncodedAccount(rpc, tokenAddress);
+      if (!existingAccount.exists && escrow.accountSetupSignature) {
+        // A previous request already submitted the account creation. Never
+        // submit a second creation while that transaction can still land.
+        const prior = await persistedSignatureState(rpc, escrow.accountSetupSignature, escrow.updatedAt);
+        if (prior === "pending" || prior === "finalized") {
+          return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
+        }
+        const released = await resetFailedPayrollClaimEscrowAccountSetup(db, {
+          workspaceId: input.workspaceId,
+          allocationId: input.allocationId,
+          signature: escrow.accountSetupSignature
+        });
+        if (!released) {
+          return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
+        }
+      }
       if (!existingAccount.exists) {
         const extensions = [
           extension("ImmutableOwner", {}),
@@ -367,7 +413,7 @@ export async function preparePayrollClaimEscrowAccount(
             signature
           });
           if (!persisted) throw new Error("Escrow account setup signature could not be persisted.");
-        }, [reserveSigner, escrowSigner]);
+        }, [reserveSigner, escrowSigner], finalityDeadline);
         if (creation.status === "pending" || creation.trackingFailed) {
           return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
         }
@@ -390,6 +436,13 @@ export async function preparePayrollClaimEscrowAccount(
       const token = (await fetchToken(rpc, tokenAddress)).data;
       if (token.owner !== reserveSigner.address || token.mint !== mintAddress) {
         throw new PayrollClaimEscrowError("payroll_claim_escrow_account_identity_invalid", 409);
+      }
+      const lastConfidentialSetupSignature = escrow.confidentialSetupSignatures.at(-1);
+      if (!isConfidentialReady(token, reserveSigner.address, mintAddress) && lastConfidentialSetupSignature) {
+        const prior = await persistedSignatureState(rpc, lastConfidentialSetupSignature, escrow.updatedAt);
+        if (prior === "pending") {
+          return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
+        }
       }
       if (!isConfidentialReady(token, reserveSigner.address, mintAddress)) {
         const derived = await deriveConfidentialKeys({ signer: reserveSigner });
@@ -414,7 +467,7 @@ export async function preparePayrollClaimEscrowAccount(
               signature
             });
             if (!persisted) throw new Error("Escrow confidential setup signature could not be persisted.");
-          }, [reserveSigner]);
+          }, [reserveSigner], finalityDeadline);
           if (setup.status === "pending" || setup.trackingFailed) {
             return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
           }

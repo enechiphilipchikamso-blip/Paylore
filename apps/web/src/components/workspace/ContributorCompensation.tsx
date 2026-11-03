@@ -7,6 +7,7 @@ import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
 import { BusyActionButton } from "./BusyActionButton";
+import { describeContributorSponsoredError } from "./gas-tank-error-messages";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
 import {
@@ -196,14 +197,14 @@ export function ContributorCompensation({
         `/api/workspaces/${workspaceId}/contributors/me/confidential-account/sponsorship`,
         { credentials: "same-origin", cache: "no-store" }
       );
-      const sponsorshipResult = await sponsorshipResponse.json();
+      const sponsorshipResult = await sponsorshipResponse.json().catch(() => null);
       if (!sponsorshipResponse.ok ||
-          typeof sponsorshipResult.feePayerAddress !== "string" ||
+          typeof sponsorshipResult?.feePayerAddress !== "string" ||
           sponsorshipResult.mintAddress !== mint) {
         throw new Error(
-          sponsorshipResult.error === "gas_tank_insufficient_balance"
-            ? "The workspace Gas Tank needs funding before company-sponsored account setup can proceed."
-            : "Company-sponsored account setup is unavailable under the current workspace policy. Paylore did not fall back to charging your wallet."
+          sponsorshipResponse.ok
+            ? "Company-sponsored account setup returned an unexpected policy. Paylore did not fall back to charging your wallet."
+            : describeContributorSponsoredError(sponsorshipResult?.error, sponsorshipResponse.status)
         );
       }
       const setup = await setupConfidentialAccount(wallet, mint, {
@@ -275,6 +276,7 @@ export function ContributorCompensation({
       let failed = 0;
       let cleanupPending = 0;
       let stateConflict = false;
+      let failureReason: string | null = null;
       setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
       for (const allocation of eligible) {
         if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
@@ -283,8 +285,12 @@ export function ContributorCompensation({
             `/api/workspaces/${workspaceId}/payroll/runs/${allocation.runId}/allocations/${allocation.id}/claim`,
             { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" } }
           );
-          const result = await response.json();
-          if (!response.ok) { failed++; continue; }
+          const result = await response.json().catch(() => null);
+          if (!response.ok) {
+            failed++;
+            failureReason ??= describeContributorSponsoredError(result?.error, response.status);
+            continue;
+          }
           if (result.status === "claimed" || result.status === "already_settled") {
             settled++;
             if (result.warning === "proof_context_cleanup_pending") cleanupPending++;
@@ -296,7 +302,7 @@ export function ContributorCompensation({
       }
       router.refresh();
       try { await refreshConfidentialBalance(accountForBalance); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
-      setMessage(getClaimAndCashOutOutcome({ settled, pending, failed, cleanupPending, stateConflict }));
+      setMessage(getClaimAndCashOutOutcome({ settled, pending, failed, cleanupPending, stateConflict, failureReason }));
     } catch (error) {
       setMessage({
         state: "error",

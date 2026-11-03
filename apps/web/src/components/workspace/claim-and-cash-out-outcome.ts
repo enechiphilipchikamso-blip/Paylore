@@ -9,6 +9,8 @@ export function getClaimAndCashOutOutcome(input: {
   failed: number;
   cleanupPending: number;
   stateConflict: boolean;
+  /** Human-readable reason for the first failed allocation, when the server reported one. */
+  failureReason?: string | null;
 }): ClaimAndCashOutOutcome {
   if (input.stateConflict) {
     return {
@@ -19,7 +21,8 @@ export function getClaimAndCashOutOutcome(input: {
   if (input.failed) {
     return {
       state: input.settled ? "partial" : "error",
-      text: `${input.settled} allocation(s) settled; ${input.failed} need attention. Unverified transfers are not shown as complete.`
+      text: `${input.settled} allocation(s) settled; ${input.failed} need attention. Unverified transfers are not shown as complete.` +
+        (input.failureReason ? ` Reason: ${input.failureReason}` : "")
     };
   }
   if (input.pending || input.cleanupPending) {

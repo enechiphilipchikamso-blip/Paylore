@@ -56,6 +56,12 @@ function formatSol(lamports: string): string {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
+const GAS_TANK_OPERATION_LABELS: Record<string, string> = {
+  payroll_claim_commitment: "Payroll Claim PDA creation",
+  confidential_account_setup: "Contributor confidential-account setup",
+  reserve_ordinary_usdc_confidential_funding: "Reserve confidential funding"
+};
+
 export function GasTankActions({
   workspaceId,
   walletAddress,
@@ -529,10 +535,7 @@ export function GasTankActions({
               <h3>Fund Gas Tank</h3>
               <p>
                 Funding is manual. Paylore does not automatically refill this balance.
-                Only SOL is accepted. The Gas Tank pays network fees and account
-                rent for approved workspace operations, including workspace and
-                Claim PDA creation, Reserve setup, escrow funding, settlement,
-                and recovery.
+                Only SOL is accepted. See &ldquo;What the Gas Tank pays for&rdquo; below.
               </p>
               <label className="form-field">
                 <span>Amount in SOL</span>
@@ -690,9 +693,7 @@ export function GasTankActions({
                             : operation.status;
                   return (
                     <tr key={operation.id}>
-                      <td>{operation.operationType === "payroll_claim_commitment"
-                        ? "Payroll Claim PDA creation"
-                        : "Approved network operation"}</td>
+                      <td>{GAS_TANK_OPERATION_LABELS[operation.operationType] ?? "Sponsored workspace operation"}</td>
                       <td>{statusLabel}</td>
                       <td>{operation.feeLamports && /^(0|[1-9][0-9]*)$/.test(operation.feeLamports)
                         ? `${formatSol(operation.feeLamports)} SOL`
@@ -711,14 +712,59 @@ export function GasTankActions({
           </div>
         ) : (
           <div className="workspace-empty-state">
-            <h4>No sponsored operations yet</h4>
-            <p>Approved workspace operations that use the Gas Tank will appear here with their finalized status and network fee.</p>
+            <h4>No sponsored operations recorded yet</h4>
+            <p>
+              Payroll Claim PDA submissions, contributor confidential-account
+              setups and Reserve confidential funding appear here with their
+              status and the actual network fee once they are attempted.
+            </p>
           </div>
         )}
         <p className="notice">
-          Only approved workspace-scoped payroll Claim PDA creation is eligible for sponsorship.
-          Only approved workspace operations are eligible: workspace and Claim
-          PDA creation, Reserve setup, escrow funding, settlement, and recovery.
+          This history lists operations that need a wallet approval and a
+          prepared sponsorship record. Server-signed steps (Reserve and escrow
+          account setup, escrow funding, settlement and recovery) are also paid
+          by the Gas Tank and are reflected in its balance and the workspace ledger.
+        </p>
+      </section>
+      <section className="reserve-summary" aria-labelledby="gas-tank-coverage-heading">
+        <h3 id="gas-tank-coverage-heading">What the Gas Tank pays for</h3>
+        <p>
+          The Gas Tank is the workspace&apos;s fee payer. It pays network fees and
+          account rent for workspace operations, whether they are started by an
+          administrator or by a contributor. Wallets keep their authority: they
+          still approve the actions they own, but they are not charged fees.
+        </p>
+        <dl className="reserve-facts">
+          <div>
+            <dt>Administrator operations</dt>
+            <dd>
+              Payroll Program workspace setup, Reserve confidential-account
+              setup and confidential funding, confidential allocation accounts,
+              Claim PDA creation, and recovery of unclaimed payroll.
+            </dd>
+          </div>
+          <div>
+            <dt>Contributor operations</dt>
+            <dd>
+              Confidential-account setup and confidential payroll settlement
+              into the contributor&apos;s account.
+            </dd>
+          </div>
+          <div className="reserve-facts__wide">
+            <dt>Paid by the signing wallet instead</dt>
+            <dd>
+              Transfers that move a wallet&apos;s own funds: the subscription payment,
+              Gas Tank funding, the ordinary-USDC wrap into the Reserve, and a
+              contributor&apos;s own withdrawals or cash-out.
+            </dd>
+          </div>
+        </dl>
+        <p className="notice">
+          Every sponsored transaction is checked against per-operation and
+          24-hour fee limits before the Gas Tank signs. If the balance is too
+          low, the operation stops with a funding message; no wallet is charged
+          as a fallback.
         </p>
       </section>
     </div>

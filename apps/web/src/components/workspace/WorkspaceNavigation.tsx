@@ -5,6 +5,7 @@ import {
 } from "../../server/authorization-policy";
 import { WorkspaceRetentionBanner } from "./WorkspaceRetentionBanner";
 import { WorkspaceNavigationLinks } from "./WorkspaceNavigationLinks";
+import { WalletConnectionMonitor } from "./WalletConnectionMonitor";
 
 type WorkspaceMembershipView = {
   workspaceId: string;
@@ -67,6 +68,8 @@ export function WorkspaceNavigation({
       </div>
 
       <WorkspaceNavigationLinks workspaceId={workspaceId} role={role} />
+
+      <WalletConnectionMonitor workspaceId={workspaceId} role={role} />
 
       {showRetentionBanner ? (
         <WorkspaceRetentionBanner workspaceId={workspaceId} />

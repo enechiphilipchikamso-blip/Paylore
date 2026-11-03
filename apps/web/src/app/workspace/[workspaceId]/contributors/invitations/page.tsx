@@ -58,6 +58,7 @@ export default async function ContributorInvitationsPage({
           .map(({ id, displayName, role }) => ({ id, displayName, role }))}
         invitations={invitations.map((invitation) => ({
           id: invitation.id,
+          contributorId: invitation.contributorId,
           contributorName: invitation.contributorName,
           contributorRole: invitation.contributorRole,
           acceptedAt: invitation.acceptedAt?.toISOString() ?? null,

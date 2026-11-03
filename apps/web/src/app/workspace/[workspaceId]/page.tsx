@@ -369,28 +369,53 @@ export default async function WorkspacePage({
               <p>Outstanding contributor obligations remain available for settlement according to the product rules.</p>
             ) : null}
           </>
+        ) : workspace.role === "contributor" ? (
+          <>
+            {/* Contributors are not responsible for the workspace subscription; they only need their own access context. */}
+            <h2>Signed in to {workspace.workspaceName}</h2>
+            <dl className="reserve-facts">
+              <div><dt>Your role</dt><dd>Contributor</dd></div>
+              <div className="reserve-facts__wide">
+                <dt>Authenticated wallet</dt>
+                <dd><code>{sessionState.session.walletAddress}</code></dd>
+              </div>
+            </dl>
+            <p>Use the wallet shown above for every claim and confidential balance action in this workspace.</p>
+          </>
         ) : (
           <>
             <div className="state-callout" data-state="success" role="status">
               <span className="state-callout__signal" aria-hidden="true" />
               <p>Workspace active</p>
             </div>
-            <h2>Workspace active</h2>
             <p>
-              Workspace access is based on your authenticated membership and
-              this workspace’s current subscription.
+              {workspace.role === "organization_admin"
+                ? "Workspace access is based on your authenticated membership and this workspace’s current subscription."
+                : "You have read-only Finance/Auditor access. Subscription status is shown for audit purposes; billing is managed by the workspace administrator."}
             </p>
-            {subscription.periodEnd ? (
-              <p>
-                Paid through{" "}
-                <time dateTime={subscription.periodEnd.toISOString()}>
-                  {subscription.periodEnd.toLocaleDateString()}
-                </time>
-                {subscription.cancelAtPeriodEnd
-                  ? " · Cancellation scheduled"
-                  : " · Manual renewal"}
-              </p>
-            ) : null}
+            <dl className="reserve-facts">
+              <div>
+                <dt>Your role</dt>
+                <dd>{workspace.role === "organization_admin" ? "Organization Administrator" : "Finance/Auditor"}</dd>
+              </div>
+              {subscription.periodEnd ? (
+                <div>
+                  <dt>Paid through</dt>
+                  <dd>
+                    <time dateTime={subscription.periodEnd.toISOString()}>
+                      {subscription.periodEnd.toLocaleDateString()}
+                    </time>
+                    {subscription.cancelAtPeriodEnd
+                      ? " · Cancellation scheduled"
+                      : " · Manual renewal"}
+                  </dd>
+                </div>
+              ) : null}
+              <div className="reserve-facts__wide">
+                <dt>Workspace ID</dt>
+                <dd><code>{workspace.workspaceId}</code></dd>
+              </div>
+            </dl>
             <div className="hero__actions">
               {workspace.role === "organization_admin" ? (
                 <>
@@ -410,11 +435,6 @@ export default async function WorkspacePage({
             </div>
           </>
         )}
-
-        <p className="workspace-card__meta">
-          Workspace ID:{" "}
-          {workspace.workspaceId}
-        </p>
 
         <div className="protected-actions">
           <SignOutButton />
