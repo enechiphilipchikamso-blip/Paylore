@@ -31,8 +31,6 @@ import {
   type Database, type ReserveFundingOperationStage
 } from "@paylore/database";
 import {
-  MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-  MAX_DAILY_SPONSORED_OPERATIONS,
   MAX_SPONSORED_FEE_LAMPORTS
 } from "../gas-tank-sponsorship-policy";
 import { loadPayloreConfig } from "../config";
@@ -44,8 +42,8 @@ import {
 } from "./workspace-reserve-policy";
 import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
 import { readSolanaRpc } from "./rpc";
+import { configuredRpcEndpoint } from "./rpc-configured";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
 // the platform cut the response off; a slower finality is returned as the
 // existing resumable "pending" state and continued from its persisted signature.
@@ -119,18 +117,7 @@ function extensions(value: Token | Mint): readonly { __kind: string; [key: strin
   return Array.isArray(raw) ? raw as readonly { __kind: string; [key: string]: unknown }[] : [];
 }
 function rpcEndpoint(): string {
-  const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
-  if (url.protocol !== "https:") {
-    throw new WorkspaceReserveInitializationError("reserve_devnet_rpc_required", 503);
-  }
-  if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
-    url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
-  }
-  if (!/devnet/i.test(url.hostname) && url.hostname !== "api.devnet.solana.com") {
-    throw new WorkspaceReserveInitializationError("reserve_devnet_rpc_required", 503);
-  }
-  return url.toString();
+  return configuredRpcEndpoint();
 }
 async function waitForFinality(
   rpc: ReturnType<typeof createSolanaRpc>,
@@ -323,7 +310,7 @@ export async function assertWorkspaceReserveFundingGasTankReady(
   if (!gasTank?.address) {
     throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
   }
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(rpcEndpoint());
   await assertGasTankCanFundReserveSetup({
     rpc,
     gasTankAddress: gasTank.address,
@@ -1249,8 +1236,9 @@ export async function completeWorkspaceReserveConfidentialFunding(input: {
             reservationKeys: newReservationKeys,
             feePerTransactionLamports: MAX_SPONSORED_FEE_LAMPORTS.toString(),
             availableBalanceLamports: liveBalance.toString(),
-            maxDailyFeeLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS.toString(),
-            maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
+            // The Gas Tank is bounded by its funded balance, not a time-window quota.
+            maxDailyFeeLamports: ((1n << 64n) - 1n).toString(),
+            maxDailyOperations: 1000,
             since: new Date(Date.now() - 24 * 60 * 60 * 1000)
           });
         } catch {

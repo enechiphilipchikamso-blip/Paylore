@@ -7,7 +7,6 @@ import {
   getWorkspaceGasTankOperationByIdempotencyKey,
   getWorkspaceDeletionState,
   getWorkspaceForUser,
-  getWorkspaceGasTankSponsorshipUsage,
   getWorkspacePayrollRun,
   getWorkspaceSubscription,
   recordPayrollClaimSubmission,
@@ -24,8 +23,6 @@ import {
 import {
   assertSponsoredClaimIntent,
   GasTankSponsorshipPolicyError,
-  MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-  MAX_DAILY_SPONSORED_OPERATIONS,
   MAX_SPONSORED_FEE_LAMPORTS
 } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import { prepareSponsoredPayrollClaimTransaction } from "../../../../../../../../server/gas-tank-sponsorship";
@@ -307,11 +304,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     const tank = await getWorkspaceGasTankSnapshot(db, workspaceId);
     if (!tank) return NextResponse.json({ error: "gas_tank_not_initialized" }, { status: 409 });
     const now = new Date();
-    const usage = await getWorkspaceGasTankSponsorshipUsage(
-      db,
-      workspaceId,
-      new Date(now.getTime() - 24 * 60 * 60 * 1000)
-    );
     const requestDigest = createHash("sha256").update(JSON.stringify({
       workspaceId,
       runId,
@@ -598,8 +590,6 @@ export async function POST(request: Request, { params }: RouteContext) {
       requestDigest,
       reservedFeeLamports: String(MAX_SPONSORED_FEE_LAMPORTS),
       availableBalanceLamports: tank.balanceLamports,
-      maxDailyFeeLamports: String(MAX_DAILY_SPONSORED_FEE_LAMPORTS),
-      maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
       since: new Date(now.getTime() - 24 * 60 * 60 * 1000),
       operationData: {
         runId, claimIds, authorityAddress: session.session.walletAddress,
@@ -612,9 +602,6 @@ export async function POST(request: Request, { params }: RouteContext) {
       }
       if (begun.status === "gas_tank_insufficient_balance") {
         return NextResponse.json({ error: "gas_tank_insufficient_balance" }, { status: 409 });
-      }
-      if (begun.status === "gas_tank_daily_sponsorship_limit") {
-        return NextResponse.json({ error: "gas_tank_daily_sponsorship_limit" }, { status: 429 });
       }
       return NextResponse.json({
         error: begun.status === "finalized"
@@ -634,9 +621,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           gasTankPrivateKey: privateKey,
           balanceLamports: tank.balanceLamports,
           allocationCommitment: run.run.allocationCommitment!,
-          claims: claims,
-          dailyBookedFeesLamports: usage.feeLamports,
-          dailyOperationCount: usage.operationCount
+          claims: claims
         })
       );
       const saved = await updateGasTankOperationAttempt(db, {
@@ -702,7 +687,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (error instanceof GasTankSponsorshipPolicyError) {
       console.error(JSON.stringify({ event: "gas_tank_sponsorship_policy_rejected", code: error.code }));
       const status = error.code === "gas_tank_insufficient_balance" ? 409
-        : error.code === "gas_tank_daily_sponsorship_limit" ? 429
         : error.code === "sponsored_simulation_failed" || error.code === "sponsored_simulation_unavailable" ? 503
         : 409;
       return NextResponse.json({ error: error.code }, { status });

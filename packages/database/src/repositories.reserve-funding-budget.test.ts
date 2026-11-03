@@ -168,7 +168,7 @@ describe("workspace Reserve Gas Tank fee reservations", () => {
     expect(fake.updateCalls).toHaveLength(0);
   });
 
-  it("enforces the daily transaction count and fee ceiling before writing a reservation", async () => {
+  it("does not apply a time-window quota when the funded balance covers the reservation", async () => {
     const fake = fakeDatabase([
       [{ workspaceId: "workspace-a" }],
       [operation],
@@ -185,8 +185,8 @@ describe("workspace Reserve Gas Tank fee reservations", () => {
       ...reservationInput,
       reservationKeys: ["deposit:1"],
       maxDailyFeeLamports: "5000000"
-    })).resolves.toBe("daily_limit");
-    expect(fake.updateCalls).toHaveLength(0);
+    })).resolves.toBe("reserved");
+    expect(fake.updateCalls).toHaveLength(1);
   });
 
   it("settles actual fees and releases the unused reservation only at final verification", async () => {

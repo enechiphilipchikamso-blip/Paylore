@@ -8,7 +8,6 @@ import {
   getWorkspaceDeletionState,
   getWorkspaceForUser,
   getWorkspaceGasTankOperationByIdempotencyKey,
-  getWorkspaceGasTankSponsorshipUsage,
   getWorkspaceSubscription,
   listPreparedGasTankConfidentialSetupOperations,
   updateGasTankOperationAttempt
@@ -24,9 +23,7 @@ import { readSolanaRpc } from "../../../../../../../../server/solana/rpc";
 import {
   assertSponsoredCost,
   GasTankSponsorshipPolicyError,
-  MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS,
-  MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-  MAX_DAILY_SPONSORED_OPERATIONS
+  MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS
 } from "../../../../../../../../server/gas-tank-sponsorship-policy";
 import {
   inspectSponsoredConfidentialSetupTransaction,
@@ -274,7 +271,6 @@ export async function POST(
     );
 
     const since = new Date(Date.now() - idempotencyWindowMs);
-    const usage = await getWorkspaceGasTankSponsorshipUsage(context.db, workspaceId, since);
     const inspected = await inspectSponsoredConfidentialSetupTransaction({
       transactionBase64: parsed.data.transactionBase64,
       ownerAddress: context.session.walletAddress,
@@ -283,8 +279,6 @@ export async function POST(
       token2022ProgramAddress: TOKEN_2022_PROGRAM_ADDRESS,
       gasTankAddress: policy.gasTank.address,
       balanceLamports: policy.gasTank.balanceLamports,
-      dailyBookedFeesLamports: usage.feeLamports,
-      dailyOperationCount: usage.operationCount,
       deferCostCheck: true
     });
     const digest = createHash("sha256")
@@ -415,9 +409,7 @@ export async function POST(
     assertSponsoredCost({
       transactionBytes: inspected.transactionBytes,
       feeLamports,
-      balanceLamports: BigInt(policy.gasTank.balanceLamports),
-      dailyBookedFeesLamports: usage.feeLamports,
-      dailyOperationCount: usage.operationCount
+      balanceLamports: BigInt(policy.gasTank.balanceLamports)
     });
 
     const reservedRentLamports = String(inspected.reservedRentLamports);
@@ -428,8 +420,6 @@ export async function POST(
       requestDigest: digest,
       reservedFeeLamports: String(feeLamports),
       availableBalanceLamports: policy.gasTank.balanceLamports,
-      maxDailyFeeLamports: String(MAX_DAILY_SPONSORED_FEE_LAMPORTS),
-      maxDailyOperations: MAX_DAILY_SPONSORED_OPERATIONS,
       since,
       operationData: {
         ownerAddress: context.session.walletAddress,
@@ -440,14 +430,11 @@ export async function POST(
       }
     });
     if (started.status !== "started" || !started.operation) {
-      const status = started.status === "gas_tank_insufficient_balance" ? 409 : 429;
       return NextResponse.json({
         error: started.status === "gas_tank_insufficient_balance"
           ? "gas_tank_insufficient_balance"
-          : started.status === "gas_tank_daily_sponsorship_limit"
-            ? "gas_tank_daily_sponsorship_limit"
-            : "confidential_setup_sponsorship_conflict"
-      }, { status });
+          : "confidential_setup_sponsorship_conflict"
+      }, { status: 409 });
     }
     operation = { id: started.operation.id, updatedAt: started.operation.updatedAt };
     const submitted = await withWorkspaceGasTankKey(

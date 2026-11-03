@@ -52,8 +52,8 @@ import {
   openReserveKey,
   sealReserveKey
 } from "../reserve-crypto-policy";
+import { configuredRpcEndpoint } from "./rpc-configured";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 /**
  * Synchronous Netlify functions stop at 60 seconds. Escrow setup waits for
  * finality inside the request only within this budget; anything slower is
@@ -88,12 +88,7 @@ class FinalityFailedError extends Error {
 }
 
 function rpcEndpoint(): string {
-  const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
-  if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
-    url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
-  }
-  return url.toString();
+  return configuredRpcEndpoint();
 }
 
 function object(value: unknown): Record<string, unknown> | null {

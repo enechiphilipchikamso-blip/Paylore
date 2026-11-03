@@ -7076,10 +7076,6 @@ export async function reserveWorkspaceReserveFundingFeeBudget(
     if (available < usage.reservedFeesLamports + reservedRent + requestedReservation) {
       return "insufficient_balance";
     }
-    if (
-      usage.operationCount + newKeys.length > input.maxDailyOperations ||
-      usage.feeLamports + requestedReservation >= BigInt(input.maxDailyFeeLamports)
-    ) return "daily_limit";
 
     const rowFee = operation.feeLamports !== null && validLamports(operation.feeLamports)
       ? BigInt(operation.feeLamports)
@@ -7350,8 +7346,6 @@ export async function beginGasTankOperationAttempt(
     requestDigest: string;
     reservedFeeLamports: string;
     availableBalanceLamports: string;
-    maxDailyFeeLamports: string;
-    maxDailyOperations: number;
     since: Date;
     operationData?: Record<string, unknown>;
   }
@@ -7360,10 +7354,7 @@ export async function beginGasTankOperationAttempt(
     /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) < (1n << 64n);
   if (
     !positiveInteger(input.reservedFeeLamports) ||
-    !positiveInteger(input.availableBalanceLamports) ||
-    !positiveInteger(input.maxDailyFeeLamports) ||
-    !Number.isSafeInteger(input.maxDailyOperations) ||
-    input.maxDailyOperations < 1
+    !positiveInteger(input.availableBalanceLamports)
   ) {
     throw new Error("Invalid Gas Tank sponsorship budget input.");
   }
@@ -7412,16 +7403,11 @@ export async function beginGasTankOperationAttempt(
         )
       ))
       .limit(1001);
-    if (recent.length > 1000) {
-      return { status: "gas_tank_daily_sponsorship_limit" as const, operation: existing ?? null };
-    }
     const usage = summarizeGasTankSponsorshipBudget({
       rows: recent,
       reservedFeeLamports: input.reservedFeeLamports,
       since: input.since
     });
-    const dailyFees = usage.feeLamports;
-    const dailyOperations = usage.operationCount;
     const reservedFees = usage.reservedFeesLamports;
     const reservedRent = sumPreparedSponsoredRentReservations(recent);
     const requestedRentValue = input.operationData?.reservedRentLamports ?? "0";
@@ -7434,12 +7420,6 @@ export async function beginGasTankOperationAttempt(
     const requestedReservation = BigInt(input.reservedFeeLamports);
     if (available < reservedFees + requestedReservation + reservedRent + requestedRent) {
       return { status: "gas_tank_insufficient_balance" as const, operation: existing ?? null };
-    }
-    if (
-      dailyOperations >= input.maxDailyOperations ||
-      dailyFees + requestedReservation >= BigInt(input.maxDailyFeeLamports)
-    ) {
-      return { status: "gas_tank_daily_sponsorship_limit" as const, operation: existing ?? null };
     }
 
     if (existing) {

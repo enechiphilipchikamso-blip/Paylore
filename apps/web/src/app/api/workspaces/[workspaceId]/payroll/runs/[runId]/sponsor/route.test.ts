@@ -704,14 +704,13 @@ describe("payroll sponsor route", () => {
     expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
   });
 
-  it("returns a rate limit when concurrent reservations exhaust the daily budget", async () => {
-    mocks.beginGasTankOperationAttempt.mockResolvedValue({
-      status: "gas_tank_daily_sponsorship_limit", operation: null
-    });
-    const response = await POST(request({ action: "prepare", claimIds: [claimId] }), context);
-    expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toMatchObject({ error: "gas_tank_daily_sponsorship_limit" });
-    expect(mocks.prepareSponsoredPayrollClaimTransaction).not.toHaveBeenCalled();
+  it("reserves against the funded Gas Tank balance without a time-window quota", async () => {
+    await POST(request({ action: "prepare", claimIds: [claimId] }), context);
+    expect(mocks.beginGasTankOperationAttempt).toHaveBeenCalledOnce();
+    const input = mocks.beginGasTankOperationAttempt.mock.calls[0]![1];
+    expect(input).not.toHaveProperty("maxDailyFeeLamports");
+    expect(input).not.toHaveProperty("maxDailyOperations");
+    expect(input).toHaveProperty("availableBalanceLamports");
   });
 
   it("returns an actionable conflict when the Gas Tank cannot cover fees", async () => {

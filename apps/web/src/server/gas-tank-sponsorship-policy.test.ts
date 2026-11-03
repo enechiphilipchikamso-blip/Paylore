@@ -7,8 +7,7 @@ import {
   assertSponsoredClaimIntent,
   assertSponsoredCost,
   GasTankSponsorshipPolicyError,
-  MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-  MAX_SPONSORED_FEE_LAMPORTS,
+  MAX_SPONSORED_TRANSACTION_COST_LAMPORTS,
   MAX_CONFIDENTIAL_ACCOUNT_SETUP_RENT_LAMPORTS,
   assertAllowedConfidentialAccountSetupMessage
 } from "./gas-tank-sponsorship-policy";
@@ -260,40 +259,31 @@ describe("Gas Tank sponsorship policy", () => {
     })).not.toThrow();
   });
 
-  it("denies excessive size, fees, insufficient balance and daily budget exhaustion", () => {
+  it("denies excessive size, fees and insufficient balance", () => {
     expect(() => assertSponsoredCost({
-      transactionBytes: 1233, feeLamports: 10_000n, balanceLamports: 1_000_000n,
-      dailyBookedFeesLamports: 0n, dailyOperationCount: 0
+      transactionBytes: 1233, feeLamports: 10_000n, balanceLamports: 1_000_000n
     })).toThrow("sponsored_transaction_size_exceeded");
     expect(() => assertSponsoredCost({
-      transactionBytes: 500, feeLamports: MAX_SPONSORED_FEE_LAMPORTS + 1n,
-      balanceLamports: MAX_SPONSORED_FEE_LAMPORTS + 1_000_000n, dailyBookedFeesLamports: 0n, dailyOperationCount: 0
+      transactionBytes: 500, feeLamports: MAX_SPONSORED_TRANSACTION_COST_LAMPORTS,
+      balanceLamports: MAX_SPONSORED_TRANSACTION_COST_LAMPORTS + 1_000_000n
     })).toThrow("sponsored_fee_limit_exceeded");
     expect(() => assertSponsoredCost({
-      transactionBytes: 500, feeLamports: 20_000n, balanceLamports: 10_000n,
-      dailyBookedFeesLamports: 0n, dailyOperationCount: 0
+      transactionBytes: 500, feeLamports: 20_000n, balanceLamports: 10_000n
     })).toThrow("gas_tank_insufficient_balance");
-    expect(() => assertSponsoredCost({
-      transactionBytes: 500, feeLamports: 20_000n,
-      balanceLamports: 5_000_000n,
-      dailyBookedFeesLamports: MAX_DAILY_SPONSORED_FEE_LAMPORTS,
-      dailyOperationCount: 100
-    })).toThrow("gas_tank_daily_sponsorship_limit");
   });
 
-  it.each([
-    { balanceLamports: -1n },
-    { dailyBookedFeesLamports: -1n },
-    { dailyOperationCount: -1 },
-    { dailyOperationCount: 0.5 }
-  ])("rejects invalid sponsorship budget evidence: %o", (partial) => {
+  it("does not apply a time-window quota to a funded Gas Tank", () => {
+    expect(() => assertSponsoredCost({
+      transactionBytes: 500, feeLamports: 20_000n, rentLamports: 4_000_000n,
+      balanceLamports: 5_000_000n
+    })).not.toThrow();
+  });
+
+  it("rejects invalid sponsorship budget evidence", () => {
     expect(() => assertSponsoredCost({
       transactionBytes: 500,
       feeLamports: 5_000n,
-      balanceLamports: 1_000_000n,
-      dailyBookedFeesLamports: 0n,
-      dailyOperationCount: 0,
-      ...partial
+      balanceLamports: -1n
     })).toThrow("sponsored_budget_evidence_invalid");
   });
 

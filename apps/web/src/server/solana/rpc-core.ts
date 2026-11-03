@@ -4,14 +4,27 @@ export type SolanaRpcProvider = {
   apiKey?: string;
 };
 
-const READ_ONLY_METHODS = new Set([
+/**
+ * Every JSON-RPC method the server issues. Transaction-bearing methods are listed only
+ * because each caller submits a transaction it built and validated itself; the Gas Tank
+ * never forwards arbitrary client transactions through this helper.
+ */
+const APPROVED_METHODS = new Set([
   "getAccountInfo",
   "getBalance",
+  "getBlockHeight",
+  "getFeeForMessage",
   "getLatestBlockhash",
+  "getMinimumBalanceForRentExemption",
+  "getMultipleAccounts",
+  "getSignaturesForAddress",
   "getSignatureStatuses",
   "getSlot",
   "getTokenAccountsByOwner",
-  "getTransaction"
+  "getTransaction",
+  "isBlockhashValid",
+  "sendTransaction",
+  "simulateTransaction"
 ]);
 
 export class SolanaRpcError extends Error {
@@ -103,9 +116,9 @@ export async function readSolanaRpcWithProviders<T>(
   params: readonly unknown[],
   providers: readonly SolanaRpcProvider[]
 ): Promise<T> {
-  if (!READ_ONLY_METHODS.has(method)) {
+  if (!APPROVED_METHODS.has(method)) {
     throw new SolanaRpcError(
-      "Only approved read-only Solana RPC methods are available."
+      "Only approved Solana RPC methods are available."
     );
   }
   if (providers.length === 0) {
