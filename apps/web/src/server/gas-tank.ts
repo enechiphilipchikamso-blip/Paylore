@@ -33,7 +33,6 @@ import { readSolanaRpc } from "./solana/rpc";
 import { inspectGasTankFundingTransaction } from "./gas-tank-policy";
 import { createGasTankFundingTransaction } from "../components/workspace/gas-tank-funding-transaction";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 
 export class GasTankFundingSubmissionError extends Error {
   constructor(readonly code:
@@ -47,7 +46,7 @@ export class GasTankFundingSubmissionError extends Error {
 
 function fundingRpcEndpoint(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }

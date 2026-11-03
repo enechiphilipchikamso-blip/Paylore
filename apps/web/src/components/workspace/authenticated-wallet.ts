@@ -1,6 +1,7 @@
 "use client";
 
 import { getWallets } from "@wallet-standard/app";
+import { getPayloreWalletChain } from "./solana-network";
 import {
   SolanaSignAndSendTransaction,
   SolanaSignMessage,
@@ -135,7 +136,7 @@ function exposesAuthenticatedAccount(
   return wallet.accounts.some(
     (account) =>
       account.address === walletAddress &&
-      account.chains.includes("solana:devnet")
+      account.chains.includes(getPayloreWalletChain())
   );
 }
 
@@ -215,7 +216,7 @@ export function findAuthenticatedWallet(walletAddress: string): {
   const registeredAccount = wallet.accounts.find(
     (account) =>
       account.address === walletAddress &&
-      account.chains.includes("solana:devnet")
+      account.chains.includes(getPayloreWalletChain())
   );
   if (!registeredAccount) {
     throw new Error(WALLET_RECONNECT_REQUIRED);

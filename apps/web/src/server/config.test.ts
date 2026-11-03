@@ -30,13 +30,13 @@ describe("parseConfig", () => {
     ).toThrow(ConfigurationError);
   });
 
-  it("rejects non-devnet network configuration", () => {
-    expect(() =>
+  it("accepts each supported network configuration", () => {
+    expect(
       parseConfig({
         ...baseEnv,
         SOLANA_NETWORK: "mainnet"
       })
-    ).toThrow(ConfigurationError);
+    ).toMatchObject({ SOLANA_NETWORK: "mainnet" });
   });
 });
 

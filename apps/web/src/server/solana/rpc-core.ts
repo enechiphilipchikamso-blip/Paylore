@@ -4,14 +4,22 @@ export type SolanaRpcProvider = {
   apiKey?: string;
 };
 
-const READ_ONLY_METHODS = new Set([
+const APPROVED_METHODS = new Set([
   "getAccountInfo",
   "getBalance",
+  "getBlockHeight",
   "getLatestBlockhash",
+  "getMinimumBalanceForRentExemption",
+  "getMultipleAccounts",
+  "getFeeForMessage",
   "getSignatureStatuses",
+  "getSignaturesForAddress",
   "getSlot",
   "getTokenAccountsByOwner",
-  "getTransaction"
+  "getTransaction",
+  "isBlockhashValid",
+  "sendTransaction",
+  "simulateTransaction"
 ]);
 
 export class SolanaRpcError extends Error {
@@ -103,9 +111,9 @@ export async function readSolanaRpcWithProviders<T>(
   params: readonly unknown[],
   providers: readonly SolanaRpcProvider[]
 ): Promise<T> {
-  if (!READ_ONLY_METHODS.has(method)) {
+  if (!APPROVED_METHODS.has(method)) {
     throw new SolanaRpcError(
-      "Only approved read-only Solana RPC methods are available."
+      "The Solana RPC method is not approved."
     );
   }
   if (providers.length === 0) {

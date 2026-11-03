@@ -53,14 +53,13 @@ import {
   sealReserveKey
 } from "../reserve-crypto-policy";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 /**
  * Synchronous Netlify functions stop at 60 seconds. Escrow setup waits for
  * finality inside the request only within this budget; anything slower is
  * returned as "pending" and resumed from the persisted signatures on retry.
  */
 const ESCROW_REQUEST_FINALITY_BUDGET_MS = 35_000;
-/** A Devnet blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
+/** A configured network blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
 const DROPPED_SIGNATURE_AFTER_MS = 3 * 60 * 1000;
 
 type Finality = "finalized" | "failed" | "pending";
@@ -89,7 +88,7 @@ class FinalityFailedError extends Error {
 
 function rpcEndpoint(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }
@@ -273,9 +272,6 @@ export async function preparePayrollClaimEscrowAccount(
   const config = loadPayloreConfig();
   const envelopeKey = config.PAYLORE_RESERVE_ENVELOPE_KEY;
   if (!envelopeKey) throw new PayrollClaimEscrowError("reserve_envelope_key_not_configured", 503);
-  if (config.PAYLORE_NETWORK !== "devnet") {
-    throw new PayrollClaimEscrowError("payroll_claim_escrow_devnet_only", 503);
-  }
   if (config.PAYLORE_PAYROLL_PROGRAM_ID !== input.programId) {
     throw new PayrollClaimEscrowError("payroll_program_identity_mismatch", 409);
   }

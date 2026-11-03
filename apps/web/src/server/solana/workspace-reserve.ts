@@ -45,7 +45,6 @@ import {
 import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
 import { readSolanaRpc } from "./rpc";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
 // the platform cut the response off; a slower finality is returned as the
 // existing resumable "pending" state and continued from its persisted signature.
@@ -120,15 +119,9 @@ function extensions(value: Token | Mint): readonly { __kind: string; [key: strin
 }
 function rpcEndpoint(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
-  if (url.protocol !== "https:") {
-    throw new WorkspaceReserveInitializationError("reserve_devnet_rpc_required", 503);
-  }
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
-  }
-  if (!/devnet/i.test(url.hostname) && url.hostname !== "api.devnet.solana.com") {
-    throw new WorkspaceReserveInitializationError("reserve_devnet_rpc_required", 503);
   }
   return url.toString();
 }
@@ -323,7 +316,7 @@ export async function assertWorkspaceReserveFundingGasTankReady(
   if (!gasTank?.address) {
     throw new WorkspaceReserveInitializationError("reserve_gas_tank_not_initialized", 409);
   }
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(rpcEndpoint());
   await assertGasTankCanFundReserveSetup({
     rpc,
     gasTankAddress: gasTank.address,

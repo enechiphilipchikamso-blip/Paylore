@@ -1,5 +1,6 @@
 import type { findAuthenticatedWallet } from "./authenticated-wallet";
 import { isWalletCancellation } from "../auth/walletErrors";
+import { getPayloreWalletChain } from "./solana-network";
 
 type AuthenticatedWallet = ReturnType<typeof findAuthenticatedWallet>;
 
@@ -17,7 +18,7 @@ export function beginSubscriptionWalletApproval(
   return wallet.signAndSendTransaction({
     account: wallet.account,
     transaction: input.transaction,
-    chain: "solana:devnet"
+    chain: getPayloreWalletChain()
   });
 }
 

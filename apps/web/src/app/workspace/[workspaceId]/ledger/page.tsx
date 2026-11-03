@@ -16,6 +16,8 @@ import {
   WorkspaceNavigation
 } from "../../../../components/workspace/WorkspaceNavigation";
 import { getWorkspacePageContext } from "../../../../server/workspace-page-context";
+import { getSolanaWalletDeepLinkCluster } from "../../../../server/auth/protocol";
+import { loadPayloreConfig } from "../../../../server/config";
 
 export const metadata: Metadata = {
   title: "Workspace ledger",
@@ -97,6 +99,9 @@ export default async function WorkspaceLedgerPage({
 }) {
   const { workspaceId } = await params;
   const query = await searchParams;
+  const explorerCluster = getSolanaWalletDeepLinkCluster(
+    loadPayloreConfig().PAYLORE_NETWORK
+  );
   const context = await getWorkspacePageContext(
     workspaceId,
     `/workspace/${workspaceId}/ledger`
@@ -250,7 +255,7 @@ export default async function WorkspaceLedgerPage({
                     <td>
                       {entry.transactionSignature ? (
                         <a
-                          href={`https://explorer.solana.com/tx/${encodeURIComponent(entry.transactionSignature)}?cluster=devnet`}
+                          href={`https://explorer.solana.com/tx/${encodeURIComponent(entry.transactionSignature)}?cluster=${encodeURIComponent(explorerCluster)}`}
                           rel="noreferrer"
                           target="_blank"
                         >

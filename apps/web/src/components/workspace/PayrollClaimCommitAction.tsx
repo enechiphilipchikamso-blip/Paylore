@@ -7,13 +7,14 @@ import { getBase58Decoder } from "@solana/kit";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { BusyActionButton } from "./BusyActionButton";
 const PAYROLL_CLAIMS_PER_TRANSACTION = 2;
-import { waitForDevnetFinality } from "./payroll-transaction-finality";
+import { waitForSolanaFinality } from "./payroll-transaction-finality";
+import { getPayloreWalletChain } from "./solana-network";
 import {
   describeGasTankError,
   GAS_TANK_RETRYABLE_PENDING_CODES
 } from "./gas-tank-error-messages";
 
-/** Escrow accounts finalize across several Devnet transactions; resume preparation this many times. */
+/** Escrow accounts finalize across several configured network transactions; resume preparation this many times. */
 const ESCROW_PENDING_MAX_ATTEMPTS = 12;
 const ESCROW_PENDING_RETRY_DELAY_MS = 5_000;
 /** Outcomes where earlier work is recorded and the same action can be resumed. */
@@ -138,7 +139,7 @@ export function PayrollClaimCommitAction({
             (sponsorshipResponse !== null && (sponsorshipResponse.status === 502 || sponsorshipResponse.status === 504) && !sponsorship);
           if (!stillPreparing || attempt === ESCROW_PENDING_MAX_ATTEMPTS) break;
           setProgress(
-            `Batch ${index + 1} of ${batchCount}: confidential allocation accounts are awaiting Devnet finality (check ${attempt} of ${ESCROW_PENDING_MAX_ATTEMPTS - 1}). Paylore resumes automatically; keep this page open.`
+            `Batch ${index + 1} of ${batchCount}: confidential allocation accounts are awaiting configured network finality (check ${attempt} of ${ESCROW_PENDING_MAX_ATTEMPTS - 1}). Paylore resumes automatically; keep this page open.`
           );
           await new Promise((resolve) => setTimeout(resolve, ESCROW_PENDING_RETRY_DELAY_MS));
         }
@@ -175,7 +176,7 @@ export function PayrollClaimCommitAction({
         try {
           [result] = await wallet.signAndSendTransaction({
             account: wallet.account,
-            chain: "solana:devnet",
+            chain: getPayloreWalletChain(),
             transaction
           });
         } catch (error) {
@@ -203,7 +204,7 @@ export function PayrollClaimCommitAction({
         setProgress(
           `Waiting for transaction ${index + 1} of ${batchCount} to finalize.`
         );
-        await waitForDevnetFinality(transactionSignature);
+        await waitForSolanaFinality(transactionSignature);
 
         const response = await fetch(
           `/api/workspaces/${workspaceId}/payroll/runs/${runId}/commit`,
@@ -221,7 +222,7 @@ export function PayrollClaimCommitAction({
         if (!response.ok) {
           const resultBody = await response.json().catch(() => null) as { error?: string } | null;
           if (resultBody?.error === "payroll_program_not_configured") {
-            throw new Error("The Devnet Payroll Program is not configured. No database completion was recorded.");
+            throw new Error("The configured network Payroll Program is not configured. No database completion was recorded.");
           }
           throw new PartialOutcomeError(
             `Transaction ${index + 1} finalized but its Claim PDA records could not be reconciled yet. Retry Submit Claim PDAs; Paylore reconciles the same finalized transaction instead of sending a new one. Signature: ${transactionSignature}`
@@ -261,7 +262,7 @@ export function PayrollClaimCommitAction({
         <h3 id="payroll-claims-heading">Submit Claim PDAs</h3>
         <p>
           Creates one confidential allocation account and one Claim PDA per
-          allocation on Devnet. The workspace Gas Tank pays every network fee
+          allocation on configured network. The workspace Gas Tank pays every network fee
           and account rent; your wallet approves only as workspace authority.
           No USDC moves in this step.
         </p>
@@ -269,7 +270,7 @@ export function PayrollClaimCommitAction({
       {!programId ? (
         <div className="state-callout" data-state="error" role="alert">
           <span className="state-callout__signal" aria-hidden="true" />
-          <p>Configure the verified Devnet Payroll Program ID before submitting payroll claims.</p>
+          <p>Configure the verified configured network Payroll Program ID before submitting payroll claims.</p>
         </div>
       ) : null}
       <div className="reserve-panel__status" aria-live="polite">

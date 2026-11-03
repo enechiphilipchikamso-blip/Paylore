@@ -1,36 +1,33 @@
 import { TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { describe, expect, it } from "vitest";
 import {
-  assertDevnetTokenWrapIdentity,
-  assertDevnetTokenWrapProgramAccount,
+  assertTokenWrapIdentity,
+  assertTokenWrapProgramAccount,
   assertExactFinalizedWrapBalances,
   assertExactFinalizedUnwrapBalances,
   assertExpectedAssociatedTokenAccount,
-  DEVNET_TOKEN_WRAP_EXPECTED
+  TOKEN_WRAP_EXPECTED
 } from "./token-wrap-compatibility";
 
 const loader = "BPFLoaderUpgradeab1e11111111111111111111111";
 
 const validIdentity = {
-  programAddress: DEVNET_TOKEN_WRAP_EXPECTED.programAddress,
-  wrappedMintAddress: DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress,
-  unwrappedMintAddress: DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress,
+  programAddress: TOKEN_WRAP_EXPECTED.programAddress,
+  wrappedMintAddress: TOKEN_WRAP_EXPECTED.wrappedMintAddress,
+  unwrappedMintAddress: TOKEN_WRAP_EXPECTED.unwrappedMintAddress,
   wrappedMintProgramAddress: TOKEN_2022_PROGRAM_ADDRESS,
   unwrappedMintProgramAddress: TOKEN_PROGRAM_ADDRESS,
-  derivedWrappedMintAddress: DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress,
+  derivedWrappedMintAddress: TOKEN_WRAP_EXPECTED.wrappedMintAddress,
   wrappedMintDecimals: 6,
   unwrappedMintDecimals: 6
 };
 
-describe("custom Devnet Token Wrap compatibility", () => {
-  it("accepts only the configured program, deterministic mint pair, token owners and decimals", () => {
-    expect(() => assertDevnetTokenWrapIdentity(validIdentity)).not.toThrow();
+describe("custom Token Wrap compatibility", () => {
+  it("accepts the configured deterministic mint pair, token owners and decimals", () => {
+    expect(() => assertTokenWrapIdentity(validIdentity)).not.toThrow();
   });
 
   it.each([
-    ["program", { programAddress: "11111111111111111111111111111111" }],
-    ["wrapped mint", { wrappedMintAddress: "11111111111111111111111111111111" }],
-    ["underlying mint", { unwrappedMintAddress: "11111111111111111111111111111111" }],
     ["derived mint", { derivedWrappedMintAddress: "11111111111111111111111111111111" }],
     ["wrapped token owner", { wrappedMintProgramAddress: TOKEN_PROGRAM_ADDRESS }],
     ["underlying token owner", { unwrappedMintProgramAddress: TOKEN_2022_PROGRAM_ADDRESS }],
@@ -38,30 +35,30 @@ describe("custom Devnet Token Wrap compatibility", () => {
     ["underlying decimals", { unwrappedMintDecimals: 9 }]
   ])("rejects a mismatched %s", (_label, override) => {
     expect(() =>
-      assertDevnetTokenWrapIdentity({ ...validIdentity, ...override })
+      assertTokenWrapIdentity({ ...validIdentity, ...override })
     ).toThrow("No transaction was submitted");
   });
 
   it("requires the configured program to be executable under the upgradeable loader", () => {
     expect(() =>
-      assertDevnetTokenWrapProgramAccount({
-        programAddress: DEVNET_TOKEN_WRAP_EXPECTED.programAddress,
+      assertTokenWrapProgramAccount({
+        programAddress: TOKEN_WRAP_EXPECTED.programAddress,
         ownerProgramAddress: loader,
         executable: true
       })
     ).not.toThrow();
 
     expect(() =>
-      assertDevnetTokenWrapProgramAccount({
-        programAddress: DEVNET_TOKEN_WRAP_EXPECTED.programAddress,
+      assertTokenWrapProgramAccount({
+        programAddress: TOKEN_WRAP_EXPECTED.programAddress,
         ownerProgramAddress: TOKEN_PROGRAM_ADDRESS,
         executable: true
       })
     ).toThrow("not an executable deployed program");
 
     expect(() =>
-      assertDevnetTokenWrapProgramAccount({
-        programAddress: DEVNET_TOKEN_WRAP_EXPECTED.programAddress,
+      assertTokenWrapProgramAccount({
+        programAddress: TOKEN_WRAP_EXPECTED.programAddress,
         ownerProgramAddress: loader,
         executable: false
       })
@@ -76,8 +73,8 @@ describe("custom Devnet Token Wrap compatibility", () => {
       expectedTokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
       tokenAccountOwnerAddress: "wallet",
       expectedOwnerAddress: "wallet",
-      tokenAccountMintAddress: DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress,
-      expectedMintAddress: DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress
+      tokenAccountMintAddress: TOKEN_WRAP_EXPECTED.unwrappedMintAddress,
+      expectedMintAddress: TOKEN_WRAP_EXPECTED.unwrappedMintAddress
     };
 
     expect(() => assertExpectedAssociatedTokenAccount(validDestination)).not.toThrow();
