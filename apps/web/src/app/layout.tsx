@@ -5,11 +5,6 @@ import { ErudaDevTools } from "../components/dev/ErudaDevTools";
 import { PublicShell } from "../components/public/PublicShell";
 import { APP_IDENTITY, createRootMetadata } from "./app-identity";
 import { metadataBase } from "./site";
-import { loadPayloreConfig } from "../server/config";
-import {
-  getSolanaWalletChainId,
-  getSolanaWalletDeepLinkCluster
-} from "../server/auth/protocol";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -61,7 +56,6 @@ export default function RootLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
-  const config = loadPayloreConfig();
   return (
     <html
       lang="en"
@@ -110,10 +104,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body
-        data-paylore-wallet-chain={getSolanaWalletChainId(config.PAYLORE_NETWORK)}
-        data-paylore-explorer-cluster={getSolanaWalletDeepLinkCluster(config.PAYLORE_NETWORK)}
-      >
+      <body>
         <PublicShell>{children}</PublicShell>
         <ErudaDevTools />
       </body>

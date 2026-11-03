@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { BusyActionButton } from "./BusyActionButton";
 import { useRouter } from "next/navigation";
-import { getPayloreExplorerCluster, solanaExplorerUrl } from "./solana-network";
 
 type DeadLetter = {
   id: string;
@@ -73,7 +72,7 @@ export function WebhookDeadLetterQueue({
               <tr key={event.id}>
                 <td>{new Date(event.receivedAt).toLocaleString()}</td>
                 <td>{event.eventType ?? "Unclassified transaction"}</td>
-                <td>{event.transactionSignature ? <a href={solanaExplorerUrl(event.transactionSignature, getPayloreExplorerCluster())} target="_blank" rel="noreferrer">View transaction</a> : "No signature recorded"}</td>
+                <td>{event.transactionSignature ? <a href={`https://explorer.solana.com/tx/${encodeURIComponent(event.transactionSignature)}?cluster=devnet`} target="_blank" rel="noreferrer">View transaction</a> : "No signature recorded"}</td>
                 <td>{event.attempts}</td>
                 <td>{event.lastErrorCode ?? "Needs review"}</td>
                 <td>

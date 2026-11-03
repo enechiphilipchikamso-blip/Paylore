@@ -20,16 +20,12 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
     "An earlier sponsored attempt for this batch is already finalized. Refresh to view the recorded state.",
   gas_tank_sponsorship_failed:
     "The Gas Tank service failed unexpectedly while preparing the transaction. Nothing was signed. Retry; if it persists, check the Gas Tank page.",
-  sponsorship_rpc_unavailable:
-    "The configured Solana RPC provider could not prepare this transaction. Nothing was signed. Retry shortly or check the RPC provider configuration.",
-  gas_tank_envelope_key_not_configured:
-    "Gas Tank signing is not configured on the server. Nothing was signed. Configure the Gas Tank envelope key, then retry.",
   sponsored_simulation_failed:
-    "The sponsored transaction failed its pre-flight simulation on configured network. Nothing was signed or submitted.",
+    "The sponsored transaction failed its pre-flight simulation on Devnet. Nothing was signed or submitted.",
   sponsored_simulation_unavailable:
-    "configured network could not simulate the sponsored transaction right now. Nothing was signed. Retry shortly.",
+    "Devnet could not simulate the sponsored transaction right now. Nothing was signed. Retry shortly.",
   sponsored_fee_unavailable:
-    "configured network did not return a network fee quote. Nothing was signed. Retry shortly.",
+    "Devnet did not return a network fee quote. Nothing was signed. Retry shortly.",
   sponsored_fee_limit_exceeded:
     "The quoted network fee exceeds the Gas Tank per-operation limit. Nothing was signed.",
   sponsored_compute_limit_exceeded:
@@ -39,7 +35,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   sponsored_claim_already_exists:
     "A Claim PDA for this batch already exists on-chain. Refresh the payroll run to reconcile it.",
   sponsored_claim_state_unavailable:
-    "configured network did not return the current Claim PDA state. Nothing was signed. Retry shortly.",
+    "Devnet did not return the current Claim PDA state. Nothing was signed. Retry shortly.",
   sponsored_workspace_pda_owner_mismatch:
     "The on-chain workspace account is not owned by the configured Payroll Program. Check the configured program ID.",
   sponsored_claim_allocation_not_eligible:
@@ -55,7 +51,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   sponsorship_finalized_transaction_verification_failed:
     "The earlier finalized transaction could not be verified against this payroll batch yet. Retry shortly.",
   sponsorship_failed_transaction_fee_unavailable:
-    "The earlier transaction failed on-chain, and configured network has not returned its actual fee yet. Retry shortly.",
+    "The earlier transaction failed on-chain, and Devnet has not returned its actual fee yet. Retry shortly.",
   sponsorship_transaction_pending_finality:
     "An earlier sponsored transaction was submitted and is awaiting finality. Paylore will not create another transaction until it resolves.",
   sponsorship_transaction_still_live:
@@ -67,7 +63,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   payroll_run_not_confirmed:
     "This payroll run is not manager-confirmed with an allocation commitment.",
   payroll_program_not_configured:
-    "The configured network Payroll Program is not configured for this deployment.",
+    "The Devnet Payroll Program is not configured for this deployment.",
   payroll_mint_not_configured:
     "The wrapped-USDC mint is not configured for this deployment.",
   workspace_read_only:
@@ -81,7 +77,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   request_not_allowed:
     "The request was rejected by Paylore's origin check. Reload the page and retry.",
   payroll_claim_escrow_setup_pending:
-    "Paylore is still finalizing the confidential allocation accounts on configured network. Retry in a few seconds.",
+    "Paylore is still finalizing the confidential allocation accounts on Devnet. Retry in a few seconds.",
   payroll_claim_escrow_allocation_invalid:
     "An allocation is not in a state that allows its confidential allocation account to be prepared. Refresh the payroll run.",
   payroll_claim_escrow_amount_invalid:
@@ -94,6 +90,8 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
     "The confidential allocation account key is unavailable on the server.",
   payroll_claim_escrow_key_mismatch:
     "The stored confidential allocation account key does not match its address.",
+  payroll_claim_escrow_devnet_only:
+    "Confidential allocation accounts are only available on Devnet in this deployment.",
   payroll_program_identity_mismatch:
     "The configured Payroll Program changed during preparation. Reload the page and retry.",
   reserve_envelope_key_not_configured:
@@ -103,11 +101,9 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   payroll_claim_escrow_mint_not_approved:
     "The wrapped-USDC mint does not auto-approve confidential accounts.",
   payroll_claim_escrow_account_setup_failed:
-    "The Gas Tank could not create a confidential allocation account on configured network. Verify it has enough SOL for rent and retry.",
+    "Creating a confidential allocation account failed on-chain. Its fee was paid by the Gas Tank; you can retry.",
   payroll_claim_escrow_confidential_setup_failed:
-    "The Gas Tank could not configure a confidential allocation account on configured network. Verify the configured mint and Gas Tank balance, then retry.",
-  payroll_claim_escrow_setup_too_large:
-    "This confidential allocation account setup does not fit in one network transaction. Retry with a fresh allocation or contact support.",
+    "Configuring a confidential allocation account failed on-chain. You can retry.",
   payroll_claim_escrow_account_owner_invalid:
     "An existing allocation account is not a Token-2022 account.",
   payroll_claim_escrow_account_identity_invalid:
@@ -129,7 +125,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   workspace_busy:
     "Another payroll claim or recovery is being reconciled for this workspace. Retry after it finishes.",
   workspace_reserve_not_initialized:
-    "The workspace Reserve is not initialized. Initialize it in Reserve settings, then retry Submit Claim PDAs.",
+    "The workspace confidential Reserve is not initialized.",
   workspace_reserve_key_mismatch:
     "The stored Reserve signing key does not match the Reserve address.",
   reserve_confidential_balance_insufficient:
@@ -196,7 +192,7 @@ export function describeGasTankError(
   if (code && GAS_TANK_ERROR_MESSAGES[code]) return GAS_TANK_ERROR_MESSAGES[code];
   if (!code) {
     if (httpStatus === 502 || httpStatus === 504) {
-      return "The Paylore server timed out while waiting for configured network. Anything already submitted was recorded; retry to continue from where it stopped.";
+      return "The Paylore server timed out while waiting for Devnet. Anything already submitted was recorded; retry to continue from where it stopped.";
     }
     return httpStatus
       ? `Paylore returned an unreadable response (HTTP ${httpStatus}). Nothing was signed by your wallet. Retry shortly.`

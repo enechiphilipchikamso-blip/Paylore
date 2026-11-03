@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { getNetworkHealth } from "./rpc";
+import { getDevnetHealth } from "./rpc";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -36,7 +36,7 @@ describe("Solana Devnet RPC failover", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getNetworkHealth()).resolves.toEqual({
+    await expect(getDevnetHealth()).resolves.toEqual({
       network: "devnet",
       slot: 123_456
     });

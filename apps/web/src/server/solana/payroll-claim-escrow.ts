@@ -53,13 +53,14 @@ import {
   sealReserveKey
 } from "../reserve-crypto-policy";
 
+const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 /**
  * Synchronous Netlify functions stop at 60 seconds. Escrow setup waits for
  * finality inside the request only within this budget; anything slower is
  * returned as "pending" and resumed from the persisted signatures on retry.
  */
 const ESCROW_REQUEST_FINALITY_BUDGET_MS = 35_000;
-/** A configured network blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
+/** A Devnet blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
 const DROPPED_SIGNATURE_AFTER_MS = 3 * 60 * 1000;
 
 type Finality = "finalized" | "failed" | "pending";
@@ -86,30 +87,9 @@ class FinalityFailedError extends Error {
   }
 }
 
-function classifyPlanExecutionError(error: unknown, code: string): never {
-  if (error instanceof PayrollClaimEscrowError) throw error;
-  if (
-    error instanceof Error &&
-    (error.name === "SolanaError" ||
-      error.message.includes("failed to execute transaction plan"))
-  ) {
-    throw new PayrollClaimEscrowError(code, 503);
-  }
-  throw error;
-}
-
-function transactionPlanLeafCount(plan: { kind: string; plans?: readonly unknown[] }): number {
-  if (plan.kind === "single") return 1;
-  return (plan.plans ?? []).reduce<number>(
-    (count, child) =>
-      count + transactionPlanLeafCount(child as { kind: string; plans?: readonly unknown[] }),
-    0
-  );
-}
-
 function rpcEndpoint(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }
@@ -221,9 +201,6 @@ async function executePlan(
     }
   });
   const planned = await planner(plan);
-  if (transactionPlanLeafCount(planned) !== 1) {
-    throw new PayrollClaimEscrowError("payroll_claim_escrow_setup_too_large", 409);
-  }
   const signatures: string[] = [];
   let trackingFailed = false;
   const executor = createTransactionPlanExecutorWithConcurrentLeaves({
@@ -296,6 +273,9 @@ export async function preparePayrollClaimEscrowAccount(
   const config = loadPayloreConfig();
   const envelopeKey = config.PAYLORE_RESERVE_ENVELOPE_KEY;
   if (!envelopeKey) throw new PayrollClaimEscrowError("reserve_envelope_key_not_configured", 503);
+  if (config.PAYLORE_NETWORK !== "devnet") {
+    throw new PayrollClaimEscrowError("payroll_claim_escrow_devnet_only", 503);
+  }
   if (config.PAYLORE_PAYROLL_PROGRAM_ID !== input.programId) {
     throw new PayrollClaimEscrowError("payroll_program_identity_mismatch", 409);
   }
@@ -407,10 +387,7 @@ export async function preparePayrollClaimEscrowAccount(
             maximumPendingBalanceCreditCounter: 0n,
             expectedPendingBalanceCreditCounter: 0n,
             actualPendingBalanceCreditCounter: 0n
-          }),
-          ...(extensionList(mint).some((item) => item.__kind === "TransferFeeConfig")
-            ? [extension("ConfidentialTransferFeeAmount", { withheldAmount: new Uint8Array(64) })]
-            : [])
+          })
         ];
         const space = BigInt(getTokenSize(extensions));
         const rent = await rpc.getMinimumBalanceForRentExemption(space).send();
@@ -429,19 +406,14 @@ export async function preparePayrollClaimEscrowAccount(
             owner: address(reserveSigner.address)
           })
         ]);
-        let creation: Awaited<ReturnType<typeof executePlan>>;
-        try {
-          creation = await executePlan(rpc, gasTankSigner, creationPlan, async (signature) => {
-            const persisted = await attachPayrollClaimEscrowAccountSetupSignature(db, {
-              workspaceId: input.workspaceId,
-              allocationId: input.allocationId,
-              signature
-            });
-            if (!persisted) throw new Error("Escrow account setup signature could not be persisted.");
-          }, [reserveSigner, escrowSigner], finalityDeadline);
-        } catch (error) {
-          classifyPlanExecutionError(error, "payroll_claim_escrow_account_setup_failed");
-        }
+        const creation = await executePlan(rpc, gasTankSigner, creationPlan, async (signature) => {
+          const persisted = await attachPayrollClaimEscrowAccountSetupSignature(db, {
+            workspaceId: input.workspaceId,
+            allocationId: input.allocationId,
+            signature
+          });
+          if (!persisted) throw new Error("Escrow account setup signature could not be persisted.");
+        }, [reserveSigner, escrowSigner], finalityDeadline);
         if (creation.status === "pending" || creation.trackingFailed) {
           return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
         }
@@ -483,32 +455,19 @@ export async function preparePayrollClaimEscrowAccount(
             owner: reserveSigner,
             mint: mintAddress,
             token: tokenAddress,
-            programAddress: TOKEN_2022_PROGRAM_ADDRESS,
             rpc,
             elgamalKeypair: elgamal,
             aesKey,
             includeConfidentialTransferFeeAmount: extensionList(mint).some((item) => item.__kind === "TransferFeeConfig")
           });
-          if (setupPlan.kind !== "sequential" || setupPlan.plans.length !== 4) {
-            throw new PayrollClaimEscrowError("payroll_claim_escrow_confidential_setup_failed", 503);
-          }
-          const configurePlan = nonDivisibleSequentialInstructionPlan([
-            setupPlan.plans[2]!,
-            setupPlan.plans[3]!
-          ]);
-          let setup: Awaited<ReturnType<typeof executePlan>>;
-          try {
-            setup = await executePlan(rpc, gasTankSigner, configurePlan, async (signature) => {
-              const persisted = await appendPayrollClaimEscrowConfidentialSetupSignature(db, {
-                workspaceId: input.workspaceId,
-                allocationId: input.allocationId,
-                signature
-              });
-              if (!persisted) throw new Error("Escrow confidential setup signature could not be persisted.");
-            }, [reserveSigner], finalityDeadline);
-          } catch (error) {
-            classifyPlanExecutionError(error, "payroll_claim_escrow_confidential_setup_failed");
-          }
+          const setup = await executePlan(rpc, gasTankSigner, setupPlan, async (signature) => {
+            const persisted = await appendPayrollClaimEscrowConfidentialSetupSignature(db, {
+              workspaceId: input.workspaceId,
+              allocationId: input.allocationId,
+              signature
+            });
+            if (!persisted) throw new Error("Escrow confidential setup signature could not be persisted.");
+          }, [reserveSigner], finalityDeadline);
           if (setup.status === "pending" || setup.trackingFailed) {
             return { status: "pending" as const, tokenAccountAddress: escrow.tokenAccountAddress };
           }
@@ -539,14 +498,6 @@ export async function preparePayrollClaimEscrowAccount(
       return { status: "ready" as const, tokenAccountAddress: escrow.tokenAccountAddress };
     });
     });
-  } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === "The workspace reserve is not initialized."
-      ) {
-        throw new PayrollClaimEscrowError("workspace_reserve_not_initialized", 409);
-      }
-    throw error;
   } finally {
     tempPrivateKey.fill(0);
   }

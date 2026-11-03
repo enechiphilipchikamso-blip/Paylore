@@ -21,7 +21,8 @@ import {
 } from "./workspace-reserve";
 import { buildWrappedUsdcWrapPlan } from "../../components/workspace/token-wrap-transaction";
 import {
-  assertTokenWrapIdentity, assertTokenWrapProgramAccount
+  assertDevnetTokenWrapIdentity, assertDevnetTokenWrapProgramAccount,
+  DEVNET_TOKEN_WRAP_EXPECTED
 } from "../../components/workspace/token-wrap-compatibility";
 import { loadPayloreConfig } from "../config";
 import { readSolanaRpc } from "./rpc";
@@ -69,7 +70,11 @@ function objectP4(value: unknown): Record<string, unknown> | null {
 
 function rpcEndpointP4(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || "https://api.devnet.solana.com");
+  if (url.protocol !== "https:" ||
+      (!/devnet/i.test(url.hostname) && url.hostname !== "api.devnet.solana.com")) {
+    throw new ReserveWrapFundingError("reserve_wrap_devnet_rpc_required", 503);
+  }
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }
@@ -118,8 +123,9 @@ async function resolveVerifiedContextP4(input: {
       }
     }
     const config = loadPayloreConfig();
-    if (!config.PAYLORE_SUBSCRIPTION_USDC_MINT ||
-        !config.PAYLORE_WRAPPED_USDC_MINT) {
+    if (config.PAYLORE_NETWORK !== "devnet" ||
+        config.TOKEN_WRAP_PROGRAM_ID !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress ||
+        config.PAYLORE_WRAPPED_USDC_MINT !== DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress) {
       throw new ReserveWrapFundingError("reserve_wrap_identity_mismatch", 409);
     }
     const snapshot = await getWorkspaceConfidentialReserveSnapshot(
@@ -137,14 +143,14 @@ async function resolveVerifiedContextP4(input: {
     const rpc = createSolanaRpc(rpcEndpointP4());
     const tokenWrapProgramAddress = config.TOKEN_WRAP_PROGRAM_ID;
     const wrappedMintAddress = config.PAYLORE_WRAPPED_USDC_MINT;
-    const unwrappedMintAddress = config.PAYLORE_SUBSCRIPTION_USDC_MINT;
+    const unwrappedMintAddress = DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress;
     const [programAccount, wrappedMintAccount, unwrappedMintAccount] = await Promise.all([
       fetchEncodedAccount(rpc, address(tokenWrapProgramAddress)),
       fetchEncodedAccount(rpc, address(wrappedMintAddress)),
       fetchEncodedAccount(rpc, address(unwrappedMintAddress))
     ]);
     try {
-      assertTokenWrapProgramAccount({
+      assertDevnetTokenWrapProgramAccount({
         programAddress: tokenWrapProgramAddress,
         ownerProgramAddress: programAccount.exists ? programAccount.programAddress : "",
         executable: programAccount.exists && programAccount.executable === true
@@ -174,7 +180,7 @@ async function resolveVerifiedContextP4(input: {
         tokenWrapProgramAddress,
         amount
       });
-      assertTokenWrapIdentity({
+      assertDevnetTokenWrapIdentity({
         programAddress: tokenWrapProgramAddress,
         wrappedMintAddress,
         unwrappedMintAddress,
@@ -271,8 +277,9 @@ export async function recordPendingReserveWrapFunding(input: {
 
   const config = loadPayloreConfig();
   if (
-    !config.PAYLORE_SUBSCRIPTION_USDC_MINT ||
-    !config.PAYLORE_WRAPPED_USDC_MINT
+    config.PAYLORE_NETWORK !== "devnet" ||
+    config.TOKEN_WRAP_PROGRAM_ID !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress ||
+    config.PAYLORE_WRAPPED_USDC_MINT !== DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress
   ) {
     throw new ReserveWrapFundingError("reserve_wrap_identity_mismatch", 409);
   }
@@ -281,7 +288,7 @@ export async function recordPendingReserveWrapFunding(input: {
 
   const reserveAddress = address(reserve.address);
   const wrappedMintAddress = address(config.PAYLORE_WRAPPED_USDC_MINT);
-  const unwrappedMintAddress = address(config.PAYLORE_SUBSCRIPTION_USDC_MINT);
+  const unwrappedMintAddress = address(DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress);
   const tokenWrapProgramAddress = address(config.TOKEN_WRAP_PROGRAM_ID);
   const [reserveTokenAddress] = await findAssociatedTokenPda({
     owner: reserveAddress,
@@ -511,7 +518,7 @@ function balanceP4(
   if (row.mint !== mint || row.owner !== owner ||
       (row.programId !== undefined && row.programId !== tokenProgram) ||
       typeof rawAmount !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(rawAmount) ||
-      row.uiTokenAmount?.decimals !== 6) {
+      row.uiTokenAmount?.decimals !== DEVNET_TOKEN_WRAP_EXPECTED.decimals) {
     throw new ReserveWrapFundingError("reserve_wrap_token_account_identity_mismatch", 409);
   }
   return BigInt(rawAmount);

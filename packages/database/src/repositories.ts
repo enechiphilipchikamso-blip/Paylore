@@ -5008,8 +5008,8 @@ export async function recordPayrollClaimSubmission(
             ? "Payroll claim commitments finalized"
             : "Payroll claim commitments are being submitted",
           body: complete
-            ? "All Claim PDAs for this payroll run are finalized on the configured network. Contributor settlement remains a separate step."
-            : "A batch of Claim PDAs is finalized on the configured network. Additional payroll allocations still require submission.",
+            ? "All Claim PDAs for this payroll run are finalized on Devnet. Contributor settlement remains a separate step."
+            : "A batch of Claim PDAs is finalized on Devnet. Additional payroll allocations still require submission.",
           destination: `/workspace/${input.workspaceId}/payroll/${input.runId}`,
           createdAt: now
         }))
