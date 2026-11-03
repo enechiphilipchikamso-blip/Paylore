@@ -137,7 +137,7 @@ function matchesDesiredConfig(
 /**
  * Read, reconcile, and read back the single existing Helius webhook. Empty
  * The explicit ANY transaction filter and enhancedDevnet type keep the webhook
- * aligned with the dashboard's all-transactions configured network configuration.
+ * aligned with the dashboard's all-transactions Devnet configuration.
  */
 export async function reconcileHeliusWebhook(input: {
   managementApiKey: string;

@@ -707,28 +707,6 @@ export async function POST(request: Request, { params }: RouteContext) {
         : 409;
       return NextResponse.json({ error: error.code }, { status });
     }
-    if (error instanceof Error && error.name === "SolanaRpcError") {
-      console.error(JSON.stringify({
-        event: "gas_tank_sponsorship_rpc_failed",
-        provider: "provider" in error && typeof error.provider === "string"
-          ? error.provider
-          : undefined
-      }));
-      return NextResponse.json(
-        { error: "sponsorship_rpc_unavailable" },
-        { status: 503, headers: { "Cache-Control": "no-store" } }
-      );
-    }
-    if (error instanceof Error && error.message === "Gas Tank envelope encryption is not configured.") {
-      console.error(JSON.stringify({
-        event: "gas_tank_sponsorship_configuration_failed",
-        code: "gas_tank_envelope_key_not_configured"
-      }));
-      return NextResponse.json(
-        { error: "gas_tank_envelope_key_not_configured" },
-        { status: 503, headers: { "Cache-Control": "no-store" } }
-      );
-    }
     console.error(JSON.stringify({ event: "gas_tank_sponsorship_failed" }));
     return NextResponse.json({ error: "gas_tank_sponsorship_failed" }, { status: 503 });
   }

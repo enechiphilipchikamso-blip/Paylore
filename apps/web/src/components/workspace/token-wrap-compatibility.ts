@@ -3,10 +3,10 @@ import {
   TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 
-export const TOKEN_WRAP_EXPECTED = {
-  programAddress: "",
-  wrappedMintAddress: "",
-  unwrappedMintAddress: "",
+export const DEVNET_TOKEN_WRAP_EXPECTED = {
+  programAddress: "58yEtWEhrsRery3w1kZiTXdWofY6efvxmeAZwLrexgQ",
+  wrappedMintAddress: "8wZmMHQY3bCJMhWs8j6BLxvgNLUkCXB2F5tEZPFF8A6q",
+  unwrappedMintAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
   wrappedMintProgramAddress: TOKEN_2022_PROGRAM_ADDRESS,
   unwrappedMintProgramAddress: TOKEN_PROGRAM_ADDRESS,
   decimals: 6
@@ -15,11 +15,16 @@ export const TOKEN_WRAP_EXPECTED = {
 const UPGRADEABLE_LOADER_ADDRESS =
   "BPFLoaderUpgradeab1e11111111111111111111111";
 
-export function assertTokenWrapProgramAccount(input: {
+export function assertDevnetTokenWrapProgramAccount(input: {
   programAddress: string;
   ownerProgramAddress: string;
   executable: boolean;
 }): void {
+  if (input.programAddress !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress) {
+    throw new Error(
+      "The Token Wrap off-ramp is restricted to the approved Devnet program. No transaction was submitted."
+    );
+  }
   if (
     !input.executable ||
     input.ownerProgramAddress !== UPGRADEABLE_LOADER_ADDRESS
@@ -30,7 +35,7 @@ export function assertTokenWrapProgramAccount(input: {
   }
 }
 
-export function assertTokenWrapIdentity(input: {
+export function assertDevnetTokenWrapIdentity(input: {
   programAddress: string;
   wrappedMintAddress: string;
   unwrappedMintAddress: string;
@@ -40,26 +45,39 @@ export function assertTokenWrapIdentity(input: {
   wrappedMintDecimals: number;
   unwrappedMintDecimals: number;
 }): void {
+  if (input.programAddress !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress) {
+    throw new Error(
+      "The Token Wrap off-ramp is restricted to the approved Devnet program. No transaction was submitted."
+    );
+  }
+  if (input.wrappedMintAddress !== DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress) {
+    throw new Error(
+      "The wrapped-USDC mint is not the approved Devnet mint. No transaction was submitted."
+    );
+  }
+  if (input.unwrappedMintAddress !== DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress) {
+    throw new Error(
+      "The destination mint is not Circle Devnet USDC. No transaction was submitted."
+    );
+  }
   if (
     input.wrappedMintProgramAddress !==
-      TOKEN_WRAP_EXPECTED.wrappedMintProgramAddress ||
+      DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintProgramAddress ||
     input.unwrappedMintProgramAddress !==
-      TOKEN_WRAP_EXPECTED.unwrappedMintProgramAddress
+      DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintProgramAddress
   ) {
     throw new Error(
       "The wrapped and underlying USDC mints are not owned by their expected token programs. No transaction was submitted."
     );
   }
-
   if (input.derivedWrappedMintAddress !== input.wrappedMintAddress) {
     throw new Error(
       "The wrapped-USDC mint does not derive from the configured Circle mint and Token Wrap program. No transaction was submitted."
     );
   }
-
   if (
-    input.wrappedMintDecimals !== 6 ||
-    input.unwrappedMintDecimals !== 6 ||
+    input.wrappedMintDecimals !== DEVNET_TOKEN_WRAP_EXPECTED.decimals ||
+    input.unwrappedMintDecimals !== DEVNET_TOKEN_WRAP_EXPECTED.decimals ||
     input.wrappedMintDecimals !== input.unwrappedMintDecimals
   ) {
     throw new Error(
@@ -67,7 +85,6 @@ export function assertTokenWrapIdentity(input: {
     );
   }
 }
-
 
 export function assertExpectedAssociatedTokenAccount(input: {
   tokenAccountAddress: string;
