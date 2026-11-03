@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { SubscriptionPaymentAction } from "./SubscriptionPaymentAction";
+import { WalletConnectionMonitor } from "./WalletConnectionMonitor";
 
 export function WorkspaceActivation({
   workspaceId,
@@ -69,6 +70,7 @@ export function WorkspaceActivation({
               <span>USDC on Solana</span>
               <span>Manual renewal · no automatic charges</span>
             </div>
+            <WalletConnectionMonitor workspaceId={workspaceId} role={role} />
             {role === "organization_admin" ? (
               <>
                 <SubscriptionPaymentAction
