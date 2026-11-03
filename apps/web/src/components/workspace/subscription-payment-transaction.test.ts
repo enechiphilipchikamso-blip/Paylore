@@ -54,7 +54,7 @@ describe("subscription payment transaction", () => {
     });
   });
 
-  it("builds the same exact payment through the configured classic SPL Token program for Circle Devnet USDC", async () => {
+  it("builds the same exact payment through the configured classic SPL Token program for Circle USDC", async () => {
     const memo = "Paylore activation attempt test | workspace workspace-classic-usdc";
     const transaction = await createSubscriptionPaymentTransaction({
       payer: PAYER,

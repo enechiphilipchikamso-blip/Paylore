@@ -57,9 +57,9 @@ import {
   type InstructionPlan
 } from "@solana/kit";
 import type { findAuthenticatedWallet } from "./authenticated-wallet";
+import { SOLANA_WALLET_CHAIN, browserSolanaRpcUrl } from "./solana-network";
 
 type Wallet = Awaited<ReturnType<typeof findAuthenticatedWallet>>;
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
 const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 const SETUP_AUTHORIZATION_MEMO = new TextEncoder().encode(
@@ -116,7 +116,7 @@ async function executePlan(
   sponsorship?: { feePayerAddress: string; relayUrl: string },
   simulation?: { only: boolean }
 ): Promise<string[]> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   const feePayer = createNoopSigner(
     sponsorship ? address(sponsorship.feePayerAddress) : owner
@@ -177,7 +177,7 @@ async function executePlan(
         }
         const [signed] = await wallet.signTransaction({
           account: wallet.account,
-          chain: "solana:devnet",
+          chain: SOLANA_WALLET_CHAIN,
           transaction
         });
         const originalDecoded = getTransactionDecoder().decode(transaction);
@@ -236,7 +236,7 @@ async function executePlan(
       }
       const [result] = await wallet.signAndSendTransaction({
         account: wallet.account,
-        chain: "solana:devnet",
+        chain: SOLANA_WALLET_CHAIN,
         transaction
       });
       const encodedSignature = getBase58Decoder().decode(result.signature);
@@ -287,7 +287,7 @@ export async function setupConfidentialAccount(
   mintAddress: string,
   sponsorship: { feePayerAddress: string; relayUrl: string }
 ): Promise<{ tokenAccountAddress: string; signature: string }> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const mint = address(mintAddress);
   const mintAccount = await fetchMint(rpc, mint);
   const mintExtensions = isSome(mintAccount.data.extensions)
@@ -344,7 +344,7 @@ export async function getConfidentialBalances(
   mintAddress: string,
   tokenAccountAddress: string
 ) {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const { keys } = await deriveWalletKeys(wallet);
   const secretKey = ElGamalSecretKey.fromBytes(keys.elgamalKeypair.secretKey);
   const elgamalKeypair = ElGamalKeypair.fromSecretKey(secretKey);
@@ -383,7 +383,7 @@ export async function closeConfidentialAccount(
   tokenAccountAddress: string,
   eligibility: { ownerWalletAddress: string; accountStatus: string; hasOpenAllocations: boolean }
 ): Promise<string[]> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   const mint = address(mintAddress);
   const token = address(tokenAccountAddress);
@@ -464,7 +464,7 @@ export async function applyConfidentialPendingBalance(
   mintAddress: string,
   tokenAccountAddress: string
 ): Promise<string[]> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   const token = address(tokenAccountAddress);
   const { keys } = await deriveWalletKeys(wallet);
@@ -502,7 +502,7 @@ export async function withdrawConfidentialBalance(
   amountBaseUnits: bigint,
   decimals: number
 ): Promise<string[]> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   const token = address(tokenAccountAddress);
   const mint = address(mintAddress);
@@ -609,7 +609,7 @@ async function verifyWrappedUsdcWrapPlanP4b(
     amountBaseUnits: bigint;
   }
 ): Promise<ReserveWrapPreflightP4b> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   if (owner !== input.walletAddress) {
     throw new Error("The connected wallet changed after the funding check. No transaction was submitted.");
@@ -631,7 +631,7 @@ async function verifyWrappedUsdcWrapPlanP4b(
     throw new Error("The configured wrapped-USDC mint is missing or is not owned by Token-2022. No transaction was submitted.");
   }
   if (!unwrappedMintAccount.exists || unwrappedMintAccount.programAddress !== TOKEN_PROGRAM_ADDRESS) {
-    throw new Error("Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted.");
+    throw new Error("Circle USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted.");
   }
   const built = await buildWrappedUsdcWrapPlan({
     ownerAddress: input.walletAddress,
@@ -664,7 +664,7 @@ async function verifyWrappedUsdcWrapPlanP4b(
     fetchEncodedAccount(rpc, address(built.destinationTokenAccount))
   ]);
   if (!sourceAccount.exists || sourceAccount.programAddress !== TOKEN_PROGRAM_ADDRESS) {
-    throw new Error("Your wallet's ordinary Circle Devnet USDC token account is missing. No transaction was submitted.");
+    throw new Error("Your wallet's ordinary Circle USDC token account is missing. No transaction was submitted.");
   }
   if (!destinationAccount.exists || destinationAccount.programAddress !== TOKEN_2022_PROGRAM_ADDRESS) {
     throw new Error("The Reserve's wrapped-USDC Token-2022 account is missing. No transaction was submitted.");
@@ -674,10 +674,10 @@ async function verifyWrappedUsdcWrapPlanP4b(
     fetchToken(rpc, address(built.destinationTokenAccount))
   ]);
   if (sourceToken.data.owner !== owner || sourceToken.data.mint !== input.unwrappedMintAddress) {
-    throw new Error("Your source token account is not owned by the connected wallet and Circle Devnet USDC mint. No transaction was submitted.");
+    throw new Error("Your source token account is not owned by the connected wallet and Circle USDC mint. No transaction was submitted.");
   }
   if (sourceToken.data.amount < input.amountBaseUnits) {
-    throw new Error("Your wallet does not have enough ordinary Circle Devnet USDC for this amount. No transaction was submitted.");
+    throw new Error("Your wallet does not have enough ordinary Circle USDC for this amount. No transaction was submitted.");
   }
   if (destinationToken.data.owner !== input.reserveAddress || destinationToken.data.mint !== input.wrappedMintAddress) {
     throw new Error("The Reserve destination account owner or mint changed. No transaction was submitted.");
@@ -749,7 +749,7 @@ async function verifyWrappedUsdcUnwrapPlan(
   tokenWrapProgramAddress: string,
   amountBaseUnits: bigint
 ): Promise<WrappedUsdcUnwrapPreflight> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const owner = address(wallet.account.address);
   const programAddress = address(tokenWrapProgramAddress);
   const wrappedMint = address(wrappedMintAddress);
@@ -777,7 +777,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     unwrappedMintAccount.programAddress !== TOKEN_PROGRAM_ADDRESS
   ) {
     throw new Error(
-      "Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
+      "Circle USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
     );
   }
 
@@ -878,7 +878,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     escrow.mint !== unwrappedMint
   ) {
     throw new Error(
-      "The Token Wrap escrow does not match the wrapped-mint authority and Circle Devnet USDC mint. No transaction was submitted."
+      "The Token Wrap escrow does not match the wrapped-mint authority and Circle USDC mint. No transaction was submitted."
     );
   }
   const escrowBalance = await readFinalizedTokenAccountBalance(
@@ -941,7 +941,7 @@ export async function unwrapWrappedUsdcToCircleUsdc(
   tokenWrapProgramAddress: string,
   amountBaseUnits: bigint
 ): Promise<{ signature: string; recipientTokenAccount: string }> {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+  const rpc = createSolanaRpc(browserSolanaRpcUrl());
   const preflight = await verifyWrappedUsdcUnwrapPlan(
     wallet,
     wrappedMintAddress,

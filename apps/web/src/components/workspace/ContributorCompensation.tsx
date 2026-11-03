@@ -386,7 +386,7 @@ export function ContributorCompensation({
         : action === "cashout"
           ? "Preparing public wrapped-USDC withdrawal…"
           : action === "unwrap"
-            ? "Preparing Circle Devnet USDC unwrap…"
+            ? "Preparing Circle USDC unwrap…"
             : "Checking confidential account…"
     });
     try {
@@ -412,12 +412,12 @@ export function ContributorCompensation({
       if (action === "unwrap") {
         if (!tokenWrapUnwrapEnabled) {
           throw new Error(
-            "Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction was submitted."
+            "Circle USDC conversion is disabled by configuration. No unwrap transaction was submitted."
           );
         }
         if (!circleMint) {
           throw new Error(
-            "Circle Devnet USDC is not configured. No unwrap transaction was submitted."
+            "Circle USDC is not configured. No unwrap transaction was submitted."
           );
         }
         const amount = parseUsdc(unwrapAmount);
@@ -428,14 +428,14 @@ export function ContributorCompensation({
         }
         if (
           !window.confirm(
-            `Unwrap ${formatUsdc(amount)} wrapped USDC into public Circle Devnet USDC in your wallet's token account? The wrapped tokens will be burned and the equivalent escrowed Circle USDC released. This operation and its amount are public on Solana.`
+            `Unwrap ${formatUsdc(amount)} wrapped USDC into public Circle USDC in your wallet's token account? The wrapped tokens will be burned and the equivalent escrowed Circle USDC released. This operation and its amount are public on Solana.`
           )
         ) {
           setMessage({ state: "partial", text: "Unwrap canceled. No transaction was submitted." });
           return;
         }
         await verifyWrappedUsdcUnwrapCompatibility(wallet, mint, circleMint, tokenWrapProgramId, amount);
-        if (!window.confirm(`Read-only compatibility checks and simulation succeeded for the exact unwrap plan. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle Devnet USDC? The amount and transaction are public on Solana.`)) {
+        if (!window.confirm(`Read-only compatibility checks and simulation succeeded for the exact unwrap plan. Unwrap ${formatUsdc(amount)} public wrapped USDC to Circle USDC? The amount and transaction are public on Solana.`)) {
           setMessage({ state: "partial", text: "Unwrap canceled. No transaction was submitted." });
           return;
         }
@@ -449,7 +449,7 @@ export function ContributorCompensation({
         if (!ledgerRecorded) return;
         setMessage({
           state: "success",
-          text: `Token Wrap finalized. Circle Devnet USDC was released to ${result.recipientTokenAccount} and recorded in the workspace ledger. The transaction is public on Solana: ${result.signature}`
+          text: `Token Wrap finalized. Circle USDC was released to ${result.recipientTokenAccount} and recorded in the workspace ledger. The transaction is public on Solana: ${result.signature}`
         });
         return;
       }
@@ -464,7 +464,7 @@ export function ContributorCompensation({
       });
       if (
         !window.confirm(
-          `Withdraw ${formatUsdc(amount)} wrapped USDC to your public wrapped-USDC token account? This does not convert it to Circle Devnet USDC. The withdrawal amount and transaction are public on Solana.`
+          `Withdraw ${formatUsdc(amount)} wrapped USDC to your public wrapped-USDC token account? This does not convert it to Circle USDC. The withdrawal amount and transaction are public on Solana.`
         )
       ) {
         setMessage({ state: "partial", text: "Withdrawal canceled. No transaction was submitted." });
@@ -486,7 +486,7 @@ export function ContributorCompensation({
       if (!ledgerRecorded) return;
       setMessage({
         state: "success",
-        text: `Confidential withdrawal finalized and recorded in the workspace ledger. This credits public wrapped-USDC, not Circle Devnet USDC. The transaction is public on Solana. Transaction: ${transactionSignature}`
+        text: `Confidential withdrawal finalized and recorded in the workspace ledger. This credits public wrapped-USDC, not Circle USDC. The transaction is public on Solana. Transaction: ${transactionSignature}`
       });
     } catch (error) {
       setMessage({
@@ -785,7 +785,7 @@ export function ContributorCompensation({
           <div className="workspace-quick-links__grid contributor-compensation__movement-grid">
             <section className="workspace-setup__content">
               <h3>Withdraw to public wrapped USDC</h3>
-              <p>This moves the amount from your confidential available balance to your public wrapped-USDC token account. It does not convert to Circle Devnet USDC.</p>
+              <p>This moves the amount from your confidential available balance to your public wrapped-USDC token account. It does not convert to Circle USDC.</p>
               <label className="field">
                 <span>Amount to withdraw (wrapped USDC)</span>
                 <input
@@ -805,11 +805,11 @@ export function ContributorCompensation({
               </BusyActionButton>
             </section>
             <section className="workspace-setup__content">
-              <h3>Unwrap to public Circle Devnet USDC</h3>
-              <p>Token Wrap burns public wrapped USDC from your wallet and releases the equivalent escrowed Circle Devnet USDC to your public legacy USDC token account. This conversion and its amount are visible on Solana.</p>
+              <h3>Unwrap to public Circle USDC</h3>
+              <p>Token Wrap burns public wrapped USDC from your wallet and releases the equivalent escrowed Circle USDC to your public legacy USDC token account. This conversion and its amount are visible on Solana.</p>
               {!tokenWrapUnwrapEnabled ? (
                 <p role="status">
-                  Circle Devnet USDC conversion is disabled by configuration. No unwrap transaction can be submitted.
+                  Circle USDC conversion is disabled by configuration. No unwrap transaction can be submitted.
                 </p>
               ) : null}
               <label className="field">
@@ -835,9 +835,9 @@ export function ContributorCompensation({
                 type="button"
               >
                 {busyAction === "unwrap"
-                  ? "Unwrapping Circle Devnet USDC…"
+                  ? "Unwrapping Circle USDC…"
                   : tokenWrapUnwrapEnabled
-                    ? "Unwrap to Circle Devnet USDC"
+                    ? "Unwrap to Circle USDC"
                     : "Circle USDC conversion unavailable"}
               </BusyActionButton>
             </section>
