@@ -126,7 +126,7 @@ export async function POST(
     }
     if (error instanceof SolanaRpcError) {
       return NextResponse.json(
-        { error: "devnet_temporarily_unavailable" },
+        { error: "solana_temporarily_unavailable" },
         { status: 503 }
       );
     }

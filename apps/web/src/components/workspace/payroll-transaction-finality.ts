@@ -15,7 +15,7 @@ export async function waitForTransactionFinality(transactionSignature: string) {
       .send();
     const status = result.value[0];
     if (status?.err) {
-      throw new Error("The Devnet transaction failed on Solana.");
+      throw new Error("The transaction failed on Solana.");
     }
     if (status?.confirmationStatus === "finalized") return;
     await new Promise((resolve) => window.setTimeout(resolve, 1_000));

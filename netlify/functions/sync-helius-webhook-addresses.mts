@@ -42,7 +42,8 @@ export default async function syncHeliusWebhookAddresses() {
       managementApiKey: payloreConfig.PAYLORE_HELIUS_MANAGEMENT_API_KEY!,
       webhookId: payloreConfig.PAYLORE_HELIUS_WEBHOOK_ID!,
       webhookSecret: payloreConfig.PAYLORE_HELIUS_WEBHOOK_SECRET!,
-      monitoredAddresses: [...stableAddresses, ...databaseAddresses]
+      monitoredAddresses: [...stableAddresses, ...databaseAddresses],
+      network: payloreConfig.PAYLORE_NETWORK
     });
 
     console.log(JSON.stringify({

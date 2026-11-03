@@ -631,7 +631,7 @@ async function verifyWrappedUsdcWrapPlanP4b(
     throw new Error("The configured wrapped-USDC mint is missing or is not owned by Token-2022. No transaction was submitted.");
   }
   if (!unwrappedMintAccount.exists || unwrappedMintAccount.programAddress !== TOKEN_PROGRAM_ADDRESS) {
-    throw new Error("Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted.");
+    throw new Error("Circle USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted.");
   }
   const built = await buildWrappedUsdcWrapPlan({
     ownerAddress: input.walletAddress,
@@ -664,7 +664,7 @@ async function verifyWrappedUsdcWrapPlanP4b(
     fetchEncodedAccount(rpc, address(built.destinationTokenAccount))
   ]);
   if (!sourceAccount.exists || sourceAccount.programAddress !== TOKEN_PROGRAM_ADDRESS) {
-    throw new Error("Your wallet's ordinary Circle Devnet USDC token account is missing. No transaction was submitted.");
+    throw new Error("Your wallet's ordinary Circle USDC token account is missing. No transaction was submitted.");
   }
   if (!destinationAccount.exists || destinationAccount.programAddress !== TOKEN_2022_PROGRAM_ADDRESS) {
     throw new Error("The Reserve's wrapped-USDC Token-2022 account is missing. No transaction was submitted.");
@@ -674,10 +674,10 @@ async function verifyWrappedUsdcWrapPlanP4b(
     fetchToken(rpc, address(built.destinationTokenAccount))
   ]);
   if (sourceToken.data.owner !== owner || sourceToken.data.mint !== input.unwrappedMintAddress) {
-    throw new Error("Your source token account is not owned by the connected wallet and Circle Devnet USDC mint. No transaction was submitted.");
+    throw new Error("Your source token account is not owned by the connected wallet and Circle USDC mint. No transaction was submitted.");
   }
   if (sourceToken.data.amount < input.amountBaseUnits) {
-    throw new Error("Your wallet does not have enough ordinary Circle Devnet USDC for this amount. No transaction was submitted.");
+    throw new Error("Your wallet does not have enough ordinary Circle USDC for this amount. No transaction was submitted.");
   }
   if (destinationToken.data.owner !== input.reserveAddress || destinationToken.data.mint !== input.wrappedMintAddress) {
     throw new Error("The Reserve destination account owner or mint changed. No transaction was submitted.");
@@ -777,7 +777,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     unwrappedMintAccount.programAddress !== TOKEN_PROGRAM_ADDRESS
   ) {
     throw new Error(
-      "Circle Devnet USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
+      "Circle USDC is missing or is not owned by the classic SPL Token program. No transaction was submitted."
     );
   }
 
@@ -878,7 +878,7 @@ async function verifyWrappedUsdcUnwrapPlan(
     escrow.mint !== unwrappedMint
   ) {
     throw new Error(
-      "The Token Wrap escrow does not match the wrapped-mint authority and Circle Devnet USDC mint. No transaction was submitted."
+      "The Token Wrap escrow does not match the wrapped-mint authority and Circle USDC mint. No transaction was submitted."
     );
   }
   const escrowBalance = await readFinalizedTokenAccountBalance(

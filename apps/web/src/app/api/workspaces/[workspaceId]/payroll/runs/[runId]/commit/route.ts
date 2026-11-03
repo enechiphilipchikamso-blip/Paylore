@@ -147,7 +147,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     } catch (error) {
       if (
         error instanceof Error &&
-        error.message === "The Devnet Payroll Program is not configured."
+        error.message === "The Paylore Payroll Program is not configured."
       ) {
         return NextResponse.json(
           { error: "payroll_program_not_configured" },

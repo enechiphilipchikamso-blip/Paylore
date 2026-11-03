@@ -60,7 +60,7 @@ import { configuredRpcEndpoint } from "./rpc-configured";
  * returned as "pending" and resumed from the persisted signatures on retry.
  */
 const ESCROW_REQUEST_FINALITY_BUDGET_MS = 35_000;
-/** A Devnet blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
+/** A blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
 const DROPPED_SIGNATURE_AFTER_MS = 3 * 60 * 1000;
 
 type Finality = "finalized" | "failed" | "pending";

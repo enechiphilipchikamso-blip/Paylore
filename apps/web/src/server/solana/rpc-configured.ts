@@ -35,12 +35,12 @@ export async function readSolanaRpc<T>(
   );
 }
 
-export async function getDevnetHealth() {
+export async function getSolanaHealth() {
   const slot = await readSolanaRpc<number>("getSlot", [
     { commitment: "finalized" }
   ]);
   return {
-    network: "devnet" as const,
+    network: loadPayloreConfig().PAYLORE_NETWORK,
     slot
   };
 }

@@ -36,7 +36,7 @@ type ReviewedFunding = PreparedFunding & {
 // A prepared blockhash stays valid for roughly 60 seconds; expire the review
 // early so the wallet is never asked to sign a transaction that cannot land.
 const PREPARED_FUNDING_TTL_MS = 45_000;
-// Devnet usually finalizes a transfer within about 15 seconds; keep checking
+// Solana usually finalizes a transfer within about 15 seconds; keep checking
 // briefly before handing reconciliation to "Check funding transaction".
 const FUNDING_FINALITY_ATTEMPTS = 12;
 const FUNDING_FINALITY_INTERVAL_MS = 3_000;
@@ -232,7 +232,7 @@ export function GasTankActions({
       setNotice({
         state: "error",
         text: result?.error === "funding_transaction_rejected"
-          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough Devnet SOL, then prepare the funding again."
+          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough SOL, then prepare the funding again."
           : "Paylore could not accept the signed funding transaction. No funding was sent. Refresh this page and prepare the funding again."
       });
       return;
@@ -562,7 +562,7 @@ export function GasTankActions({
                   </div>
                   <div>
                     <dt>Network</dt>
-                    <dd>Solana Devnet</dd>
+                    <dd>Solana</dd>
                   </div>
                   <div>
                     <dt>From</dt>
