@@ -26,7 +26,7 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  SOLANA_NETWORK: z.literal("devnet").default("devnet"),
+  SOLANA_NETWORK: z.enum(["devnet", "mainnet"]).default("devnet"),
   SOLANA_RPC_PRIMARY: z
     .string()
     .url()

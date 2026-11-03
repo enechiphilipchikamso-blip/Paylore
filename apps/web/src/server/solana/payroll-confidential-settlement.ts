@@ -49,7 +49,6 @@ import {
   createConfidentialSequenceProgress
 } from "../../components/workspace/confidential-operation-sequence";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
 // the platform cut the response off; a slower finality is returned as the
 // existing resumable "pending" state and continued from its persisted signature.
@@ -133,7 +132,7 @@ function assertConfidentialAccount(token: Token, owner: string, mint: string, co
 }
 function rpcEndpoint(): string {
   const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || DEVNET_RPC_URL);
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
   if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
     url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
   }

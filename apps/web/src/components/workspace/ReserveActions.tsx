@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  createSolanaRpc,
   getBase58Decoder,
   getBase64EncodedWireTransaction,
   getTransactionDecoder
@@ -13,7 +12,8 @@ import { isWalletCancellation } from "../auth/walletErrors";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { wrapOrdinaryUsdcIntoReserve } from "./confidential-account-transaction";
 import { buildWorkspaceInitializationTransaction } from "./payroll-program-transaction";
-import { waitForDevnetFinality } from "./payroll-transaction-finality";
+import { waitForSolanaFinality } from "./payroll-transaction-finality";
+import { createPayloreSolanaRpc, getPayloreWalletChain } from "./solana-network";
 import { baseUnitsToUsdc, formatBaseUnits, usdcToBaseUnits } from "./reserve-funding-amount";
 
 type ReservePhase = "account_setup" | "program_configure";
@@ -79,15 +79,13 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_confidential_deposit_amount_invalid:
       "The amount is outside the confidential Token-2022 deposit limit. Enter a smaller USDC amount and retry.",
     reserve_wrap_source_usdc_missing:
-      "Your wallet has no ordinary Circle Devnet USDC token account. Fund it with Circle Devnet USDC before trying again.",
+      "Your wallet has no ordinary Circle configured network USDC token account. Fund it with Circle configured network USDC before trying again.",
     reserve_wrap_source_usdc_insufficient:
-      "Your wallet does not have enough ordinary Circle Devnet USDC for this amount.",
+      "Your wallet does not have enough ordinary Circle configured network USDC for this amount.",
     reserve_wrap_identity_mismatch:
-      "The configured Token Wrap program or USDC mint does not match the approved Devnet identity. No transaction was submitted.",
+      "The configured Token Wrap program or USDC mint does not match the approved configured network identity. No transaction was submitted.",
     reserve_wrap_program_unavailable:
       "Paylore could not verify the approved Token Wrap program as deployed and executable. No wallet transaction was submitted.",
-    reserve_wrap_devnet_rpc_required:
-      "Paylore could not verify the configured Devnet RPC. No wallet transaction was submitted.",
     reserve_wrap_preflight_unavailable:
       "Paylore could not verify the wallet USDC and Reserve accounts. No wallet transaction was submitted.",
     reserve_wrap_destination_account_mismatch:
@@ -129,11 +127,11 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_confidential_funding_balance_unavailable:
       "Paylore could not read the Reserve's finalized token balances. Nothing new was marked complete. Wait a moment and continue this same operation; do not wrap USDC again.",
     reserve_confidential_funding_status_unavailable:
-      "Paylore could not read the status of the submitted Reserve transaction from Devnet. Wait a moment and continue this same operation; do not wrap USDC again.",
+      "Paylore could not read the status of the submitted Reserve transaction from configured network. Wait a moment and continue this same operation; do not wrap USDC again.",
     reserve_confidential_funding_signature_unavailable:
       "Paylore could not sign the confidential Reserve transaction. No transaction was submitted. Continue this same operation; do not wrap USDC again.",
     reserve_confidential_funding_blockhash_unavailable:
-      "Devnet did not return a recent blockhash, so no confidential Reserve transaction was submitted. Wait a moment and continue this same operation; do not wrap USDC again.",
+      "configured network did not return a recent blockhash, so no confidential Reserve transaction was submitted. Wait a moment and continue this same operation; do not wrap USDC again.",
     reserve_confidential_funding_fee_unavailable:
       "Paylore could not read the network fee of a finalized Reserve transaction. Wait a moment and continue this same operation; do not wrap USDC again.",
     reserve_confidential_funding_unavailable:
@@ -145,7 +143,7 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_wrap_failure_reconciliation_unavailable:
       "The ordinary-USDC wrap failed on-chain, but Paylore could not record that result yet. Refresh the Reserve before starting a new wrap.",
     reserve_wrap_transaction_status_unavailable:
-      "Paylore could not read the ordinary-USDC wrap status from Devnet yet. Your signature is saved. Wait a moment and continue this same operation; do not wrap USDC again.",
+      "Paylore could not read the ordinary-USDC wrap status from configured network yet. Your signature is saved. Wait a moment and continue this same operation; do not wrap USDC again.",
     reserve_wrap_signature_invalid:
       "The saved wrap signature is not a valid Solana signature. Paylore stopped before any confidential Reserve transaction; contact support with this operation's details.",
     reserve_wrap_signature_mismatch:
@@ -161,7 +159,7 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_wrap_balance_delta_invalid:
       "The finalized wrap's USDC debit, escrow credit, and Reserve credit did not match this funding amount. Paylore stopped for safety; contact support. Do not wrap USDC again.",
     reserve_wrap_escrow_account_mismatch:
-      "The Token Wrap escrow account did not match the approved Devnet identity. No wallet transaction was submitted.",
+      "The Token Wrap escrow account did not match the approved configured network identity. No wallet transaction was submitted.",
     reserve_wrap_mint_program_mismatch:
       "A configured mint is not owned by the expected token program. No wallet transaction was submitted.",
     reserve_wrap_operation_conflict:
@@ -171,13 +169,11 @@ export function getReserveFundingOutcomeMessage(input: {
     reserve_token_account_program_mismatch:
       "The Reserve token account is not owned by the Token-2022 program. Paylore stopped before any confidential Reserve transaction; contact support.",
     reserve_program_configuration_not_verified:
-      "Paylore could not verify the Paylore Program reserve configuration on Devnet. Nothing new was marked complete. Refresh the on-chain check and continue this same operation; do not wrap USDC again.",
+      "Paylore could not verify the Paylore Program reserve configuration on configured network. Nothing new was marked complete. Refresh the on-chain check and continue this same operation; do not wrap USDC again.",
     invalid_reserve_wrap_request:
       "The Reserve funding request was incomplete. Refresh the page and continue the saved operation; do not wrap USDC again.",
     request_not_allowed:
       "This browser request was blocked by Paylore's request checks. Reload the Reserve page from Paylore and continue this same operation; do not wrap USDC again.",
-    reserve_devnet_rpc_required:
-      "Reserve funding is restricted to the configured Devnet RPC. No confidential Reserve transaction was submitted.",
     reserve_not_found:
       "This workspace has no Reserve key custody. Configure Reserve key custody before funding it.",
     reserve_program_not_configured:
@@ -234,8 +230,6 @@ export function getReserveActionErrorMessage(
       "The wrapped-USDC mint has not approved the reserve for confidential transfers. The reserve account was not marked ready.",
     workspace_program_not_initialized:
       "The Paylore Program workspace state is not initialized. Retry Reserve setup to initialize it once with your connected admin wallet.",
-    reserve_devnet_rpc_required:
-      "Reserve operations are restricted to the configured Devnet RPC. No transaction was submitted.",
     reserve_confidential_account_not_ready:
       "The reserve token account does not yet have verified confidential-transfer readiness. No reserve readiness is claimed.",
     reserve_gas_tank_not_initialized:
@@ -349,7 +343,7 @@ export function reserveFundingStepIndex(phase: ReserveFundingPhase | undefined):
 
 /**
  * Wallets reject an unrecognized `commitment` send option, so the admin wallet
- * only signs and Paylore submits the exact signed bytes to Devnet.
+ * only signs and Paylore submits the exact signed bytes to configured network.
  */
 async function submitWorkspaceInitialization(
   wallet: ReturnType<typeof findAuthenticatedWallet>,
@@ -358,7 +352,7 @@ async function submitWorkspaceInitialization(
   if (!wallet.signTransaction) {
     const [sent] = await wallet.signAndSendTransaction({
       account: wallet.account,
-      chain: "solana:devnet",
+      chain: getPayloreWalletChain(),
       transaction
     });
     if (!sent) {
@@ -368,14 +362,14 @@ async function submitWorkspaceInitialization(
   }
   const [signed] = await wallet.signTransaction({
     account: wallet.account,
-    chain: "solana:devnet",
+    chain: getPayloreWalletChain(),
     transaction
   });
   if (!signed) {
     throw new Error("The wallet did not sign the workspace initialization transaction.");
   }
   const decoded = getTransactionDecoder().decode(signed.signedTransaction);
-  return await createSolanaRpc("https://api.devnet.solana.com")
+  return await createPayloreSolanaRpc()
     .sendTransaction(getBase64EncodedWireTransaction(decoded), {
       encoding: "base64",
       preflightCommitment: "confirmed"
@@ -628,7 +622,7 @@ export function ReserveActions({
                 text: "The Payroll Program workspace initialization was submitted. Paylore is waiting for network finality before continuing confidential Reserve setup."
               });
               // The server verifies the workspace account at finalized commitment.
-              await waitForDevnetFinality(initializationSignature);
+              await waitForSolanaFinality(initializationSignature);
               await run(action, true);
               return;
             } catch (error) {
@@ -946,7 +940,7 @@ export function ReserveActions({
             {checkingOnChain ? (
               <p className="loading-indicator" role="status">
                 <span className="loading-indicator__icon" aria-hidden="true" />
-                Checking finalized Devnet account and program state…
+                Checking finalized configured network account and program state…
               </p>
             ) : onChainAccount.status === "account_missing" ? (
               <p role="status">The expected reserve-owned wrapped-USDC Token-2022 account does not exist. Confidential settlement is unavailable.</p>
@@ -984,7 +978,7 @@ export function ReserveActions({
               <header className="reserve-panel__header">
                 <h3 id="reserve-funding-heading">Fund the Reserve with ordinary USDC</h3>
                 <p>
-                  Enter the amount of Circle Devnet USDC in your connected wallet.
+                  Enter the amount of Circle configured network USDC in your connected wallet.
                   Paylore checks the token accounts, asks your wallet to approve the
                   wrap, and verifies the finalized USDC debit, Token Wrap escrow
                   credit, and Reserve wrapped-USDC credit. A verified public credit

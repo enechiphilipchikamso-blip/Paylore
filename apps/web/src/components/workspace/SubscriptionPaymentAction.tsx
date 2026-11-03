@@ -17,6 +17,7 @@ import {
   isConfirmedWalletCancellation,
   SUBSCRIPTION_PAYMENT_MISMATCH
 } from "./subscription-payment-submission";
+import { getPayloreExplorerCluster, solanaExplorerUrl } from "./solana-network";
 
 type PreparedActivationPayment = {
   attemptId: string;
@@ -350,7 +351,7 @@ export function SubscriptionPaymentAction({
           <h2 id="subscription-payment-review-heading">Review activation payment</h2>
           <dl>
             <div><dt>Amount</dt><dd>$49.00 USDC</dd></div>
-            <div><dt>Network</dt><dd>Solana Devnet</dd></div>
+            <div><dt>Network</dt><dd>Solana configured network</dd></div>
             <div><dt>From</dt><dd><code>{preparedPayment.payer}</code></dd></div>
             <div><dt>Recipient</dt><dd><code>{preparedPayment.recipient}</code></dd></div>
             <div><dt>USDC mint</dt><dd><code>{preparedPayment.mint}</code></dd></div>
@@ -382,11 +383,11 @@ export function SubscriptionPaymentAction({
           <div className="subscription-payment-review-actions">
             <a
               className="button button--secondary"
-              href={`https://explorer.solana.com/tx/${encodeURIComponent(failedSignature)}?cluster=devnet`}
+              href={solanaExplorerUrl(failedSignature, getPayloreExplorerCluster())}
               target="_blank"
               rel="noreferrer"
             >
-              Review transaction in Solana Explorer (Devnet)
+              Review transaction in Solana Explorer (configured network)
             </a>
             <button
               className="button"

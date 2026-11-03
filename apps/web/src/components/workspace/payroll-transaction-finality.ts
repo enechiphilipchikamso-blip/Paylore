@@ -1,10 +1,10 @@
-import { createSolanaRpc, signature } from "@solana/kit";
+import { signature } from "@solana/kit";
+import { createPayloreSolanaRpc } from "./solana-network";
 
-const DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const FINALITY_TIMEOUT_MS = 120_000;
 
-export async function waitForDevnetFinality(transactionSignature: string) {
-  const rpc = createSolanaRpc(DEVNET_RPC_URL);
+export async function waitForSolanaFinality(transactionSignature: string) {
+  const rpc = createPayloreSolanaRpc();
   const expectedSignature = signature(transactionSignature);
   const deadline = Date.now() + FINALITY_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -15,7 +15,7 @@ export async function waitForDevnetFinality(transactionSignature: string) {
       .send();
     const status = result.value[0];
     if (status?.err) {
-      throw new Error("The Devnet transaction failed on Solana.");
+      throw new Error("The Solana transaction failed.");
     }
     if (status?.confirmationStatus === "finalized") return;
     await new Promise((resolve) => window.setTimeout(resolve, 1_000));

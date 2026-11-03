@@ -156,7 +156,7 @@ export async function verifyPayrollClaimTransaction(input: {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
   if (!programId) {
-    throw new Error("The Devnet Payroll Program is not configured.");
+    throw new Error("The configured network Payroll Program is not configured.");
   }
   if (input.claims.length === 0 || input.claims.length > 4) {
     throw new Error("The submitted payroll claim batch is invalid.");
@@ -336,7 +336,7 @@ export async function getFinalizedPayrollClaimState(input: {
 }): Promise<FinalizedPayrollClaimState> {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
-  if (!programId) throw new Error("The Devnet Payroll Program is not configured.");
+  if (!programId) throw new Error("The configured network Payroll Program is not configured.");
 
   const claimId = decodeHex32(input.claimId);
   const allocationCommitment = decodeHex32(input.allocationCommitment);
@@ -420,7 +420,7 @@ export async function verifyPayrollRecoveryTransaction(input: {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
   if (!programId) {
-    throw new Error("The Devnet Payroll Program is not configured.");
+    throw new Error("The configured network Payroll Program is not configured.");
   }
   const claimId = decodeHex32(input.claimId);
   const allocationCommitment = decodeHex32(input.allocationCommitment);

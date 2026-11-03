@@ -5,7 +5,6 @@ import {
   TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
 import { buildWrappedUsdcUnwrapPlan } from "../../components/workspace/token-wrap-transaction";
-import { DEVNET_TOKEN_WRAP_EXPECTED } from "../../components/workspace/token-wrap-compatibility";
 import { readSolanaRpc } from "./rpc";
 
 const U64_MAX = (1n << 64n) - 1n;
@@ -176,7 +175,7 @@ function balance(
   if (row.mint !== mint || row.owner !== owner ||
       (row.programId !== undefined && row.programId !== tokenProgram) ||
       typeof amount !== "string" || !/^(0|[1-9][0-9]*)$/.test(amount) ||
-      decimals !== DEVNET_TOKEN_WRAP_EXPECTED.decimals) {
+      decimals !== 6) {
     throw new CashOutLedgerVerificationError("cash_out_token_account_identity_mismatch", 409);
   }
   return BigInt(amount);
@@ -240,7 +239,7 @@ export async function verifyFinalizedCashOutTransaction(input: {
           accounts[0] !== input.tokenAccountAddress ||
           accounts[1] !== input.wrappedMint ||
           accounts[5] !== input.walletAddress ||
-          data[10] !== DEVNET_TOKEN_WRAP_EXPECTED.decimals) return false;
+          data[10] !== 6) return false;
       let instructionAmount = 0n;
       for (let index = 0; index < 8; index++) {
         instructionAmount |= BigInt(data[2 + index]) << BigInt(index * 8);
@@ -266,10 +265,7 @@ export async function verifyFinalizedCashOutTransaction(input: {
     };
   }
 
-  if (!input.circleMint ||
-      input.tokenWrapProgramId !== DEVNET_TOKEN_WRAP_EXPECTED.programAddress ||
-      input.wrappedMint !== DEVNET_TOKEN_WRAP_EXPECTED.wrappedMintAddress ||
-      input.circleMint !== DEVNET_TOKEN_WRAP_EXPECTED.unwrappedMintAddress) {
+  if (!input.circleMint) {
     throw new CashOutLedgerVerificationError("cash_out_token_wrap_identity_mismatch", 409);
   }
 
