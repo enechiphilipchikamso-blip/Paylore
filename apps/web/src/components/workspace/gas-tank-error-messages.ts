@@ -103,9 +103,11 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   payroll_claim_escrow_mint_not_approved:
     "The wrapped-USDC mint does not auto-approve confidential accounts.",
   payroll_claim_escrow_account_setup_failed:
-    "Creating a confidential allocation account failed on-chain. Its fee was paid by the Gas Tank; you can retry.",
+    "The Gas Tank could not create a confidential allocation account on configured network. Verify it has enough SOL for rent and retry.",
   payroll_claim_escrow_confidential_setup_failed:
-    "Configuring a confidential allocation account failed on-chain. You can retry.",
+    "The Gas Tank could not configure a confidential allocation account on configured network. Verify the configured mint and Gas Tank balance, then retry.",
+  payroll_claim_escrow_setup_too_large:
+    "This confidential allocation account setup does not fit in one network transaction. Retry with a fresh allocation or contact support.",
   payroll_claim_escrow_account_owner_invalid:
     "An existing allocation account is not a Token-2022 account.",
   payroll_claim_escrow_account_identity_invalid:
@@ -127,7 +129,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   workspace_busy:
     "Another payroll claim or recovery is being reconciled for this workspace. Retry after it finishes.",
   workspace_reserve_not_initialized:
-    "The workspace confidential Reserve is not initialized.",
+    "The workspace Reserve is not initialized. Initialize it in Reserve settings, then retry Submit Claim PDAs.",
   workspace_reserve_key_mismatch:
     "The stored Reserve signing key does not match the Reserve address.",
   reserve_confidential_balance_insufficient:
