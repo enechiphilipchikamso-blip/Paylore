@@ -20,6 +20,10 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
     "An earlier sponsored attempt for this batch is already finalized. Refresh to view the recorded state.",
   gas_tank_sponsorship_failed:
     "The Gas Tank service failed unexpectedly while preparing the transaction. Nothing was signed. Retry; if it persists, check the Gas Tank page.",
+  sponsorship_rpc_unavailable:
+    "The configured Solana RPC provider could not prepare this transaction. Nothing was signed. Retry shortly or check the RPC provider configuration.",
+  gas_tank_envelope_key_not_configured:
+    "Gas Tank signing is not configured on the server. Nothing was signed. Configure the Gas Tank envelope key, then retry.",
   sponsored_simulation_failed:
     "The sponsored transaction failed its pre-flight simulation on configured network. Nothing was signed or submitted.",
   sponsored_simulation_unavailable:
