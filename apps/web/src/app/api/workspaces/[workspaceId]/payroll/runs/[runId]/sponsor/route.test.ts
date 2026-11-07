@@ -371,6 +371,7 @@ describe("payroll sponsor route", () => {
     expect(mocks.verifyPayrollClaimTransaction).toHaveBeenCalledWith({
       signature: "5".repeat(64),
       authorityAddress: "manager-wallet",
+      payerAddress: "gas-tank-wallet",
       workspaceId: "workspace-a",
       allocationCommitment: commitment,
       claims: [{

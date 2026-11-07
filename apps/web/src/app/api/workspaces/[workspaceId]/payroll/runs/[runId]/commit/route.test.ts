@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   getWorkspacePayrollRun: vi.fn(),
   getPayrollClaimEscrow: vi.fn(),
+  getWorkspaceGasTank: vi.fn(),
   verifyPayrollClaimTransaction: vi.fn(),
   updateGasTankOperationAttempt: vi.fn(),
   recordPayrollClaimSubmission: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("@paylore/database", () => ({
   getWorkspaceForUser: mocks.getWorkspaceForUser,
   getWorkspacePayrollRun: mocks.getWorkspacePayrollRun,
   getPayrollClaimEscrow: mocks.getPayrollClaimEscrow,
+  getWorkspaceGasTank: mocks.getWorkspaceGasTank,
   recordPayrollClaimSubmission: mocks.recordPayrollClaimSubmission,
   updateGasTankOperationAttempt: mocks.updateGasTankOperationAttempt
 }));
@@ -84,6 +86,7 @@ describe("verified payroll claim commit", () => {
       status: "funded",
       tokenAccountAddress: "escrow-token-account"
     });
+    mocks.getWorkspaceGasTank.mockResolvedValue({ address: "gas-tank-wallet" });
     mocks.verifyPayrollClaimTransaction.mockResolvedValue(undefined);
     mocks.updateGasTankOperationAttempt.mockResolvedValue(true);
     mocks.recordPayrollClaimSubmission.mockResolvedValue({
@@ -122,6 +125,10 @@ describe("verified payroll claim commit", () => {
     }), context);
     expect(response.status).toBe(200);
     expect(mocks.verifyPayrollClaimTransaction).toHaveBeenCalledOnce();
+    expect(mocks.verifyPayrollClaimTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      authorityAddress: "manager-wallet",
+      payerAddress: "gas-tank-wallet"
+    }));
     expect(mocks.updateGasTankOperationAttempt).toHaveBeenCalledOnce();
     expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledWith({}, {
       workspaceId: "workspace-a",
@@ -143,6 +150,10 @@ describe("verified payroll claim commit", () => {
       claims: [{ claimId, claimAddress }]
     }), context);
     expect(response.status).toBe(200);
+    expect(mocks.verifyPayrollClaimTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      payerAddress: "manager-wallet"
+    }));
+    expect(mocks.getWorkspaceGasTank).not.toHaveBeenCalled();
     expect(mocks.updateGasTankOperationAttempt).not.toHaveBeenCalled();
     expect(mocks.recordPayrollClaimSubmission).toHaveBeenCalledOnce();
   });

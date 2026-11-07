@@ -356,6 +356,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       await verifyPayrollClaimTransaction({
         signature,
         authorityAddress: data.authorityAddress,
+        payerAddress: tank.address,
         workspaceId,
         allocationCommitment: data.allocationCommitment,
         claims: expectedClaims as Array<{
