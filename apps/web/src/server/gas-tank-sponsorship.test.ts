@@ -94,7 +94,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
     mocks.getSignatureFromTransaction.mockReturnValue("prepared-signature");
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
-      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
+      if (method === "getMinimumBalanceForRentExemption") return 1_000;
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }
@@ -167,6 +167,22 @@ describe("server-built Gas Tank sponsored transactions", () => {
     expect(mocks.readSolanaRpc).not.toHaveBeenCalledWith("getLatestBlockhash", expect.anything());
   });
 
+  it("reads rent exemption as the bare lamport number Solana returns", async () => {
+    await prepare();
+    expect(mocks.readSolanaRpc).toHaveBeenCalledWith("getMinimumBalanceForRentExemption", [expect.any(Number)]);
+    expect(mocks.readSolanaRpc).toHaveBeenCalledWith("simulateTransaction", expect.anything());
+  });
+
+  it("fails closed with a policy code when the rent quote is malformed instead of throwing a TypeError", async () => {
+    mocks.readSolanaRpc.mockImplementation(async (method: string) => {
+      if (method === "getMultipleAccounts") return { value: [null, null] };
+      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
+      throw new Error("Unexpected RPC method");
+    });
+    await expect(prepare()).rejects.toMatchObject({ code: "sponsored_rent_unavailable" });
+    expect(mocks.createKeyPairSignerFromBytes).not.toHaveBeenCalled();
+  });
+
   it("checks that the decrypted Gas Tank key matches the configured address", async () => {
     mocks.createKeyPairSignerFromBytes.mockResolvedValue({ address: "another-address" });
     await expect(prepare()).rejects.toMatchObject({ code: "gas_tank_key_identity_mismatch" });
@@ -181,7 +197,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
   it("fails closed when simulation reports a transaction error", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
-      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
+      if (method === "getMinimumBalanceForRentExemption") return 1_000;
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }
@@ -195,7 +211,7 @@ describe("server-built Gas Tank sponsored transactions", () => {
   it("rejects an unavailable network fee estimate without presenting a prepared transaction", async () => {
     mocks.readSolanaRpc.mockImplementation(async (method: string) => {
       if (method === "getMultipleAccounts") return { value: [null, null] };
-      if (method === "getMinimumBalanceForRentExemption") return { value: 1_000 };
+      if (method === "getMinimumBalanceForRentExemption") return 1_000;
       if (method === "getLatestBlockhash") {
         return { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 123 } };
       }

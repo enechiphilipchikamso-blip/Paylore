@@ -26,6 +26,8 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
     "The Solana network could not simulate the sponsored transaction right now. Nothing was signed. Retry shortly.",
   sponsored_fee_unavailable:
     "The Solana network did not return a network fee quote. Nothing was signed. Retry shortly.",
+  sponsored_rent_unavailable:
+    "The Solana network did not return an account rent quote. Nothing was signed. Retry shortly.",
   sponsored_fee_limit_exceeded:
     "The quoted network fee exceeds the Gas Tank per-operation limit. Nothing was signed.",
   sponsored_compute_limit_exceeded:
