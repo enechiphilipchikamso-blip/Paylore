@@ -35,12 +35,22 @@ export async function readSolanaRpc<T>(
   );
 }
 
-export async function getDevnetHealth() {
+export async function getSolanaHealth() {
   const slot = await readSolanaRpc<number>("getSlot", [
     { commitment: "finalized" }
   ]);
   return {
-    network: "devnet" as const,
+    network: loadPayloreConfig().PAYLORE_NETWORK,
     slot
   };
+}
+
+/** The configured primary RPC endpoint, with the provider key applied when the provider expects it in the URL. */
+export function configuredRpcEndpoint(): string {
+  const config = loadPayloreConfig();
+  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL);
+  if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
+    url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
+  }
+  return url.toString();
 }

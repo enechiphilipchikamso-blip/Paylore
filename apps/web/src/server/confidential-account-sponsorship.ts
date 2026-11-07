@@ -40,8 +40,6 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
   token2022ProgramAddress: string;
   gasTankAddress: string;
   balanceLamports: string;
-  dailyBookedFeesLamports: bigint;
-  dailyOperationCount: number;
   deferCostCheck?: boolean;
 }): Promise<InspectedConfidentialSetupTransaction> {
   if (
@@ -130,9 +128,7 @@ export async function inspectSponsoredConfidentialSetupTransaction(input: {
       transactionBytes: wireBytes.length,
       feeLamports: BigInt(fee.value),
       rentLamports: reservedRentLamports,
-      balanceLamports: BigInt(input.balanceLamports),
-      dailyBookedFeesLamports: input.dailyBookedFeesLamports,
-      dailyOperationCount: input.dailyOperationCount
+      balanceLamports: BigInt(input.balanceLamports)
     });
   }
   return {

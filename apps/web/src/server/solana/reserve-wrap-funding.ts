@@ -26,6 +26,7 @@ import {
 } from "../../components/workspace/token-wrap-compatibility";
 import { loadPayloreConfig } from "../config";
 import { readSolanaRpc } from "./rpc";
+import { configuredRpcEndpoint } from "./rpc-configured";
 
 const U64_MAX_P4 = (1n << 64n) - 1n;
 
@@ -69,16 +70,7 @@ function objectP4(value: unknown): Record<string, unknown> | null {
 }
 
 function rpcEndpointP4(): string {
-  const config = loadPayloreConfig();
-  const url = new URL(config.PAYLORE_RPC_PRIMARY_URL || "https://api.devnet.solana.com");
-  if (url.protocol !== "https:" ||
-      (!/devnet/i.test(url.hostname) && url.hostname !== "api.devnet.solana.com")) {
-    throw new ReserveWrapFundingError("reserve_wrap_devnet_rpc_required", 503);
-  }
-  if (config.PAYLORE_RPC_PRIMARY_PROVIDER === "helius" && config.PAYLORE_RPC_PRIMARY_API_KEY) {
-    url.searchParams.set("api-key", config.PAYLORE_RPC_PRIMARY_API_KEY);
-  }
-  return url.toString();
+  return configuredRpcEndpoint();
 }
 
 function positiveAmountP4(value: string): bigint {

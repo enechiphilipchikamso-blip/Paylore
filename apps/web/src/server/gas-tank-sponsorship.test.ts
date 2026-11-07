@@ -63,8 +63,6 @@ function prepare(overrides: Partial<Parameters<typeof prepareSponsoredPayrollCla
       amountCommitmentProof: ["cd".repeat(32)], amountCommitmentLeafIndex: 0,
       escrowTokenAccount: "escrow-token-account"
     }],
-    dailyBookedFeesLamports: 0n,
-    dailyOperationCount: 0,
     ...overrides
   });
 }

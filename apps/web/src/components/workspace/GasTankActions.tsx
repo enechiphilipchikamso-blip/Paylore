@@ -13,6 +13,7 @@ import {
   signedGasTankFunding,
   solToLamports
 } from "./gas-tank-funding-transaction";
+import { SOLANA_WALLET_CHAIN, solanaExplorerTransactionUrl } from "./solana-network";
 
 type Notice = {
   state: "success" | "error" | "partial";
@@ -35,7 +36,7 @@ type ReviewedFunding = PreparedFunding & {
 // A prepared blockhash stays valid for roughly 60 seconds; expire the review
 // early so the wallet is never asked to sign a transaction that cannot land.
 const PREPARED_FUNDING_TTL_MS = 45_000;
-// Devnet usually finalizes a transfer within about 15 seconds; keep checking
+// Solana usually finalizes a transfer within about 15 seconds; keep checking
 // briefly before handing reconciliation to "Check funding transaction".
 const FUNDING_FINALITY_ATTEMPTS = 12;
 const FUNDING_FINALITY_INTERVAL_MS = 3_000;
@@ -231,7 +232,7 @@ export function GasTankActions({
       setNotice({
         state: "error",
         text: result?.error === "funding_transaction_rejected"
-          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough Devnet SOL, then prepare the funding again."
+          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough SOL, then prepare the funding again."
           : "Paylore could not accept the signed funding transaction. No funding was sent. Refresh this page and prepare the funding again."
       });
       return;
@@ -364,7 +365,7 @@ export function GasTankActions({
           const [signed] = await wallet.signTransaction({
             account: wallet.account,
             transaction: prepared.transaction,
-            chain: "solana:devnet"
+            chain: SOLANA_WALLET_CHAIN
           });
           if (!signed) {
             throw new Error("The wallet did not return a signed transaction.");
@@ -393,7 +394,7 @@ export function GasTankActions({
         const submission = wallet.signAndSendTransaction({
           account: wallet.account,
           transaction: prepared.transaction,
-          chain: "solana:devnet"
+          chain: SOLANA_WALLET_CHAIN
         });
         setReviewedFunding(null);
         const [sent] = await submission;
@@ -561,7 +562,7 @@ export function GasTankActions({
                   </div>
                   <div>
                     <dt>Network</dt>
-                    <dd>Solana Devnet</dd>
+                    <dd>Solana</dd>
                   </div>
                   <div>
                     <dt>From</dt>
@@ -645,7 +646,7 @@ export function GasTankActions({
               <dt>Transaction</dt>
               <dd>
                 <a
-                  href={`https://explorer.solana.com/tx/${encodeURIComponent(latestFunding.signature)}?cluster=devnet`}
+                  href={solanaExplorerTransactionUrl(latestFunding.signature)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -699,7 +700,7 @@ export function GasTankActions({
                         ? `${formatSol(operation.feeLamports)} SOL`
                         : "Pending"}</td>
                       <td>{operation.transactionSignature ? (
-                        <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.transactionSignature)}?cluster=devnet`} target="_blank" rel="noreferrer">
+                        <a href={solanaExplorerTransactionUrl(operation.transactionSignature)} target="_blank" rel="noreferrer">
                           View transaction
                         </a>
                       ) : "Not submitted"}</td>

@@ -122,13 +122,19 @@ function monitorsAllTransactionTypes(current: unknown): boolean {
     current[0] === "ANY";
 }
 
+/** Helius names its enhanced webhook type per cluster; the cluster comes from PAYLORE_NETWORK. */
+export function heliusWebhookType(network: "devnet" | "mainnet"): string {
+  return network === "mainnet" ? "enhanced" : "enhancedDevnet";
+}
+
 function matchesDesiredConfig(
   current: HeliusWebhook,
   addresses: readonly string[],
-  authHeader: string
+  authHeader: string,
+  webhookType: string
 ): boolean {
   return current.webhookURL === PAYLORE_HELIUS_WEBHOOK_URL &&
-    current.webhookType === "enhancedDevnet" &&
+    current.webhookType === webhookType &&
     sameAddressSet(current.accountAddresses, addresses) &&
     monitorsAllTransactionTypes(current.transactionTypes) &&
     current.authHeader === authHeader;
@@ -136,16 +142,18 @@ function matchesDesiredConfig(
 
 /**
  * Read, reconcile, and read back the single existing Helius webhook. Empty
- * The explicit ANY transaction filter and enhancedDevnet type keep the webhook
- * aligned with the dashboard's all-transactions Devnet configuration.
+ * The explicit ANY transaction filter and the configured network's enhanced type keep
+ * the webhook aligned with the dashboard's all-transactions configuration.
  */
 export async function reconcileHeliusWebhook(input: {
   managementApiKey: string;
   webhookId: string;
   webhookSecret: string;
   monitoredAddresses: readonly string[];
+  network?: "devnet" | "mainnet";
   fetcher?: typeof fetch;
 }): Promise<HeliusWebhookSyncResult> {
+  const webhookType = heliusWebhookType(input.network ?? "devnet");
   const apiKey = input.managementApiKey.trim();
   const webhookId = input.webhookId.trim();
   const secret = input.webhookSecret.trim();
@@ -163,11 +171,11 @@ export async function reconcileHeliusWebhook(input: {
     throw new HeliusWebhookManagementError("helius_webhook_id_mismatch");
   }
 
-  const needsConfigUpdate = !matchesDesiredConfig(current, addresses, authHeader);
+  const needsConfigUpdate = !matchesDesiredConfig(current, addresses, authHeader, webhookType);
   if (needsConfigUpdate) {
     const body: Record<string, unknown> = {
       webhookURL: PAYLORE_HELIUS_WEBHOOK_URL,
-      webhookType: "enhancedDevnet",
+      webhookType,
       accountAddresses: addresses,
       transactionTypes: ["ANY"],
       authHeader
@@ -191,7 +199,7 @@ export async function reconcileHeliusWebhook(input: {
   let after = needsConfigUpdate
     ? await readWebhook(endpoint, fetcher)
     : current;
-  if (!matchesDesiredConfig(after, addresses, authHeader)) {
+  if (!matchesDesiredConfig(after, addresses, authHeader, webhookType)) {
     throw new HeliusWebhookManagementError("helius_webhook_readback_mismatch");
   }
 

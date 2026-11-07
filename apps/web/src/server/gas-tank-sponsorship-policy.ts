@@ -8,11 +8,15 @@ import {
 export const MAX_SPONSORED_CLAIMS = 2;
 export const MAX_SPONSORED_TRANSACTION_BYTES = 1_232;
 export const SPONSORED_COST_MARGIN_LAMPORTS = 10_000n;
-export const MAX_SPONSORED_TRANSACTION_COST_LAMPORTS = 5_000_000n;
-export const MAX_DAILY_SPONSORED_COST_LAMPORTS = 5_000_000n;
+/**
+ * Per-transaction sanity bound on fee plus rent. It covers the largest server-built plan
+ * (workspace PDA initialization plus MAX_SPONSORED_CLAIMS Claim PDAs) with headroom. The
+ * Gas Tank is bounded by its own funded balance and the workspace-only instruction policy,
+ * not by a time-window quota.
+ */
+export const MAX_SPONSORED_TRANSACTION_COST_LAMPORTS = 20_000_000n;
+/** Network-fee reservation held against the Gas Tank balance while a transaction is in flight. */
 export const MAX_SPONSORED_FEE_LAMPORTS = 5_000_000n;
-export const MAX_DAILY_SPONSORED_FEE_LAMPORTS = MAX_DAILY_SPONSORED_COST_LAMPORTS;
-export const MAX_DAILY_SPONSORED_OPERATIONS = 100;
 export const MAX_SIMULATED_COMPUTE_UNITS = 1_400_000;
 const TEXT = new TextEncoder();
 
@@ -236,15 +240,8 @@ export function assertSponsoredCost(input: {
   feeLamports: bigint;
   rentLamports?: bigint;
   balanceLamports: bigint;
-  dailyBookedFeesLamports: bigint;
-  dailyOperationCount: number;
 }): void {
-  if (
-    input.balanceLamports < 0n ||
-    input.dailyBookedFeesLamports < 0n ||
-    !Number.isSafeInteger(input.dailyOperationCount) ||
-    input.dailyOperationCount < 0
-  ) {
+  if (input.balanceLamports < 0n) {
     throw new GasTankSponsorshipPolicyError("sponsored_budget_evidence_invalid");
   }
   if (
@@ -264,13 +261,6 @@ export function assertSponsoredCost(input: {
   }
   if (input.balanceLamports < total) {
     throw new GasTankSponsorshipPolicyError("gas_tank_insufficient_balance");
-  }
-  if (
-    input.dailyOperationCount >= MAX_DAILY_SPONSORED_OPERATIONS ||
-    input.dailyBookedFeesLamports + total >
-      MAX_DAILY_SPONSORED_COST_LAMPORTS
-  ) {
-    throw new GasTankSponsorshipPolicyError("gas_tank_daily_sponsorship_limit");
   }
 }
 

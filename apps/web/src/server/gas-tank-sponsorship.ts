@@ -120,8 +120,6 @@ async function prepareSponsoredInstructionTransaction(input: {
   gasTankAddress: string;
   gasTankPrivateKey: Uint8Array;
   balanceLamports: string;
-  dailyBookedFeesLamports: bigint;
-  dailyOperationCount: number;
   rentLamports: bigint;
 }): Promise<{
   transactionBase64: string;
@@ -172,9 +170,7 @@ async function prepareSponsoredInstructionTransaction(input: {
       transactionBytes: wireBytes.length,
       feeLamports: BigInt(fee.value),
       rentLamports: input.rentLamports,
-      balanceLamports: BigInt(input.balanceLamports),
-      dailyBookedFeesLamports: input.dailyBookedFeesLamports,
-      dailyOperationCount: input.dailyOperationCount
+      balanceLamports: BigInt(input.balanceLamports)
     });
     const simulation = await readSolanaRpc<unknown>("simulateTransaction", [
       wireBase64,
@@ -209,8 +205,6 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
   balanceLamports: string;
   allocationCommitment: string;
   claims: SponsoredClaimIntent[];
-  dailyBookedFeesLamports: bigint;
-  dailyOperationCount: number;
 }): Promise<{
   transactionBase64: string;
   signature: string;
@@ -353,8 +347,6 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
       gasTankAddress: input.gasTankAddress,
       gasTankPrivateKey: secretCopy,
       balanceLamports: input.balanceLamports,
-      dailyBookedFeesLamports: input.dailyBookedFeesLamports,
-      dailyOperationCount: input.dailyOperationCount,
       rentLamports
     });
     return {
