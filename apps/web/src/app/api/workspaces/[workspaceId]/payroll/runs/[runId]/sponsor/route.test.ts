@@ -510,7 +510,7 @@ describe("payroll sponsor route", () => {
       expect(response.status).toBe(503);
       const body = await response.text();
       expect(body).not.toContain(secret);
-      expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "gas_tank_sponsorship_failed" }));
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "gas_tank_sponsorship_failed", errorName: "Error" }));
       expect(log.mock.calls.flat().join(" ")).not.toContain(secret);
     } finally {
       log.mockRestore();

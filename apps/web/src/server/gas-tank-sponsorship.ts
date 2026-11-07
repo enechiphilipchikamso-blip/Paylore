@@ -111,6 +111,19 @@ function serializedMessageFromTransaction(wire: Uint8Array): Uint8Array {
   return wire.subarray(messageOffset);
 }
 
+/**
+ * `getMinimumBalanceForRentExemption` returns a bare u64 lamport amount, not an
+ * `{ context, value }` envelope. Reading `.value` yields `undefined`, and
+ * `BigInt(undefined)` throws a TypeError before anything is signed.
+ */
+async function readRentExemptionLamports(space: number): Promise<bigint> {
+  const lamports = await readSolanaRpc<unknown>("getMinimumBalanceForRentExemption", [space]);
+  if (typeof lamports !== "number" || !Number.isSafeInteger(lamports) || lamports < 0) {
+    throw new GasTankSponsorshipPolicyError("sponsored_rent_unavailable");
+  }
+  return BigInt(lamports);
+}
+
 type SponsoredInstructionPlan = Parameters<typeof appendTransactionMessageInstructions>[0];
 
 /** Shares the sponsor-signing boundary while requiring each caller to validate its server-built plan. */
@@ -332,15 +345,9 @@ export async function prepareSponsoredPayrollClaimTransaction(input: {
 
     let rentLamports = 0n;
     if (!existingWorkspace) {
-      const workspaceRent = await readSolanaRpc<{ value: number }>(
-        "getMinimumBalanceForRentExemption", [WORKSPACE_RENT_BYTES]
-      );
-      rentLamports += BigInt(workspaceRent.value);
+      rentLamports += await readRentExemptionLamports(WORKSPACE_RENT_BYTES);
     }
-    const claimRent = await readSolanaRpc<{ value: number }>(
-      "getMinimumBalanceForRentExemption", [CLAIM_RENT_BYTES]
-    );
-    rentLamports += BigInt(claimRent.value) * BigInt(derivedClaims.length);
+    rentLamports += await readRentExemptionLamports(CLAIM_RENT_BYTES) * BigInt(derivedClaims.length);
     const prepared = await prepareSponsoredInstructionTransaction({
       instructions: instructionPlan,
       validateInstructions: validateInstructionPlan,
