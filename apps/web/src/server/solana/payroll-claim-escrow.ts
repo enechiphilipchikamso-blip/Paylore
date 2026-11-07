@@ -22,18 +22,19 @@ import {
 import { getCreateAccountInstruction } from "@solana-program/system";
 import {
   extension,
+  ExtensionType,
   fetchMint,
   fetchToken,
+  getConfigureConfidentialTransferAccountInstruction,
   getInitializeAccountInstruction,
   getInitializeImmutableOwnerInstruction,
+  getReallocateInstruction,
   getTokenSize,
   TOKEN_2022_PROGRAM_ADDRESS
 } from "@solana-program/token-2022";
-import {
-  deriveConfidentialKeys,
-  getCreateConfidentialTransferAccountInstructionPlan
-} from "@solana-program/token-2022/confidential";
-import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
+import { deriveConfidentialKeys } from "@solana-program/token-2022/confidential";
+import { verifyPubkeyValidity } from "@solana-program/zk-elgamal-proof";
+import { AeKey, ElGamalKeypair, ElGamalSecretKey, PubkeyValidityProofData } from "@solana/zk-sdk/bundler";
 import {
   appendPayrollClaimEscrowConfidentialSetupSignature,
   attachPayrollClaimEscrowAccountSetupSignature,
@@ -62,6 +63,8 @@ import { configuredRpcEndpoint } from "./rpc-configured";
 const ESCROW_REQUEST_FINALITY_BUDGET_MS = 35_000;
 /** A blockhash expires in roughly 60–90 seconds; an unseen signature older than this was dropped. */
 const DROPPED_SIGNATURE_AFTER_MS = 3 * 60 * 1000;
+/** Matches the Token-2022 helper default so escrow accounts behave like every other confidential account. */
+const DEFAULT_MAXIMUM_PENDING_BALANCE_CREDIT_COUNTER = 1n << 16n;
 
 type Finality = "finalized" | "failed" | "pending";
 type Signer = Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
@@ -236,6 +239,59 @@ async function executePlan(
       return { status: "failed", signatures, trackingFailed };
     }
     throw error;
+  }
+}
+
+/**
+ * Configures confidential transfers on an existing, server-created escrow token
+ * account. The escrow is a standalone keypair account (not an associated token
+ * account), so the Token-2022 "create confidential account" helper cannot be
+ * used: it always prepends a CreateAssociatedTokenIdempotent instruction, which
+ * the Associated Token program rejects for any non-ATA address and which fails
+ * preflight before a signature exists.
+ */
+export async function getEscrowConfidentialSetupInstructionPlan(input: {
+  rpc: ReturnType<typeof createSolanaRpc>;
+  payer: Signer;
+  owner: Signer;
+  mint: ReturnType<typeof address>;
+  token: ReturnType<typeof address>;
+  elgamalKeypair: ElGamalKeypair;
+  aesKey: AeKey;
+  includeConfidentialTransferFeeAmount: boolean;
+}): Promise<InstructionPlan> {
+  const proofData = new PubkeyValidityProofData(input.elgamalKeypair);
+  try {
+    const [verifyProofInstruction] = await verifyPubkeyValidity({
+      rpc: input.rpc,
+      payer: input.payer,
+      proofData: new Uint8Array(proofData.toBytes())
+    });
+    if (!verifyProofInstruction) {
+      throw new PayrollClaimEscrowError("payroll_claim_escrow_confidential_setup_failed", 503);
+    }
+    return nonDivisibleSequentialInstructionPlan([
+      getReallocateInstruction({
+        token: input.token,
+        payer: input.payer,
+        owner: input.owner,
+        newExtensionTypes: input.includeConfidentialTransferFeeAmount
+          ? [ExtensionType.ConfidentialTransferAccount, ExtensionType.ConfidentialTransferFeeAmount]
+          : [ExtensionType.ConfidentialTransferAccount]
+      }, { programAddress: TOKEN_2022_PROGRAM_ADDRESS }),
+      getConfigureConfidentialTransferAccountInstruction({
+        token: input.token,
+        mint: input.mint,
+        authority: input.owner,
+        decryptableZeroBalance: input.aesKey.encrypt(0n).toBytes(),
+        maximumPendingBalanceCreditCounter: DEFAULT_MAXIMUM_PENDING_BALANCE_CREDIT_COUNTER,
+        // The pubkey validity proof is the instruction immediately after Configure.
+        proofInstructionOffset: 1
+      }, { programAddress: TOKEN_2022_PROGRAM_ADDRESS }),
+      verifyProofInstruction
+    ]);
+  } finally {
+    proofData.free();
   }
 }
 
@@ -442,7 +498,7 @@ export async function preparePayrollClaimEscrowAccount(
         const elgamal = ElGamalKeypair.fromSecretKey(secret);
         const aesKey = AeKey.fromBytes(derived.aeKey);
         try {
-          const setupPlan = await getCreateConfidentialTransferAccountInstructionPlan({
+          const setupPlan = await getEscrowConfidentialSetupInstructionPlan({
             payer: gasTankSigner,
             owner: reserveSigner,
             mint: mintAddress,

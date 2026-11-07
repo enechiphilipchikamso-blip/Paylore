@@ -691,7 +691,17 @@ export async function POST(request: Request, { params }: RouteContext) {
         : 409;
       return NextResponse.json({ error: error.code }, { status });
     }
-    console.error(JSON.stringify({ event: "gas_tank_sponsorship_failed" }));
+    // Only the error class and numeric provider/kit codes are logged: never messages,
+    // transaction bytes, or key material.
+    const errorRecord = error && typeof error === "object" ? error as Record<string, unknown> : null;
+    const rpcError = errorRecord?.rpcError as { code?: unknown } | undefined;
+    const kitContext = errorRecord?.context as { __code?: unknown } | undefined;
+    console.error(JSON.stringify({
+      event: "gas_tank_sponsorship_failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+      ...(typeof rpcError?.code === "number" ? { rpcErrorCode: rpcError.code } : {}),
+      ...(typeof kitContext?.__code === "number" ? { solanaErrorCode: kitContext.__code } : {})
+    }));
     return NextResponse.json({ error: "gas_tank_sponsorship_failed" }, { status: 503 });
   }
 }
