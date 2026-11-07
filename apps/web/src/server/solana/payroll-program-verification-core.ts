@@ -11,6 +11,7 @@ import { readSolanaRpc } from "./rpc-configured";
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const textEncoder = new TextEncoder();
+const SYSTEM_PROGRAM_ADDRESS = "11111111111111111111111111111111";
 
 type ProgramInstruction = {
   programId?: unknown;
@@ -149,6 +150,11 @@ function signedBy(accountKeys: unknown, walletAddress: string): boolean {
 export async function verifyPayrollClaimTransaction(input: {
   signature: string;
   authorityAddress: string;
+  /**
+   * The account that paid Claim PDA rent (the workspace Gas Tank for sponsored
+   * submissions). When omitted, the payer must still be a transaction signer.
+   */
+  payerAddress?: string;
   workspaceId: string;
   allocationCommitment: string;
   claims: ExpectedPayrollClaim[];
@@ -238,7 +244,8 @@ export async function verifyPayrollClaimTransaction(input: {
       data.length >= 8 &&
       sameBytes(data.subarray(0, 8), createClaimDiscriminator)
     ) {
-      if (data.length < 144 || instruction.accounts.length !== 5) {
+      // CreateClaim accounts: authority, payer (Gas Tank), contributor, workspace, claim, system program.
+      if (data.length < 144 || instruction.accounts.length !== 6) {
         throw new Error("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
@@ -247,9 +254,13 @@ export async function verifyPayrollClaimTransaction(input: {
       if (
         !expected ||
         accounts[0] !== input.authorityAddress ||
-        accounts[1] !== expected.contributorAddress ||
-        accounts[2] !== workspace ||
-        accounts[3] !== expected.derivedClaim ||
+        (input.payerAddress !== undefined
+          ? accounts[1] !== input.payerAddress
+          : !signedBy(accountKeys, accounts[1]!)) ||
+        accounts[2] !== expected.contributorAddress ||
+        accounts[3] !== workspace ||
+        accounts[4] !== expected.derivedClaim ||
+        accounts[5] !== SYSTEM_PROGRAM_ADDRESS ||
         !sameBytes(data.subarray(40, 72), commitment) ||
         !sameBytes(data.subarray(72, 104), decodeHex32(expected.amountCommitment)) ||
         !Number.isSafeInteger(expected.amountCommitmentLeafIndex) ||
