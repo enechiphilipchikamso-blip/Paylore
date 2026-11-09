@@ -660,7 +660,7 @@ async function reconcileSubmittedRecovery(
           amountCommitment: context.allocation.amountCommitment!, escrowTokenAccount: context.escrowTokenAddress
         })
       ]);
-      if (claimState !== "unclaimed" || source.available.toString() !== sourceBefore ||
+      if (claimState.status !== "unclaimed" || source.available.toString() !== sourceBefore ||
           destination.available.toString() !== reserveBefore || destination.pending !== 0n) {
         return { status: "pending", signature, phase: "recovery" };
       }

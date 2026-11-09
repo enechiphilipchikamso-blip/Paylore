@@ -377,7 +377,10 @@ vi.mock("../gas-tank", () => ({
 }));
 
 vi.mock("./payroll-program-verification", () => ({
-  getFinalizedPayrollClaimState: vi.fn(async () => h.transferExecuted ? "recovered" : "unclaimed"),
+  getFinalizedPayrollClaimState: vi.fn(async () => ({
+    status: h.transferExecuted ? "recovered" : "unclaimed",
+    escrowFunded: true
+  })),
   verifyPayrollRecoveryTransaction: vi.fn(async () => undefined)
 }));
 

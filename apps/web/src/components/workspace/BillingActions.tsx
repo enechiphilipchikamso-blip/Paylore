@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SubscriptionPaymentAction } from "./SubscriptionPaymentAction";
+import { describeClientError } from "./client-error-message";
 
 type SubscriptionStatus =
   | "inactive"
@@ -63,9 +64,12 @@ export function BillingActions({
         body: JSON.stringify({ action })
       });
       if (!response.ok) {
+        const result = await response.json().catch(() => null) as { error?: string } | null;
         setMessage({
           state: "error",
-          text: "Subscription settings could not be updated. Please try again."
+          text: result?.error
+            ? `Subscription settings could not be updated (reference: ${result.error}).`
+            : `Subscription settings could not be updated (HTTP ${response.status}).`
         });
         return;
       }
@@ -77,10 +81,14 @@ export function BillingActions({
           : "Workspace renewal remains active."
       });
       router.refresh();
-    } catch {
+    } catch (error) {
       setMessage({
         state: "error",
-        text: "Something went wrong. Please try again."
+        text: describeClientError(
+          error,
+          "Subscription settings update",
+          "The request failed before Paylore confirmed the change."
+        )
       });
     } finally {
       setBusy(false);

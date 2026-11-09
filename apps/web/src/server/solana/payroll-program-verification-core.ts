@@ -332,7 +332,11 @@ export async function verifyPayrollClaimTransaction(input: {
   }
 }
 
-export type FinalizedPayrollClaimState = "unclaimed" | "claimed" | "recovered" | "settlement_pending";
+export type FinalizedPayrollClaimStatus = "unclaimed" | "claimed" | "recovered" | "settlement_pending";
+export type FinalizedPayrollClaimState = {
+  status: FinalizedPayrollClaimStatus;
+  escrowFunded: boolean;
+};
 
 /** Reads the canonical Claim PDA at finalized commitment before any recovery affordance is offered. */
 export async function getFinalizedPayrollClaimState(input: {
@@ -384,20 +388,18 @@ export async function getFinalizedPayrollClaimState(input: {
     !sameBytes(data.subarray(104, 136), allocationCommitment) ||
     !sameBytes(data.subarray(136, 168), amountCommitment) ||
     !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
-    data[200] !== 1 ||
+    data[200] > 1 ||
     data[202] !== claim.bump ||
     data[201] > 3
   ) {
     throw new Error("The finalized Claim PDA does not match the expected allocation.");
   }
 
-  switch (data[201]) {
-    case 0: return "unclaimed";
-    case 1: return "claimed";
-    case 2: return "recovered";
-    case 3: return "settlement_pending";
-    default: throw new Error("The finalized Claim PDA status is invalid.");
-  }
+  const status: FinalizedPayrollClaimStatus = data[201] === 0 ? "unclaimed"
+    : data[201] === 1 ? "claimed"
+      : data[201] === 2 ? "recovered"
+        : "settlement_pending";
+  return { status, escrowFunded: data[200] === 1 };
 }
 
 /** Derives the reserve token account from the verified authority and configured mint. */

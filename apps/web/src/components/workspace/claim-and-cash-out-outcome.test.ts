@@ -37,4 +37,18 @@ describe("Claim & Cash Out outcome copy", () => {
       text: "1 allocation(s) settled; 2 await finality or retry, and 1 need proof-context cleanup."
     });
   });
+
+  it("includes the request failure reason when claim finality is unknown", () => {
+    expect(getClaimAndCashOutOutcome({
+      settled: 0,
+      pending: 1,
+      failed: 0,
+      cleanupPending: 0,
+      stateConflict: false,
+      pendingReason: "Payroll claim failed: RPC request timed out"
+    })).toMatchObject({
+      state: "partial",
+      text: expect.stringContaining("Reason: Payroll claim failed: RPC request timed out")
+    });
+  });
 });

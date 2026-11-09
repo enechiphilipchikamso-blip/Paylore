@@ -13,6 +13,7 @@ import {
   describeGasTankError,
   GAS_TANK_RETRYABLE_PENDING_CODES
 } from "./gas-tank-error-messages";
+import { describeClientError } from "./client-error-message";
 
 /** Escrow accounts finalize across several transactions; resume preparation this many times. */
 const ESCROW_PENDING_MAX_ATTEMPTS = 12;
@@ -245,9 +246,11 @@ export function PayrollClaimCommitAction({
             ? "partial"
             : "error",
         text:
-          error instanceof Error
-            ? error.message
-            : "Payroll claim commitments could not be completed."
+          describeClientError(
+            error,
+            "Claim PDA submission",
+            "The claim commitments could not be completed."
+          )
       });
     } finally {
       setBusy(false);

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
-import { settleContributorPayrollAllocation } from "./payroll-confidential-settlement";
+import { getContributorConfidentialAccount } from "@paylore/database";
+import {
+  fundUnclaimedPayrollClaimEscrow,
+  settleContributorPayrollAllocation
+} from "./payroll-confidential-settlement";
 
 const h = vi.hoisted(() => ({
   tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
@@ -286,7 +290,10 @@ function resetHarness(): void {
     prepareFundingCalls: 0,
     recordFundingCalls: 0
   });
-  h.payroll = { allocations: [h.allocation] };
+  h.payroll = {
+    run: { allocationCommitment: h.allocationCommitment },
+    allocations: [h.allocation]
+  };
 }
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -713,6 +720,40 @@ function payoutSignature(): string {
 }
 
 describe("settleContributorPayrollAllocation integration", () => {
+  it("allows an organization to fund an unclaimed allocation without claiming it", async () => {
+    const result = await fundUnclaimedPayrollClaimEscrow({} as any, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      allocationId: input.allocationId
+    });
+
+    expect(result.status).toBe("funded");
+    expect(h.escrowStatus).toBe("funded");
+    expect(h.escrowFunded).toBe(true);
+    expect(h.allocation.status).toBe("unclaimed");
+    expect(h.reserveAvailable).toBe(750_000n);
+    expect(h.escrowAvailable).toBe(1_250_000n);
+    expect(h.ledgerCalls).toBe(0);
+    expect(getContributorConfidentialAccount).not.toHaveBeenCalled();
+    expect(h.executionOrder).toContain("escrow_funding");
+    expect(h.executionOrder).not.toContain("transfer");
+  });
+
+  it("refuses to fund a terminally claimed allocation", async () => {
+    h.allocation.status = "claimed";
+
+    await expect(fundUnclaimedPayrollClaimEscrow({} as any, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      allocationId: input.allocationId
+    })).rejects.toMatchObject({
+      code: "payroll_claim_state_conflict",
+      statusCode: 409
+    });
+    expect(h.sendCount).toBe(0);
+    expect(h.ledgerCalls).toBe(0);
+  });
+
   it("funds the Claim escrow first and records a claim only after the exact finalized escrow debit", async () => {
     const result = await settleContributorPayrollAllocation({} as any, input);
     const signature = payoutSignature();

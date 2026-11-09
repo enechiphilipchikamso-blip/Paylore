@@ -11,6 +11,7 @@ export function getClaimAndCashOutOutcome(input: {
   stateConflict: boolean;
   /** Human-readable reason for the first failed allocation, when the server reported one. */
   failureReason?: string | null;
+  pendingReason?: string | null;
 }): ClaimAndCashOutOutcome {
   if (input.stateConflict) {
     return {
@@ -28,7 +29,8 @@ export function getClaimAndCashOutOutcome(input: {
   if (input.pending || input.cleanupPending) {
     return {
       state: "partial",
-      text: `${input.settled} allocation(s) settled; ${input.pending} await finality or retry, and ${input.cleanupPending} need proof-context cleanup.`
+      text: `${input.settled} allocation(s) settled; ${input.pending} await finality or retry, and ${input.cleanupPending} need proof-context cleanup.` +
+        (input.pendingReason ? ` Reason: ${input.pendingReason}` : "")
     };
   }
   return {

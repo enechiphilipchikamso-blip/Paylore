@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPayrollClaimEscrow, getWorkspacePayrollRun } from "@paylore/database";
 import { PayrollRecoveryAction } from "../../../../../../components/workspace/PayrollRecoveryAction";
+import { PayrollClaimEscrowFundingAction } from "../../../../../../components/workspace/PayrollClaimEscrowFundingAction";
 import {
   WorkspaceLegalFooter,
   WorkspaceNavigation
@@ -55,6 +56,7 @@ export default async function WorkspaceRecoveryDetailPage({
   const programId = loadPayloreConfig().PAYLORE_PAYROLL_PROGRAM_ID ?? null;
   const escrow = await getPayrollClaimEscrow(context.db, workspaceId, allocation.id);
   let finalizedClaimState: FinalizedPayrollClaimState | null = null;
+  let finalizedStateError: string | null = null;
   if (programId && escrow?.tokenAccountAddress && payroll.run.allocationCommitment && allocation.amountCommitment) {
     try {
       finalizedClaimState = await getFinalizedPayrollClaimState({
@@ -67,14 +69,26 @@ export default async function WorkspaceRecoveryDetailPage({
         amountCommitment: allocation.amountCommitment,
         escrowTokenAccount: escrow.tokenAccountAddress
       });
-    } catch {
+    } catch (error) {
       finalizedClaimState = null;
+      finalizedStateError = error instanceof Error ? error.message : String(error);
     }
   }
   const recoverable = allocation.status === "unclaimed" &&
     escrow?.status === "funded" &&
-    finalizedClaimState === "unclaimed";
-  const chainStatusLabel = finalizedClaimState ? stateLabel(finalizedClaimState) : "Unable to verify";
+    finalizedClaimState?.status === "unclaimed" &&
+    finalizedClaimState.escrowFunded;
+  const chainStatusLabel = finalizedClaimState ? stateLabel(finalizedClaimState.status) : "Unable to verify";
+  const canStartFunding = allocation.status === "unclaimed" &&
+    escrow?.status === "ready" &&
+    finalizedClaimState?.status === "unclaimed" &&
+    !finalizedClaimState.escrowFunded;
+  const canReconcileFunding = escrow?.status === "funding" &&
+    (allocation.status === "unclaimed" || allocation.status === "settlement_pending") &&
+    allocation.settlementSignature === null &&
+    finalizedClaimState?.status === "unclaimed";
+  const fundingAvailable = Boolean(escrow?.tokenAccountAddress) &&
+    (canStartFunding || canReconcileFunding);
 
   return (
     <div className="protected-wrap workspace-page">
@@ -104,33 +118,80 @@ export default async function WorkspaceRecoveryDetailPage({
           <div><dt>Finalized Claim PDA state</dt><dd>{chainStatusLabel}</dd></div>
           <div><dt>Claim PDA</dt><dd><code>{allocation.claimAddress}</code></dd></div>
           <div><dt>Confidential escrow</dt><dd><code>{escrow?.tokenAccountAddress ?? "Not prepared"}</code></dd></div>
-          <div><dt>Escrow funding</dt><dd>{escrow?.status === "funded" ? "Funded" : "Not verified as funded"}</dd></div>
+          <div><dt>Escrow funding</dt><dd>{
+            finalizedClaimState?.escrowFunded && escrow?.status === "funded"
+              ? "Funded"
+              : finalizedClaimState?.status === "unclaimed" &&
+                  !finalizedClaimState.escrowFunded && escrow?.status === "funded"
+                ? "Funding state mismatch"
+                : finalizedClaimState?.status === "unclaimed" && !finalizedClaimState.escrowFunded
+                ? "Not funded"
+                : finalizedClaimState?.status === "unclaimed" && finalizedClaimState.escrowFunded &&
+                    escrow?.status === "funding"
+                  ? "Funded on-chain; database reconciliation pending"
+                : escrow?.status === "funded"
+                  ? "Database records funding; finalized Claim PDA does not"
+                  : "Not verified as funded"
+          }</dd></div>
           <div><dt>Claim creation transaction</dt><dd><code>{allocation.transactionSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Settlement transaction</dt><dd><code>{allocation.settlementSignature ?? "Not recorded"}</code></dd></div>
           <div><dt>Allocation commitment</dt><dd><code>{payroll.run.allocationCommitment ?? "Not recorded"}</code></dd></div>
         </dl>
-        {finalizedClaimState === "claimed" || allocation.status === "claimed" ? (
+        {finalizedClaimState?.status === "claimed" || allocation.status === "claimed" ? (
           <div className="state-callout" data-state="error" role="alert">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>This allocation has already been claimed and cannot be recovered by the organization.</p>
           </div>
-        ) : finalizedClaimState === "recovered" || allocation.status === "recovered" ? (
+        ) : finalizedClaimState?.status === "recovered" || allocation.status === "recovered" ? (
           <div className="state-callout" data-state="partial" role="status">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>This allocation is already recorded as recovered. No second recovery may be submitted.</p>
           </div>
-        ) : finalizedClaimState === "settlement_pending" || allocation.status === "settlement_pending" ? (
+        ) : finalizedClaimState?.status === "settlement_pending" || allocation.status === "settlement_pending" ? (
           <div className="state-callout" data-state="partial" role="status">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>Settlement is pending. Reconcile the existing claim transaction before considering any recovery; do not submit a competing operation.</p>
           </div>
-        ) : allocation.status !== "unclaimed" || finalizedClaimState !== "unclaimed" ? (
+        ) : finalizedClaimState?.status === "unclaimed" &&
+            !finalizedClaimState.escrowFunded && escrow?.status === "funded" ? (
+          <div className="state-callout" data-state="error" role="alert">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Paylore records this escrow as funded, but the finalized Claim PDA funding flag is unset. No duplicate funding or recovery is available until the recorded state is reconciled.</p>
+          </div>
+        ) : allocation.status === "unclaimed" &&
+            finalizedClaimState?.status === "unclaimed" && !finalizedClaimState.escrowFunded ? (
+          <div className="state-callout" data-state="partial" role="status">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Unclaimed — escrow not funded. An organization administrator must fund the allocation from the workspace Confidential Payroll Reserve before recovery can proceed.</p>
+          </div>
+        ) : finalizedClaimState?.status === "unclaimed" &&
+            finalizedClaimState.escrowFunded && escrow?.status !== "funded" ? (
+          <div className="state-callout" data-state="partial" role="status">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>Escrow funding is finalized on-chain but has not been reconciled in Paylore. Check the existing funding operation before retrying or attempting recovery.</p>
+          </div>
+        ) : allocation.status !== "unclaimed" || finalizedClaimState?.status !== "unclaimed" ? (
           <div className="state-callout" data-state="partial" role="alert">
             <span className="state-callout__signal" aria-hidden="true" />
-            <p>Paylore could not confirm that this allocation remains unclaimed at finalized network state. No recovery action is available until the Claim PDA state matches the stored allocation.</p>
+            <p>{finalizedStateError
+              ? `Paylore could not verify the finalized Claim PDA: ${finalizedStateError}`
+              : "Paylore could not confirm that this allocation remains unclaimed at finalized network state. No recovery action is available until the Claim PDA state matches the stored allocation."}</p>
           </div>
         ) : null}
       </section>
+
+      {fundingAvailable ? (
+        <section className="surface-card" aria-labelledby="claim-escrow-funding-heading">
+          <h3 id="claim-escrow-funding-heading">Fund claim escrow</h3>
+          <p>Move this allocation’s exact amount from the workspace Confidential Payroll Reserve into its claim escrow. This does not claim or recover the allocation.</p>
+          <PayrollClaimEscrowFundingAction
+            workspaceId={workspaceId}
+            runId={runId}
+            allocationId={allocation.id}
+            initiallyPending={canReconcileFunding}
+          />
+        </section>
+      ) : null}
 
       {recoverable ? (
         <section className="surface-card" aria-labelledby="recovery-action-heading">
