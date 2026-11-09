@@ -30,6 +30,7 @@ const amountCommitment = "ef".repeat(32);
 const escrowTokenAccount = "So11111111111111111111111111111111111111112";
 const reserveTokenAccount = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const reserveAuthorityAddress = "Stake11111111111111111111111111111111111111";
+const gasTankAddress = "Config1111111111111111111111111111111111111";
 const mintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const amountCommitmentContext = "SysvarC1ock11111111111111111111111111111111";
 const amountCommitmentProof = ["cd".repeat(32)];
@@ -91,6 +92,7 @@ async function claimInstruction() {
     programId,
     accounts: [
       authorityAddress,
+      gasTankAddress,
       contributorAddress,
       workspace,
       claim,
@@ -196,7 +198,7 @@ describe("payroll program transaction verification", () => {
           message: {
             accountKeys: [
               { pubkey: authorityAddress, signer: true },
-              { pubkey: reserveAuthorityAddress, signer: true }
+              { pubkey: gasTankAddress, signer: true }
             ],
             instructions: [instruction]
           }
@@ -209,6 +211,7 @@ describe("payroll program transaction verification", () => {
       verifyPayrollClaimTransaction({
         signature: transactionSignature,
         authorityAddress,
+        payerAddress: gasTankAddress,
         workspaceId,
         allocationCommitment: commitment,
         claims: [{
@@ -224,6 +227,68 @@ describe("payroll program transaction verification", () => {
     ).resolves.toBeUndefined();
   });
 
+  async function verifyWithInstruction(
+    instruction: Awaited<ReturnType<typeof claimInstruction>>,
+    options: { payerAddress?: string; signers?: string[] } = {}
+  ) {
+    vi.mocked(readSolanaRpc)
+      .mockResolvedValueOnce({
+        slot: 42,
+        transaction: {
+          signatures: [transactionSignature],
+          message: {
+            accountKeys: (options.signers ?? [authorityAddress, gasTankAddress])
+              .map((pubkey) => ({ pubkey, signer: true })),
+            instructions: [instruction]
+          }
+        },
+        meta: { err: null }
+      })
+      .mockResolvedValueOnce(claimStateAccount(instruction, { escrowFunded: false }));
+    return verifyPayrollClaimTransaction({
+      signature: transactionSignature,
+      authorityAddress,
+      ...(options.payerAddress ? { payerAddress: options.payerAddress } : {}),
+      workspaceId,
+      allocationCommitment: commitment,
+      claims: [{
+        claimId,
+        claimAddress: instruction.claimAddress,
+        contributorAddress,
+        amountCommitment,
+        amountCommitmentProof,
+        amountCommitmentLeafIndex,
+        escrowTokenAccount
+      }]
+    });
+  }
+
+  it("accepts a Gas Tank-sponsored claim without an explicit payer when the payer signed", async () => {
+    await expect(verifyWithInstruction(await claimInstruction())).resolves.toBeUndefined();
+  });
+
+  it("rejects a Claim PDA whose rent payer is not the expected workspace Gas Tank", async () => {
+    await expect(
+      verifyWithInstruction(await claimInstruction(), { payerAddress: reserveAuthorityAddress })
+    ).rejects.toThrow("does not match the approved payroll");
+  });
+
+  it("rejects a Claim PDA whose rent payer did not sign the transaction", async () => {
+    await expect(
+      verifyWithInstruction(await claimInstruction(), { signers: [authorityAddress] })
+    ).rejects.toThrow("does not match the approved payroll");
+  });
+
+  it("rejects the pre-sponsorship five-account create_claim layout", async () => {
+    const instruction = await claimInstruction();
+    await expect(
+      verifyWithInstruction({
+        ...instruction,
+        accounts: instruction.accounts.filter((_, index) => index !== 1)
+      }, { payerAddress: gasTankAddress })
+    ).rejects.toThrow("invalid format");
+  });
+
   it("rejects a Claim PDA whose on-chain state is not unclaimed", async () => {
     const instruction = await claimInstruction();
     vi.mocked(readSolanaRpc)
@@ -232,7 +297,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: gasTankAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },
@@ -267,7 +335,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: gasTankAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },
@@ -299,7 +370,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: gasTankAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },
@@ -333,7 +407,10 @@ describe("payroll program transaction verification", () => {
         transaction: {
           signatures: [transactionSignature],
           message: {
-            accountKeys: [{ pubkey: authorityAddress, signer: true }],
+            accountKeys: [
+              { pubkey: authorityAddress, signer: true },
+              { pubkey: gasTankAddress, signer: true }
+            ],
             instructions: [instruction]
           }
         },

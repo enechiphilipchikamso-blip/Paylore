@@ -3,6 +3,7 @@ import {
   getWorkspaceForUser,
   getWorkspacePayrollRun,
   getPayrollClaimEscrow,
+  getWorkspaceGasTank,
   recordPayrollClaimSubmission,
   updateGasTankOperationAttempt
 } from "@paylore/database";
@@ -136,10 +137,23 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 503 }
       );
     }
+    // Sponsored submissions are paid by the workspace Gas Tank; legacy submissions by the authority wallet.
+    let payerAddress = session.session.walletAddress;
+    if ("sponsorOperationId" in body) {
+      const gasTank = await getWorkspaceGasTank(db, workspaceId);
+      if (!gasTank) {
+        return NextResponse.json(
+          { error: "gas_tank_not_initialized" },
+          { status: 409 }
+        );
+      }
+      payerAddress = gasTank.address;
+    }
     try {
       await verifyPayrollClaimTransaction({
         signature: body.signature,
         authorityAddress: session.session.walletAddress,
+        payerAddress,
         workspaceId,
         allocationCommitment: payrollRun.run.allocationCommitment,
         claims: expectedClaims
