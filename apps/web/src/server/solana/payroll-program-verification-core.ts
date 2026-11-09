@@ -334,8 +334,16 @@ export async function verifyPayrollClaimTransaction(input: {
 
 export type FinalizedPayrollClaimState = "unclaimed" | "claimed" | "recovered" | "settlement_pending";
 
-/** Reads the canonical Claim PDA at finalized commitment before any recovery affordance is offered. */
-export async function getFinalizedPayrollClaimState(input: {
+export type FinalizedPayrollClaimSnapshot = {
+  status: FinalizedPayrollClaimState;
+  /**
+   * Whether `mark_claim_escrow_funded` has moved the allocation from the workspace Reserve into its
+   * per-allocation escrow. A freshly created Claim PDA is valid and unclaimed with this flag false.
+   */
+  escrowFunded: boolean;
+};
+
+type FinalizedPayrollClaimInput = {
   authorityAddress: string;
   workspaceId: string;
   contributorAddress: string;
@@ -344,7 +352,22 @@ export async function getFinalizedPayrollClaimState(input: {
   allocationCommitment: string;
   amountCommitment: string;
   escrowTokenAccount: string;
-}): Promise<FinalizedPayrollClaimState> {
+};
+
+/** Reads the canonical Claim PDA at finalized commitment before any recovery affordance is offered. */
+export async function getFinalizedPayrollClaimState(
+  input: FinalizedPayrollClaimInput
+): Promise<FinalizedPayrollClaimState> {
+  return (await getFinalizedPayrollClaimSnapshot(input)).status;
+}
+
+/**
+ * Reads the canonical Claim PDA at finalized commitment and reports its status and escrow-funding flag
+ * separately. An unfunded escrow is a valid on-chain state, not an identity mismatch.
+ */
+export async function getFinalizedPayrollClaimSnapshot(
+  input: FinalizedPayrollClaimInput
+): Promise<FinalizedPayrollClaimSnapshot> {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
   if (!programId) throw new Error("The Paylore Payroll Program is not configured.");
@@ -384,18 +407,19 @@ export async function getFinalizedPayrollClaimState(input: {
     !sameBytes(data.subarray(104, 136), allocationCommitment) ||
     !sameBytes(data.subarray(136, 168), amountCommitment) ||
     !sameBytes(data.subarray(168, 200), getAddressEncoder().encode(address(input.escrowTokenAccount))) ||
-    data[200] !== 1 ||
+    data[200] > 1 ||
     data[202] !== claim.bump ||
     data[201] > 3
   ) {
     throw new Error("The finalized Claim PDA does not match the expected allocation.");
   }
 
+  const escrowFunded = data[200] === 1;
   switch (data[201]) {
-    case 0: return "unclaimed";
-    case 1: return "claimed";
-    case 2: return "recovered";
-    case 3: return "settlement_pending";
+    case 0: return { status: "unclaimed", escrowFunded };
+    case 1: return { status: "claimed", escrowFunded };
+    case 2: return { status: "recovered", escrowFunded };
+    case 3: return { status: "settlement_pending", escrowFunded };
     default: throw new Error("The finalized Claim PDA status is invalid.");
   }
 }
