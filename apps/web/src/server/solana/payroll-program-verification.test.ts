@@ -607,11 +607,29 @@ describe("payroll program transaction verification", () => {
       allocationCommitment: commitment,
       amountCommitment,
       escrowTokenAccount
-    })).resolves.toBe(expected);
+    })).resolves.toEqual({ status: expected, escrowFunded: true });
     expect(readSolanaRpc).toHaveBeenCalledWith("getAccountInfo", [
       instruction.claimAddress,
       { commitment: "finalized", encoding: "base64" }
     ]);
+  });
+
+  it("accepts a finalized unclaimed Claim PDA whose escrow funding flag is unset", async () => {
+    const instruction = await claimInstruction();
+    vi.mocked(readSolanaRpc).mockResolvedValueOnce(
+      claimStateAccount(instruction, { status: 0, escrowFunded: false })
+    );
+
+    await expect(getFinalizedPayrollClaimState({
+      authorityAddress,
+      workspaceId,
+      contributorAddress,
+      claimId,
+      claimAddress: instruction.claimAddress,
+      allocationCommitment: commitment,
+      amountCommitment,
+      escrowTokenAccount
+    })).resolves.toEqual({ status: "unclaimed", escrowFunded: false });
   });
 
   it("does not treat malformed or differently committed finalized Claim PDA data as eligible", async () => {

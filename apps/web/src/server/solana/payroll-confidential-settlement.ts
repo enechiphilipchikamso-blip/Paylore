@@ -71,6 +71,12 @@ export type PayrollSettlementResult = {
   warning?: "proof_context_cleanup_pending";
 };
 
+export type PayrollClaimEscrowFundingResult = {
+  status: "funded" | "pending" | "retry_ready" | "workspace_busy";
+  signature?: string;
+  warning?: "proof_context_cleanup_pending";
+};
+
 export class PayrollConfidentialSettlementError extends Error {
   constructor(readonly code: string, readonly statusCode: number) {
     super(code);
@@ -978,6 +984,236 @@ async function fundPayrollClaimEscrow(
     if (error instanceof PayrollConfidentialSettlementError) throw error;
     throw new PayrollConfidentialSettlementError("payroll_claim_escrow_funding_failed", 503);
   }
+}
+
+export async function fundUnclaimedPayrollClaimEscrow(
+  db: Database,
+  input: { workspaceId: string; runId: string; allocationId: string }
+): Promise<PayrollClaimEscrowFundingResult> {
+  const payroll = await getWorkspacePayrollRun(db, input.workspaceId, input.runId);
+  const allocation = payroll?.allocations.find((row) => row.id === input.allocationId);
+  if (!payroll || !allocation || !allocation.claimAddress || !allocation.transactionSignature) {
+    throw new PayrollConfidentialSettlementError("payroll_claim_creation_unverified", 409);
+  }
+  const claimAddress = allocation.claimAddress;
+  const claimCreationSignature = allocation.transactionSignature;
+  if (allocation.status === "claimed" || allocation.status === "recovered" || allocation.status === "cancelled") {
+    throw new PayrollConfidentialSettlementError("payroll_claim_state_conflict", 409);
+  }
+  if (!/^(0|[1-9][0-9]*)$/.test(allocation.amountBaseUnits) || BigInt(allocation.amountBaseUnits) <= 0n ||
+      !/^[0-9a-f]{64}$/i.test(allocation.claimId) ||
+      !allocation.amountCommitment || !/^[0-9a-f]{64}$/i.test(allocation.amountCommitment) ||
+      !payroll.run.allocationCommitment || !/^[0-9a-f]{64}$/i.test(payroll.run.allocationCommitment)) {
+    throw new PayrollConfidentialSettlementError("payroll_allocation_commitment_invalid", 409);
+  }
+  const amountCommitment = allocation.amountCommitment;
+  const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+  if (!escrow || escrow.payrollRunId !== input.runId || escrow.claimId !== allocation.claimId ||
+      !escrow.tokenAccountAddress) {
+    throw new PayrollConfidentialSettlementError("payroll_claim_escrow_not_found", 409);
+  }
+  if (allocation.status === "settlement_pending" &&
+      (allocation.settlementSignature || escrow.status !== "funding" ||
+       (escrow.fundingSignature === null && escrow.fundingSourceAvailableBefore === null))) {
+    return { status: "pending", signature: allocation.settlementSignature ?? undefined };
+  }
+  if (allocation.status !== "unclaimed" && allocation.status !== "settlement_pending") {
+    throw new PayrollConfidentialSettlementError("payroll_claim_state_conflict", 409);
+  }
+
+  const config = loadPayloreConfig();
+  const mint = config.PAYLORE_WRAPPED_USDC_MINT;
+  const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
+  const secretHex = config.PAYLORE_PAYROLL_AMOUNT_COMMITMENT_SECRET;
+  if (!mint) throw new PayrollConfidentialSettlementError("confidential_mint_unavailable", 503);
+  if (!programId) throw new PayrollConfidentialSettlementError("payroll_program_not_configured", 503);
+  if (!secretHex) throw new PayrollConfidentialSettlementError("payroll_amount_commitment_not_configured", 503);
+
+  const evidence = await getPayrollClaimCreationEvidence(db, {
+    workspaceId: input.workspaceId, runId: input.runId,
+    claimId: allocation.claimId, claimAddress: allocation.claimAddress
+  });
+  if (!evidence || evidence.programId !== programId ||
+      evidence.allocationCommitment !== payroll.run.allocationCommitment ||
+      evidence.transactionSignature !== allocation.transactionSignature) {
+    throw new PayrollConfidentialSettlementError("payroll_claim_creation_unverified", 409);
+  }
+  const reserve = await getWorkspaceReserve(db, input.workspaceId);
+  if (!reserve) throw new PayrollConfidentialSettlementError("workspace_reserve_not_initialized", 409);
+
+  return withWorkspaceReserveKey(db, input.workspaceId, async (privateBytes) => {
+    const signer = await createKeyPairSignerFromBytes(privateBytes);
+    if (signer.address !== reserve.address) {
+      throw new PayrollConfidentialSettlementError("workspace_reserve_key_mismatch", 503);
+    }
+    return withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateBytes) => {
+      const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
+      const rpc = createSolanaRpc(rpcEndpoint());
+      const gasBalance = await rpc.getBalance(gasSigner.address, { commitment: "confirmed" }).send();
+      if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+        throw new PayrollConfidentialSettlementError("gas_tank_insufficient_balance", 409);
+      }
+
+      let ownsSettlementAttempt = false;
+      if (allocation.status === "unclaimed") {
+        const attempt = await beginPayrollSettlementAttempt(db, {
+          workspaceId: input.workspaceId, runId: input.runId,
+          allocationId: input.allocationId, claimAddress,
+          claimCreationSignature, sourceAvailableBefore: "0"
+        });
+        if (attempt.status === "workspace_busy") return { status: "workspace_busy" };
+        if (attempt.status === "pending") return { status: "pending", signature: attempt.signature ?? undefined };
+        if (attempt.status === "reserve_not_found") {
+          throw new PayrollConfidentialSettlementError("workspace_reserve_not_initialized", 409);
+        }
+        if (attempt.status !== "started") {
+          throw new PayrollConfidentialSettlementError("payroll_claim_state_conflict", 409);
+        }
+        ownsSettlementAttempt = true;
+      }
+
+      try {
+        const derived: DerivedKeys = await deriveConfidentialKeys({ signer });
+        const secret = ElGamalSecretKey.fromBytes(derived.elgamalKeypair.secretKey);
+        const elgamal = ElGamalKeypair.fromSecretKey(secret);
+        const aesKey = AeKey.fromBytes(derived.aeKey);
+        try {
+        const mintAddress = address(mint);
+        const mintAccount = (await fetchMint(rpc, mintAddress)).data;
+        if (mintAccount.decimals !== 6 ||
+            !extensions(mintAccount).some((value) => value.__kind === "ConfidentialTransferMint")) {
+          throw new PayrollConfidentialSettlementError("confidential_mint_unavailable", 503);
+        }
+        const [reserveToken] = await findAssociatedTokenPda({
+          owner: address(signer.address), mint: mintAddress, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS
+        });
+        const { workspace, reserveState } = await deriveWorkspaceReserve({
+          authority: evidence.authorityAddress, workspaceId: input.workspaceId, programId
+        });
+        await verifyPayrollClaimTransaction({
+          signature: claimCreationSignature,
+          authorityAddress: evidence.authorityAddress,
+          workspaceId: input.workspaceId,
+          allocationCommitment: evidence.allocationCommitment,
+          claims: [{
+            claimId: allocation.claimId,
+            claimAddress,
+            contributorAddress: allocation.contributorWalletAddress,
+            amountCommitment,
+            amountCommitmentProof: allocation.amountCommitmentProof,
+            amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
+            escrowTokenAccount: escrow.tokenAccountAddress
+          }]
+        });
+        await ensureReserveConfidentialAccount({
+          rpc, signer, mint, mintAccount, tokenAddress: reserveToken, elgamal, aesKey
+        });
+        const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
+          programId, authority: evidence.authorityAddress, workspace, reserveState,
+          reserveAuthority: signer.address, reserveToken, mint
+        })), undefined, [signer]);
+        if (!configured.successful || configured.pending || configured.trackingFailed) {
+          throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
+        }
+
+        let reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
+        assertConfidentialAccount(reserveBalance.token, signer.address, mint, "workspace_reserve_confidential_account_not_ready");
+        if (reserveBalance.confidential.pendingBalance > 0n) {
+          const applied = await executePlan(rpc, gasSigner, singleInstructionPlan(
+            getApplyConfidentialPendingBalanceInstructionFromToken({
+              token: address(reserveToken), tokenAccount: reserveBalance.token,
+              authority: signer, elgamalSecretKey: secret, aesKey
+            })
+          ), undefined, [signer]);
+          if (!applied.successful || applied.pending || applied.trackingFailed) {
+            throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
+          }
+          reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
+        }
+
+        const amount = BigInt(allocation.amountBaseUnits);
+        const amountMaterial = derivePayrollAmountCommitmentMaterial({
+          amountBaseUnits: allocation.amountBaseUnits,
+          claimId: allocation.claimId,
+          secretHex
+        });
+        if (amountMaterial.amountCommitment !== amountCommitment) {
+          throw new PayrollConfidentialSettlementError("payroll_amount_commitment_mismatch", 409);
+        }
+        if (reserveBalance.confidential.availableBalance < amount) {
+          const shortfall = amount - reserveBalance.confidential.availableBalance;
+          if (reserveBalance.token.amount < shortfall) {
+            throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
+          }
+          const deposit = await executePlan(rpc, gasSigner, singleInstructionPlan(getConfidentialDepositInstruction({
+            token: address(reserveToken), mint: mintAddress, authority: signer,
+            amount: shortfall, decimals: mintAccount.decimals
+          })), undefined, [signer]);
+          if (!deposit.successful || deposit.pending || deposit.trackingFailed) {
+            throw new PayrollConfidentialSettlementError("reserve_confidential_deposit_failed", 503);
+          }
+          reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
+          if (reserveBalance.confidential.pendingBalance > 0n) {
+            const applied = await executePlan(rpc, gasSigner, singleInstructionPlan(
+              getApplyConfidentialPendingBalanceInstructionFromToken({
+                token: address(reserveToken), tokenAccount: reserveBalance.token,
+                authority: signer, elgamalSecretKey: secret, aesKey
+              })
+            ), undefined, [signer]);
+            if (!applied.successful || applied.pending || applied.trackingFailed) {
+              throw new PayrollConfidentialSettlementError("reserve_pending_balance_apply_failed", 503);
+            }
+            reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
+          }
+        }
+        if (reserveBalance.confidential.availableBalance < amount) {
+          throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
+        }
+
+        const funding = await fundPayrollClaimEscrow(db, rpc, signer, gasSigner, secret, elgamal, aesKey, {
+          workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+          claimId: allocation.claimId, claim: claimAddress,
+          contributor: allocation.contributorWalletAddress, programId,
+          authority: evidence.authorityAddress, workspace, reserveState, reserveToken,
+          escrowTokenAccount: escrow.tokenAccountAddress, mint,
+          amountBaseUnits: allocation.amountBaseUnits,
+          allocationCommitment: evidence.allocationCommitment,
+          amountCommitment,
+          proofContexts: allocation.settlementProofContextAddresses ?? [],
+          contextSignatures: allocation.settlementContextSignatures ?? []
+        });
+        if (funding.status === "funded" && ownsSettlementAttempt) {
+          const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
+            workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+          });
+          if (!released) return { status: "pending", signature: funding.signature };
+        }
+        return {
+          status: funding.status,
+          ...(funding.signature ? { signature: funding.signature } : {}),
+          ...(funding.warning ? { warning: funding.warning } : {})
+        };
+        } finally {
+          secret.free();
+          elgamal.free();
+          aesKey.free();
+          derived.elgamalKeypair.secretKey.fill(0);
+          derived.aeKey.fill(0);
+        }
+      } catch (error) {
+        if (ownsSettlementAttempt) {
+          const latestEscrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
+          if (latestEscrow?.status === "ready" || latestEscrow?.status === "funded") {
+            await releaseUnsubmittedPayrollSettlementAttempt(db, {
+              workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+            });
+          }
+        }
+        if (error instanceof PayrollConfidentialSettlementError) throw error;
+        throw new PayrollConfidentialSettlementError("payroll_claim_escrow_funding_failed", 503);
+      }
+    });
+  });
 }
 
 function isClaimSettlementTransaction(input: {

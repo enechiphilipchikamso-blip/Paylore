@@ -1,6 +1,7 @@
 "use client";
 
 import { describeGasTankError } from "./gas-tank-error-messages";
+import { describeClientError } from "./client-error-message";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -217,13 +218,17 @@ export function PayrollRecoveryAction({
       });
       setReconciliationPending(true);
       setPendingPhase("recovery");
-    } catch {
+    } catch (error) {
       setProgress("");
       setReconciliationPending(true);
       setPendingPhase("recovery");
       setMessage({
         state: "partial",
-        text: "The recovery response was interrupted. The server may already have submitted the transfer; check the existing recovery status before starting another recovery."
+        text: `${describeClientError(
+          error,
+          "Payroll recovery",
+          "The response was interrupted."
+        )} The server may already have submitted the transfer; check the existing recovery status before starting another recovery.`
       });
     } finally {
       setBusy(false);

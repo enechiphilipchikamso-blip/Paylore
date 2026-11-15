@@ -146,6 +146,26 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
     "Funding the confidential allocation account failed on-chain. Retry shortly.",
   payroll_claim_escrow_funding_conflict:
     "The confidential allocation account funding conflicts with an earlier attempt.",
+  payroll_claim_creation_unverified:
+    "The finalized Claim PDA creation transaction could not be verified against this allocation.",
+  payroll_claim_state_conflict:
+    "The allocation is already being claimed or recovered. Refresh its finalized state before retrying.",
+  payroll_allocation_commitment_invalid:
+    "The allocation amount or commitment is invalid. No confidential transfer was submitted.",
+  payroll_amount_commitment_not_configured:
+    "Payroll amount-commitment verification is not configured for this deployment.",
+  payroll_amount_commitment_mismatch:
+    "The committed allocation amount does not match the stored payroll amount.",
+  confidential_mint_unavailable:
+    "The configured wrapped-USDC mint is unavailable or does not support confidential transfers.",
+  reserve_program_configuration_failed:
+    "The workspace Reserve could not be configured on the Payroll Program. Retry after checking the Reserve state.",
+  reserve_confidential_account_setup_failed:
+    "The workspace Reserve confidential account could not be prepared.",
+  reserve_confidential_account_not_ready:
+    "The workspace Reserve confidential account is not approved and ready for transfers.",
+  reserve_confidential_deposit_failed:
+    "Moving the organization's wrapped USDC into its confidential Reserve failed. Check the Reserve before retrying.",
   payroll_allocation_not_recoverable:
     "This allocation is no longer eligible for recovery.",
   payroll_recovery_state_conflict:

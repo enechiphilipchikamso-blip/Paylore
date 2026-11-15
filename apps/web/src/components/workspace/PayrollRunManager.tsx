@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { describeClientError } from "./client-error-message";
 
 type PayrollPreview = {
   rows: Array<{
@@ -61,13 +62,20 @@ export function PayrollRunManager({
           body: form
         }
       );
-      const result = await response.json();
+      const result = await response.json().catch(() => null) as
+        | (PreviewResponse & { error?: string; duplicate?: boolean })
+        | null;
+      if (!result) {
+        throw new Error(`Payroll API returned no response body (HTTP ${response.status}).`);
+      }
       if (action === "preview") {
         if (!result.preview || !result.importDigest) {
           setPreview(null);
           setNotice({
             state: "error",
-            text: "The payroll file could not be previewed. Correct the file and try again."
+            text: result.error
+              ? `The payroll preview was rejected (reference: ${result.error}).`
+              : `The payroll preview could not be completed (HTTP ${response.status}).`
           });
           return;
         }
@@ -87,7 +95,9 @@ export function PayrollRunManager({
           state: "error",
           text: response.status === 409
             ? "The confirmed payroll no longer matches the preview. Preview the file again before confirming."
-            : "The payroll run could not be saved. No successful submission is assumed; you can safely retry."
+            : result.error
+              ? `The payroll run was rejected (reference: ${result.error}). No successful submission is assumed.`
+              : `The payroll run could not be saved (HTTP ${response.status}). No successful submission is assumed.`
         });
         return;
       }
@@ -101,10 +111,14 @@ export function PayrollRunManager({
       setFile(null);
       setIdempotencyKey(null);
       window.location.reload();
-    } catch {
+    } catch (error) {
       setNotice({
         state: "error",
-        text: "The payroll request could not be completed. Check the run list before retrying."
+        text: describeClientError(
+          error,
+          "Payroll run submission",
+          "Check the run list before retrying."
+        )
       });
     } finally {
       setBusy(false);

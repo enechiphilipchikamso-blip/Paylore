@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   getWorkspacePageContext: vi.fn(),
   loadPayloreConfig: vi.fn(),
   getFinalizedPayrollClaimState: vi.fn(),
-  recoveryProps: null as Record<string, unknown> | null
+  recoveryProps: null as Record<string, unknown> | null,
+  fundingProps: null as Record<string, unknown> | null
 }));
 
 vi.mock("@paylore/database", () => ({
@@ -28,6 +29,12 @@ vi.mock("../../../../../../components/workspace/PayrollRecoveryAction", () => ({
   PayrollRecoveryAction: (props: Record<string, unknown>) => {
     mocks.recoveryProps = props;
     return createElement("div", { "data-testid": "recovery-action" }, "Recovery action");
+  }
+}));
+vi.mock("../../../../../../components/workspace/PayrollClaimEscrowFundingAction", () => ({
+  PayrollClaimEscrowFundingAction: (props: Record<string, unknown>) => {
+    mocks.fundingProps = props;
+    return createElement("div", { "data-testid": "escrow-funding-action" }, "Fund claim escrow");
   }
 }));
 vi.mock("../../../../../../components/workspace/WorkspaceNavigation", () => ({
@@ -74,6 +81,7 @@ const params = Promise.resolve({
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.recoveryProps = null;
+  mocks.fundingProps = null;
   mocks.getWorkspacePageContext.mockResolvedValue({
     db,
     workspace: { role: "organization_admin", workspaceName: "Workspace A" },
@@ -92,7 +100,10 @@ beforeEach(() => {
   mocks.loadPayloreConfig.mockReturnValue({
     PAYLORE_PAYROLL_PROGRAM_ID: "paylore-program"
   });
-  mocks.getFinalizedPayrollClaimState.mockResolvedValue("unclaimed");
+  mocks.getFinalizedPayrollClaimState.mockResolvedValue({
+    status: "unclaimed",
+    escrowFunded: true
+  });
 });
 
 describe("workspace payroll recovery detail", () => {
@@ -134,7 +145,10 @@ describe("workspace payroll recovery detail", () => {
   });
 
   it("denies recovery action on a claimed entitlement", async () => {
-    mocks.getFinalizedPayrollClaimState.mockResolvedValue("claimed");
+    mocks.getFinalizedPayrollClaimState.mockResolvedValue({
+      status: "claimed",
+      escrowFunded: true
+    });
     mocks.getWorkspacePayrollRun.mockResolvedValue({
       ...payroll,
       allocations: [{ ...allocation, status: "claimed", settlementSignature: "settlement-a" }]
@@ -145,6 +159,57 @@ describe("workspace payroll recovery detail", () => {
 
     expect(html).toContain("This allocation has already been claimed and cannot be recovered by the organization.");
     expect(html).not.toContain('data-testid="recovery-action"');
+    expect(mocks.recoveryProps).toBeNull();
+  });
+
+  it("reports an unclaimed but unfunded PDA and offers organization escrow funding", async () => {
+    mocks.getPayrollClaimEscrow.mockResolvedValue({
+      allocationId: "allocation-a",
+      workspaceId: "workspace-a",
+      payrollRunId: "run-a",
+      claimId: allocation.claimId,
+      tokenAccountAddress: "claim-escrow-a",
+      status: "ready",
+      amountBaseUnits: "1250000"
+    });
+    mocks.getFinalizedPayrollClaimState.mockResolvedValue({
+      status: "unclaimed",
+      escrowFunded: false
+    });
+
+    const page = await RecoveryDetailPage({ params });
+    const html = renderToStaticMarkup(page);
+
+    expect(html).toContain("Unclaimed — escrow not funded.");
+    expect(html).toContain("Fund claim escrow");
+    expect(html).not.toContain('data-testid="recovery-action"');
+    expect(mocks.fundingProps).toEqual({
+      workspaceId: "workspace-a",
+      runId: "run-a",
+      allocationId: "allocation-a",
+      initiallyPending: false
+    });
+    expect(mocks.recoveryProps).toBeNull();
+  });
+
+  it("offers reconciliation rather than a new funding attempt when the Claim PDA is already funded", async () => {
+    mocks.getPayrollClaimEscrow.mockResolvedValue({
+      allocationId: "allocation-a",
+      workspaceId: "workspace-a",
+      payrollRunId: "run-a",
+      claimId: allocation.claimId,
+      tokenAccountAddress: "claim-escrow-a",
+      status: "funding",
+      amountBaseUnits: "1250000",
+      fundingSignature: "funding-signature"
+    });
+
+    const page = await RecoveryDetailPage({ params });
+    const html = renderToStaticMarkup(page);
+
+    expect(html).toContain("Funded on-chain; database reconciliation pending");
+    expect(html).toContain("Escrow funding is finalized on-chain but has not been reconciled in Paylore.");
+    expect(mocks.fundingProps).toMatchObject({ initiallyPending: true });
     expect(mocks.recoveryProps).toBeNull();
   });
 

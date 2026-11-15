@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { BusyActionButton } from "./BusyActionButton";
+import { describeClientError } from "./client-error-message";
 
 export function PayrollRunActions({
   workspaceId,
@@ -42,20 +43,30 @@ export function PayrollRunActions({
           body: JSON.stringify({ action: "cancel" })
         }
       );
+      const result = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) {
         setMessage(
           response.status === 409
             ? { state: "partial", text: "This run can no longer be cancelled because commitment has started." }
-            : { state: "error", text: "The run could not be cancelled. Its current status has not been changed." }
+            : {
+                state: "error",
+                text: result?.error
+                  ? `The payroll run could not be cancelled (reference: ${result.error}).`
+                  : `The payroll run could not be cancelled (HTTP ${response.status}). Its current status has not been changed.`
+              }
         );
         return;
       }
       setMessage({ state: "success", text: "The payroll run was cancelled. No on-chain commitment was submitted." });
       router.refresh();
-    } catch {
+    } catch (error) {
       setMessage({
         state: "partial",
-        text: "The cancellation result could not be verified. Refresh the run before retrying."
+        text: describeClientError(
+          error,
+          "Payroll cancellation",
+          "Refresh the run before retrying."
+        )
       });
     } finally {
       setBusy(false);

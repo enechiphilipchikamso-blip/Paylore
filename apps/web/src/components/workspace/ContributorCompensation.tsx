@@ -8,6 +8,7 @@ import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
 import { BusyActionButton } from "./BusyActionButton";
 import { describeContributorSponsoredError } from "./gas-tank-error-messages";
+import { describeClientError } from "./client-error-message";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
 import {
@@ -217,15 +218,25 @@ export function ContributorCompensation({
         text: "The account transaction is finalized. Paylore is verifying its Token-2022 state before recording setup."
       });
       const verifiedAccount = await verifySetup(setup.signature);
-      await refreshConfidentialBalance(verifiedAccount);
+      try {
+        await refreshConfidentialBalance(verifiedAccount);
+      } catch (error) {
+        setMessage({
+          state: "partial",
+          text: `Confidential account setup is verified and ready, but the balance could not be refreshed. ${describeClientError(error, "Balance refresh", "Refresh the balance before cashing out.")}`
+        });
+        return true;
+      }
       setMessage({ state: "success", text: "Confidential account ready" });
       return true;
     } catch (error) {
       setMessage({
         state: "error",
-        text: error instanceof Error
-          ? error.message
-          : "Confidential account setup could not be completed."
+        text: describeClientError(
+          error,
+          "Confidential account setup",
+          "The confidential account could not be set up."
+        )
       });
       return false;
     } finally {
@@ -277,6 +288,7 @@ export function ContributorCompensation({
       let cleanupPending = 0;
       let stateConflict = false;
       let failureReason: string | null = null;
+      let pendingReason: string | null = null;
       setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
       for (const allocation of eligible) {
         if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
@@ -298,17 +310,43 @@ export function ContributorCompensation({
           else if (result.status === "state_conflict") { stateConflict = true; break; }
           else if (result.status === "pending" || result.status === "retry_ready") pending++;
           else failed++;
-        } catch { pending++; }
+        } catch (error) {
+          pending++;
+          pendingReason ??= describeClientError(
+            error,
+            "Payroll claim",
+            "The request was interrupted; its transaction state needs reconciliation."
+          );
+        }
       }
       router.refresh();
-      try { await refreshConfidentialBalance(accountForBalance); } catch { /* Chain state can finalize before the owner RPC catches up. */ }
-      setMessage(getClaimAndCashOutOutcome({ settled, pending, failed, cleanupPending, stateConflict, failureReason }));
+      let balanceRefreshIssue: string | null = null;
+      try {
+        await refreshConfidentialBalance(accountForBalance);
+      } catch (error) {
+        balanceRefreshIssue = describeClientError(
+          error,
+          "Claimed balance refresh",
+          "Refresh the confidential balance before withdrawing."
+        );
+      }
+      const outcome = getClaimAndCashOutOutcome({
+        settled, pending, failed, cleanupPending, stateConflict, failureReason, pendingReason
+      });
+      setMessage({
+        ...outcome,
+        text: balanceRefreshIssue
+          ? `${outcome.text} The claim result is unchanged; ${balanceRefreshIssue}`
+          : outcome.text
+      });
     } catch (error) {
       setMessage({
         state: "error",
-        text: error instanceof Error
-          ? error.message
-          : "Confidential payroll settlement could not be completed."
+        text: describeClientError(
+          error,
+          "Confidential payroll settlement",
+          "The payroll allocation could not be settled."
+        )
       });
     } finally {
       setBusy(false);
@@ -328,17 +366,22 @@ export function ContributorCompensation({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind, signature, amountBaseUnits })
       });
-      const result = await response.json();
-      if (!response.ok || (result.status !== "finalized" && result.status !== "duplicate")) {
-        throw new Error("Cash-out ledger reconciliation is not finalized.");
+      const result = await response.json().catch(() => null) as {
+        status?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || (result?.status !== "finalized" && result?.status !== "duplicate")) {
+        throw new Error(result?.error
+          ? `Cash-out ledger reconciliation was rejected (reference: ${result.error}).`
+          : `Cash-out ledger reconciliation was not finalized (HTTP ${response.status}).`);
       }
       setCashOutLedgerRetry(null);
       return true;
-    } catch {
+    } catch (error) {
       setCashOutLedgerRetry({ kind, signature, amountBaseUnits });
       setMessage({
         state: "partial",
-        text: `The token movement finalized, but its workspace ledger entry is not reconciled. Do not submit a duplicate transaction. Transaction: ${signature}`
+        text: `The token movement finalized, but its workspace ledger entry is not reconciled. Do not submit a duplicate transaction. ${describeClientError(error, "Cash-out ledger reconciliation", "The ledger response was interrupted.")} Transaction: ${signature}`
       });
       return false;
     }
@@ -402,10 +445,22 @@ export function ContributorCompensation({
           mint,
           currentAccount.tokenAccountAddress
         );
-        await refreshConfidentialBalance();
+        const signature = signatures.at(-1);
+        if (!signature) {
+          throw new Error("The confidential balance update did not return a transaction signature.");
+        }
+        try {
+          await refreshConfidentialBalance();
+        } catch (error) {
+          setMessage({
+            state: "partial",
+            text: `Pending balance application finalized. The refreshed balance could not be verified. ${describeClientError(error, "Balance refresh", "Refresh the confidential balance before cashing out.")} Transaction: ${signature}`
+          });
+          return;
+        }
         setMessage({
           state: "success",
-          text: `Balance updated. Finalized transaction: ${signatures.at(-1)}`
+          text: `Balance updated. Finalized transaction: ${signature}`
         });
         return;
       }
@@ -491,9 +546,11 @@ export function ContributorCompensation({
     } catch (error) {
       setMessage({
         state: "error",
-        text: error instanceof Error
-          ? error.message
-          : "The confidential account operation could not be completed."
+        text: describeClientError(
+          error,
+          "Confidential account operation",
+          "The operation could not be completed."
+        )
       });
     } finally {
       setBusy(false);
@@ -592,9 +649,11 @@ export function ContributorCompensation({
     } catch (error) {
       setMessage({
         state: "error",
-        text: error instanceof Error
-          ? error.message
-          : "Workspace departure could not be completed."
+        text: describeClientError(
+          error,
+          "Workspace departure",
+          "The workspace departure could not be completed."
+        )
       });
     } finally {
       setBusy(false);
@@ -610,8 +669,15 @@ export function ContributorCompensation({
     try {
       await verifySetup(setupSignature);
       setMessage({ state: "success", text: "Confidential account ready." });
-    } catch {
-      setMessage({ state: "partial", text: "The setup transaction is not yet verified. Keep the same reference and try again." });
+    } catch (error) {
+      setMessage({
+        state: "partial",
+        text: describeClientError(
+          error,
+          "Confidential account verification",
+          "The setup transaction is not yet verified. Keep the same reference and retry."
+        )
+      });
     } finally {
       setBusy(false);
       setBusyAction(null);

@@ -4,6 +4,26 @@ import Link from "next/link";
 import { useState } from "react";
 import { BusyActionButton } from "./BusyActionButton";
 import type { ContributorImportResult } from "../../server/contributors-parser";
+import { describeClientError } from "./client-error-message";
+
+function describeImportError(code: string | undefined, status: number): string {
+  switch (code) {
+    case "authentication_required": return "Your session has ended. Sign in again before importing contributors.";
+    case "workspace_access_denied": return "Only a workspace administrator can import contributors.";
+    case "workspace_read_only": return "Contributor imports are paused while this workspace subscription is inactive.";
+    case "file_too_large": return "The selected file is larger than the 5 MB upload limit.";
+    case "file_required": return "Choose a CSV or XLSX file before starting the import.";
+    case "file_could_not_be_processed": return "The file format or contents could not be processed. Check the CSV/XLSX structure and retry.";
+    case "request_not_allowed": return "The request failed Paylore's origin check. Reload the page and retry.";
+    case "invalid_contributors": return "The contributor preview is invalid. Review the file and create a new preview.";
+    case "invalid_contributor_wallet": return "Each contributor must have a valid matching identity and payout wallet.";
+    case "duplicate_contributor_wallet": return "One or more contributor wallets already exist in this workspace.";
+    case "contributor_create_failed": return "Paylore could not save the contributor records. Refresh the directory before retrying.";
+    default: return code
+      ? `Contributor import was rejected (reference: ${code}).`
+      : `Contributor import could not be completed (HTTP ${status}).`;
+  }
+}
 
 export function ContributorImportForm({
   workspaceId
@@ -30,12 +50,11 @@ export function ContributorImportForm({
         { method: "POST", credentials: "same-origin", body: form }
       );
       if (!response.ok) {
+        const result = await response.json().catch(() => null) as { error?: string } | null;
         setPreview(null);
         setNotice({
           state: "error",
-          text: response.status === 413
-            ? "The file could not be processed. Please correct the errors and upload again."
-            : "The file could not be processed. Please correct the errors and upload again."
+          text: describeImportError(result?.error, response.status)
         });
         return;
       }
@@ -47,11 +66,15 @@ export function ContributorImportForm({
           text: "Some rows could not be imported. Review the errors, correct the file, and upload again."
         });
       }
-    } catch {
+    } catch (error) {
       setPreview(null);
       setNotice({
         state: "error",
-        text: "The file could not be processed. Please correct the errors and upload again."
+        text: describeClientError(
+          error,
+          "Contributor file preview",
+          "The file could not be processed. Check its format and try again."
+        )
       });
     } finally {
       setBusy(false);
@@ -75,9 +98,10 @@ export function ContributorImportForm({
         }
       );
       if (!response.ok) {
+        const result = await response.json().catch(() => null) as { error?: string } | null;
         setNotice({
           state: "error",
-          text: "Contributors could not be saved. Please review the file and try again."
+          text: describeImportError(result?.error, response.status)
         });
         return;
       }
@@ -89,10 +113,14 @@ export function ContributorImportForm({
       });
       setPreview(null);
       setFile(null);
-    } catch {
+    } catch (error) {
       setNotice({
         state: "error",
-        text: "Something went wrong. Please try again."
+        text: describeClientError(
+          error,
+          "Contributor import",
+          "The contributor records could not be saved."
+        )
       });
     } finally {
       setBusy(false);
