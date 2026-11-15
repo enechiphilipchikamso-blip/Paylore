@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import {
   getWorkspaceGasTank,
+  getWorkspaceGasTankSponsorshipWindow,
   listWorkspaceGasTankOperations,
   listWorkspaceLedgerEntries
 } from "@paylore/database";
@@ -81,6 +82,36 @@ export default async function WorkspaceGasTankPage({
     createdAt: operation.createdAt.toISOString()
   }));
 
+  let sponsorshipWindow: {
+    recordCount: number;
+    recordLimit: number;
+    limitReached: boolean;
+    operationCount: number;
+    feeLamports: string;
+    reservedFeesLamports: string;
+    nextReleaseAt: string | null;
+    clearsAt: string | null;
+    generatedAt: string;
+  } | null = null;
+  if (gasTank) {
+    try {
+      const window = await getWorkspaceGasTankSponsorshipWindow(context.db, workspaceId);
+      sponsorshipWindow = {
+        recordCount: window.recordCount,
+        recordLimit: window.recordLimit,
+        limitReached: window.limitReached,
+        operationCount: window.operationCount,
+        feeLamports: window.feeLamports.toString(),
+        reservedFeesLamports: window.reservedFeesLamports.toString(),
+        nextReleaseAt: window.nextReleaseAt?.toISOString() ?? null,
+        clearsAt: window.clearsAt?.toISOString() ?? null,
+        generatedAt: new Date().toISOString()
+      };
+    } catch {
+      console.error(JSON.stringify({ event: "gas_tank_page_sponsorship_window_unavailable" }));
+    }
+  }
+
   const entries = await listWorkspaceLedgerEntries(context.db, {
     workspaceId,
     category: "gas_operations",
@@ -130,6 +161,7 @@ export default async function WorkspaceGasTankPage({
               }
             : null}
           operations={operationsForDisplay}
+          sponsorshipWindow={sponsorshipWindow}
         />
       </section>
       <WorkspaceLegalFooter />

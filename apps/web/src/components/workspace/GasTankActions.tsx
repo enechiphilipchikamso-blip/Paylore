@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { isWalletCancellation } from "../auth/walletErrors";
 import {
   findAuthenticatedWallet,
@@ -63,13 +63,112 @@ const GAS_TANK_OPERATION_LABELS: Record<string, string> = {
   reserve_ordinary_usdc_confidential_funding: "Reserve confidential funding"
 };
 
+type SponsorshipWindow = {
+  recordCount: number;
+  recordLimit: number;
+  limitReached: boolean;
+  operationCount: number;
+  feeLamports: string;
+  reservedFeesLamports: string;
+  nextReleaseAt: string | null;
+  clearsAt: string | null;
+  generatedAt: string;
+};
+
+function formatCountdown(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+/**
+ * Live view of the rolling 24-hour sponsorship window so administrators see
+ * the limit counting down before an operation is ever rejected by it.
+ */
+function SponsorshipWindowNotice({ window: usage }: { window: SponsorshipWindow }) {
+  const router = useRouter();
+  const [now, setNow] = useState(() => Date.parse(usage.generatedAt));
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+  const nextRelease = usage.nextReleaseAt ? Date.parse(usage.nextReleaseAt) : null;
+  const clears = usage.clearsAt ? Date.parse(usage.clearsAt) : null;
+  const nextReleaseDue = nextRelease !== null && nextRelease <= now;
+  useEffect(() => {
+    // Reload the server summary once the oldest counted operation leaves the window.
+    if (nextReleaseDue) router.refresh();
+  }, [nextReleaseDue, router]);
+  const remaining = Math.max(0, usage.recordLimit - usage.recordCount);
+  const nearLimit = usage.limitReached || remaining <= Math.ceil(usage.recordLimit * 0.1);
+  return (
+    <section className="reserve-summary" aria-labelledby="gas-tank-window-heading">
+      <h3 id="gas-tank-window-heading">24-hour sponsorship window</h3>
+      <div
+        className="state-callout"
+        data-state={usage.limitReached ? "error" : nearLimit ? "partial" : "success"}
+        role="status"
+        aria-live="polite"
+      >
+        <span className="state-callout__signal" aria-hidden="true" />
+        <p>
+          {usage.limitReached
+            ? `The 24-hour limit of ${usage.recordLimit.toLocaleString()} sponsored operation records is reached. New sponsored operations resume ${nextRelease !== null && !nextReleaseDue ? `in ${formatCountdown(nextRelease - now)}` : "shortly"}, when the oldest record leaves the window.`
+            : usage.recordCount === 0
+              ? `No sponsored operations are counted in the last 24 hours. Up to ${usage.recordLimit.toLocaleString()} operation records can be sponsored in any rolling 24-hour window.`
+              : `${usage.recordCount.toLocaleString()} of ${usage.recordLimit.toLocaleString()} sponsored operation records are counted in the rolling 24-hour window (${remaining.toLocaleString()} remaining).`}
+        </p>
+      </div>
+      <dl className="billing-period">
+        <div>
+          <dt>Transactions counted (24 h)</dt>
+          <dd>{usage.operationCount.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>Network fees counted (24 h)</dt>
+          <dd>{formatSol(usage.feeLamports)} SOL</dd>
+        </div>
+        <div>
+          <dt>Reserved for in-flight transactions</dt>
+          <dd>{formatSol(usage.reservedFeesLamports)} SOL</dd>
+        </div>
+        <div>
+          <dt>Oldest record leaves the window</dt>
+          <dd>{nextRelease === null
+            ? "Nothing counted"
+            : nextReleaseDue
+              ? "Now — refreshing"
+              : `in ${formatCountdown(nextRelease - now)}`}</dd>
+        </div>
+        <div>
+          <dt>Window fully clears</dt>
+          <dd>{clears === null
+            ? "Already clear"
+            : clears <= now
+              ? "Now"
+              : `in ${formatCountdown(clears - now)} (${new Date(clears).toLocaleString()})`}</dd>
+        </div>
+      </dl>
+      <p className="notice">
+        The window is rolling, not a midnight reset: each operation stops counting
+        24 hours after its last update. The Gas Tank balance is checked separately
+        for every operation; reserved in-flight fees are released once their
+        transactions finalize or expire.
+      </p>
+    </section>
+  );
+}
+
 export function GasTankActions({
   workspaceId,
   walletAddress,
   gasTank,
   canManage,
   latestFunding,
-  operations
+  operations,
+  sponsorshipWindow = null
 }: {
   workspaceId: string;
   walletAddress: string;
@@ -96,6 +195,7 @@ export function GasTankActions({
     failureCode: string | null;
     createdAt: string;
   }>;
+  sponsorshipWindow?: SponsorshipWindow | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -525,6 +625,14 @@ export function GasTankActions({
             </div>
             <a href="#gas-tank-operations">View operations</a>
           </section>
+          {sponsorshipWindow ? (
+            <SponsorshipWindowNotice window={sponsorshipWindow} />
+          ) : (
+            <div className="state-callout" data-state="partial" role="status">
+              <span className="state-callout__signal" aria-hidden="true" />
+              <p>The 24-hour sponsorship window summary is unavailable right now. Reload the page to retry.</p>
+            </div>
+          )}
           {gasTank.lowBalance ? (
             <div className="state-callout" data-state="partial" role="status">
               <span className="state-callout__signal" aria-hidden="true" />
