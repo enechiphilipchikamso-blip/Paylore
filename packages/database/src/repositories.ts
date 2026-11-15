@@ -7597,6 +7597,65 @@ export async function getWorkspaceGasTankSponsorshipUsage(
   });
 }
 
+/** Rolling 24-hour sponsorship window: operations stay counted until 24 hours after their latest update. */
+export const GAS_TANK_SPONSORSHIP_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Hard cap on Gas Tank operation records counted inside one rolling window. */
+export const GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT = 1000;
+
+/**
+ * Read-only summary of the rolling 24-hour Gas Tank sponsorship window, including
+ * when the oldest counted operation leaves it and when the window fully clears.
+ */
+export async function getWorkspaceGasTankSponsorshipWindow(
+  db: Database,
+  workspaceId: string,
+  now: Date = new Date()
+) {
+  const since = new Date(now.getTime() - GAS_TANK_SPONSORSHIP_WINDOW_MS);
+  const rows = await db
+    .select({
+      status: gasTankOperations.status,
+      feeLamports: gasTankOperations.feeLamports,
+      failureCode: gasTankOperations.failureCode,
+      operationData: gasTankOperations.operationData,
+      createdAt: gasTankOperations.createdAt,
+      updatedAt: gasTankOperations.updatedAt
+    })
+    .from(gasTankOperations)
+    .where(and(
+      eq(gasTankOperations.workspaceId, workspaceId),
+      or(
+        gte(gasTankOperations.createdAt, since),
+        gte(gasTankOperations.updatedAt, since)
+      )
+    ))
+    .limit(GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT + 1);
+  const usage = summarizeGasTankSponsorshipBudget({
+    rows,
+    reservedFeeLamports: "100000",
+    since
+  });
+  let nextReleaseAt: number | null = null;
+  let clearsAt: number | null = null;
+  for (const row of rows) {
+    const leavesAt = Math.max(row.createdAt.getTime(), row.updatedAt.getTime()) +
+      GAS_TANK_SPONSORSHIP_WINDOW_MS;
+    nextReleaseAt = nextReleaseAt === null ? leavesAt : Math.min(nextReleaseAt, leavesAt);
+    clearsAt = clearsAt === null ? leavesAt : Math.max(clearsAt, leavesAt);
+  }
+  return {
+    windowStartedAt: since,
+    recordCount: rows.length,
+    recordLimit: GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT,
+    limitReached: rows.length > GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT,
+    operationCount: usage.operationCount,
+    feeLamports: usage.feeLamports,
+    reservedFeesLamports: usage.reservedFeesLamports,
+    nextReleaseAt: nextReleaseAt === null ? null : new Date(nextReleaseAt),
+    clearsAt: clearsAt === null ? null : new Date(clearsAt)
+  };
+}
+
 
 export async function attachPayrollClaimEscrowAccountSetupSignature(
   db: Database,

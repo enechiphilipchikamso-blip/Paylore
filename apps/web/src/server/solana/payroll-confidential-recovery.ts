@@ -333,7 +333,9 @@ export async function recoverPayrollAllocation(
     return withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateBytes) => {
     const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
     const gasBalance = await createSolanaRpc(rpcEndpoint()).getBalance(gasSigner.address, { commitment: "confirmed" }).send();
-    if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+    // @solana/kit returns lamports as a bigint; Number.isSafeInteger(bigint)
+    // is always false, which previously rejected every funded Gas Tank.
+    if (BigInt(gasBalance.value) <= 0n) {
       throw new PayrollConfidentialRecoveryError("gas_tank_insufficient_balance", 409);
     }
     const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);

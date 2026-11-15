@@ -1050,7 +1050,9 @@ export async function fundUnclaimedPayrollClaimEscrow(
       const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
       const rpc = createSolanaRpc(rpcEndpoint());
       const gasBalance = await rpc.getBalance(gasSigner.address, { commitment: "confirmed" }).send();
-      if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+      // @solana/kit returns lamports as a bigint; Number.isSafeInteger(bigint)
+    // is always false, which previously rejected every funded Gas Tank.
+    if (BigInt(gasBalance.value) <= 0n) {
         throw new PayrollConfidentialSettlementError("gas_tank_insufficient_balance", 409);
       }
 
@@ -1461,7 +1463,9 @@ export async function settleContributorPayrollAllocation(
     const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
     const rpc = createSolanaRpc(rpcEndpoint());
     const gasBalance = await rpc.getBalance(gasSigner.address, { commitment: "confirmed" }).send();
-    if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+    // @solana/kit returns lamports as a bigint; Number.isSafeInteger(bigint)
+    // is always false, which previously rejected every funded Gas Tank.
+    if (BigInt(gasBalance.value) <= 0n) {
       throw new PayrollConfidentialSettlementError("gas_tank_insufficient_balance", 409);
     }
     const derived: DerivedKeys = await deriveConfidentialKeys({ signer });
