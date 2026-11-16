@@ -7,6 +7,7 @@ import {
   findAuthenticatedWallet,
   WALLET_RECONNECT_REQUIRED
 } from "./authenticated-wallet";
+import { describeGasTankError } from "./gas-tank-error-messages";
 import {
   createGasTankFundingTransaction,
   gasTankFundingSignature,
@@ -217,6 +218,14 @@ export function GasTankActions({
     });
   }
 
+  /** The server's own reason for a failed request, instead of a fixed sentence that hides it. */
+  async function describeFailedResponse(response: Response, fallback: string): Promise<string> {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    return body?.error
+      ? describeGasTankError(body.error, response.status)
+      : `${fallback} (HTTP ${response.status})`;
+  }
+
   async function configure(action: "initialize" | "restore") {
     setBusy(true);
     setNotice(null);
@@ -225,9 +234,12 @@ export function GasTankActions({
       if (!response.ok) {
         setNotice({
           state: "error",
-          text: action === "initialize"
-            ? "Gas Tank setup could not be completed. Check the workspace status and try again."
-            : "The Gas Tank backup could not be verified. No change has been confirmed."
+          text: await describeFailedResponse(
+            response,
+            action === "initialize"
+              ? "Gas Tank setup could not be completed."
+              : "The Gas Tank backup could not be verified. No change has been confirmed."
+          )
         });
         return;
       }
@@ -267,7 +279,10 @@ export function GasTankActions({
     if (!response.ok) {
       setNotice({
         state: "error",
-        text: "The Gas Tank operation could not be completed. No success has been recorded. Check the operation details and try again."
+        text: await describeFailedResponse(
+          response,
+          "Paylore could not verify the funding transaction. No success has been recorded."
+        )
       });
       return "settled";
     }
@@ -295,11 +310,14 @@ export function GasTankActions({
   ) {
     let signed: ReturnType<typeof signedGasTankFunding>;
     try {
-      signed = signedGasTankFunding(
-        prepared.transaction,
-        signedTransaction,
-        prepared.payer
-      );
+      // Wallets may add priority-fee instructions or refresh the blockhash while
+      // signing, so the signed transaction is checked for the reviewed payer,
+      // Gas Tank address and amount instead of being compared byte for byte.
+      signed = signedGasTankFunding(signedTransaction, {
+        payer: prepared.payer,
+        destination: prepared.destination,
+        lamports: prepared.lamports
+      });
     } catch (error) {
       setNotice({
         state: "error",
@@ -331,8 +349,8 @@ export function GasTankActions({
       const result = await response.json().catch(() => null) as { error?: string } | null;
       setNotice({
         state: "error",
-        text: result?.error === "funding_transaction_rejected"
-          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough SOL, then prepare the funding again."
+        text: result?.error
+          ? describeGasTankError(result.error, response.status)
           : "Paylore could not accept the signed funding transaction. No funding was sent. Refresh this page and prepare the funding again."
       });
       return;
@@ -387,7 +405,10 @@ export function GasTankActions({
       if (!preparedResponse.ok) {
         setNotice({
           state: "error",
-          text: "Gas Tank funding could not be prepared. Check the workspace and network status before trying again."
+          text: await describeFailedResponse(
+            preparedResponse,
+            "Gas Tank funding could not be prepared."
+          )
         });
         return;
       }

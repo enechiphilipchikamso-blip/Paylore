@@ -16,6 +16,7 @@ import {
   ConfidentialAccountVerificationError,
   verifyConfidentialAccountClose
 } from "../../../../../../../server/solana/confidential-account-verification";
+import { logServerFailure } from "../../../../../../../server/server-error-log";
 
 const preflightSchema = z.object({ action: z.literal("preflight") }).strict();
 const leaveSchema = z.object({
@@ -212,7 +213,7 @@ export async function POST(
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "contributor_offboarding_failed" }));
+    logServerFailure("contributor_offboarding_failed", error);
     return NextResponse.json(
       { error: "contributor_offboarding_failed" },
       { status: 503 }

@@ -7,6 +7,7 @@ import {
 import { clearSessionCookie, getSessionState } from "../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
+import { logServerFailure } from "../../../../../../../server/server-error-log";
 
 const requestSchema = z.object({
   confirmation: z.literal("Request contributor review")
@@ -103,7 +104,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "offboarding_request_failed" }));
+    logServerFailure("offboarding_request_failed", error);
     return NextResponse.json(
       { error: "offboarding_request_failed" },
       { status: 503 }

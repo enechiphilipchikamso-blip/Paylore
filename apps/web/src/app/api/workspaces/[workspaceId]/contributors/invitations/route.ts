@@ -14,6 +14,7 @@ import {
 } from "../../../../../../server/security";
 import { getDatabase } from "../../../../../../server/db";
 import { z } from "zod";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 const invitationSchema = z.object({
   contributorId: z.string().uuid()
@@ -98,7 +99,7 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
     if (error instanceof Error && error.message === "Contributor has already accepted an invitation.") {
       return NextResponse.json({ error: "contributor_already_joined" }, { status: 409 });
     }
-    console.error(JSON.stringify({ event: "contributor_invitation_create_failed" }));
+    logServerFailure("contributor_invitation_create_failed", error);
     return NextResponse.json({ error: "invitation_could_not_be_prepared" }, { status: 500 });
   }
 }

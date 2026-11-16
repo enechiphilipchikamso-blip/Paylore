@@ -18,6 +18,28 @@ describe("client error messages", () => {
     )).toContain("the provider returned only \"Internal error\".");
   });
 
+  it.each([
+    "Internal error.",
+    "Internal JSON-RPC error.",
+    "Unexpected error",
+    "An unexpected error occurred."
+  ])("recognises the generic provider text %j", (text) => {
+    expect(describeClientError(new Error(text), "Payroll claim", "Try again."))
+      .toContain(`the provider returned only "${text}".`);
+  });
+
+  it("reads the message of a non-Error object thrown by a wallet", () => {
+    expect(describeClientError({ code: -32603, message: "Internal error" }, "Payroll claim", "Try again."))
+      .toContain("the provider returned only \"Internal error\".");
+    expect(describeClientError({ message: "User rejected the request." }, "Payroll claim", "Try again."))
+      .toBe("Payroll claim failed: User rejected the request.");
+  });
+
+  it("falls back when nothing readable was thrown", () => {
+    expect(describeClientError(undefined, "Payroll claim", "Try again."))
+      .toBe("Payroll claim failed: Try again.");
+  });
+
   it("uses a nested provider cause when the wrapper only says internal error", () => {
     const error = new Error("Internal error", { cause: new Error("RPC request timed out") });
     expect(describeClientError(error, "Payroll claim", "Try again."))

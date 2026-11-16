@@ -12,6 +12,7 @@ import { getDatabase } from "../../../../../../../../server/db";
 import { loadPayloreConfig } from "../../../../../../../../server/config";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../server/security";
 import { verifyPayrollClaimTransaction } from "../../../../../../../../server/solana/payroll-program-verification";
+import { logServerFailure } from "../../../../../../../../server/server-error-log";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -233,7 +234,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 400 }
       );
     }
-    console.error(JSON.stringify({ event: "payroll_claim_submission_failed" }));
+    logServerFailure("payroll_claim_submission_failed", error);
     return NextResponse.json(
       { error: "payroll_claim_submission_failed" },
       { status: 503 }

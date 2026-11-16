@@ -29,6 +29,7 @@ import {
   inspectSponsoredConfidentialSetupTransaction,
   submitSponsoredConfidentialSetupTransaction
 } from "../../../../../../../../server/confidential-account-sponsorship";
+import { logServerFailure } from "../../../../../../../../server/server-error-log";
 
 const requestSchema = z.object({
   transactionBase64: z.string().min(1).max(4_096)
@@ -231,8 +232,8 @@ export async function GET(
       feePayerAddress: policy.feePayerAddress,
       mintAddress: policy.config.PAYLORE_WRAPPED_USDC_MINT
     }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    console.error(JSON.stringify({ event: "confidential_setup_sponsorship_policy_failed" }));
+  } catch (error) {
+    logServerFailure("confidential_setup_sponsorship_policy_failed", error);
     return NextResponse.json({ error: "confidential_setup_sponsorship_unavailable" }, { status: 503 });
   }
 }
@@ -495,7 +496,7 @@ export async function POST(
       // contributor see the actual reason instead of a generic fallback.
       return NextResponse.json({ error: error.code }, { status });
     }
-    console.error(JSON.stringify({ event: "confidential_setup_sponsorship_failed" }));
+    logServerFailure("confidential_setup_sponsorship_failed", error);
     return NextResponse.json({ error: "confidential_setup_sponsorship_unavailable" }, { status: 503 });
   }
 }

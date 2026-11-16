@@ -7,7 +7,10 @@ import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
 import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
 import { BusyActionButton } from "./BusyActionButton";
-import { describeContributorSponsoredError } from "./gas-tank-error-messages";
+import {
+  describeAccountVerificationFailure,
+  describeContributorSponsoredError
+} from "./gas-tank-error-messages";
 import { describeClientError } from "./client-error-message";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
 
@@ -149,15 +152,9 @@ export function ContributorCompensation({
         body: JSON.stringify({ signature })
       }
     );
-    const result = await response.json();
-    if (!response.ok || !result.account) {
-      throw new Error(
-        result.error === "confidential_account_not_ready"
-          ? "The finalized transaction did not leave an approved confidential account enabled for incoming confidential credits. Paylore has not marked the account ready."
-          : response.status === 503
-            ? "The confidential account is not available on the configured USDC mint. No account status was recorded."
-            : "The account transaction has not been verified as finalized. Keep its transaction reference and retry verification."
-      );
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.account) {
+      throw new Error(describeAccountVerificationFailure(result?.error, response.status));
     }
     setCurrentAccount(result.account);
     setSetupSignature(null);
@@ -291,7 +288,11 @@ export function ContributorCompensation({
       let pendingReason: string | null = null;
       setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
       for (const allocation of eligible) {
-        if (!allocation.claimAddress || !allocation.transactionSignature) { failed++; continue; }
+        if (!allocation.claimAddress || !allocation.transactionSignature) {
+          failed++;
+          failureReason ??= "A payroll allocation has no finalized Claim account on Solana yet, so it cannot be settled. Ask a workspace administrator to finish committing the payroll run.";
+          continue;
+        }
         try {
           const response = await fetch(
             `/api/workspaces/${workspaceId}/payroll/runs/${allocation.runId}/allocations/${allocation.id}/claim`,
@@ -309,7 +310,10 @@ export function ContributorCompensation({
           } else if (result.status === "workspace_busy") { pending++; break; }
           else if (result.status === "state_conflict") { stateConflict = true; break; }
           else if (result.status === "pending" || result.status === "retry_ready") pending++;
-          else failed++;
+          else {
+            failed++;
+            failureReason ??= `Paylore returned an unrecognised settlement status${typeof result.status === "string" ? ` (${result.status})` : ""}. Refresh to see the recorded state before retrying.`;
+          }
         } catch (error) {
           pending++;
           pendingReason ??= describeClientError(
@@ -946,20 +950,26 @@ export function ContributorCompensation({
         </BusyActionButton>
       </section>
 
-      <ClaimAndCashOutStatus message={message} />
-      {cashOutLedgerRetry ? (
-        <div className="state-callout" data-state="partial" role="status">
-          <span className="state-callout__signal" aria-hidden="true" />
-          <p>The original transaction is saved for reconciliation. Retrying here does not submit another token transaction.</p>
-          <BusyActionButton
-            className="button button--secondary"
-            busy={busyAction === "ledger"}
-            disabled={busy}
-            onClick={() => void retryCashOutLedger()}
-            type="button"
-          >
-            {busyAction === "ledger" ? "Reconciling ledger…" : "Retry ledger reconciliation"}
-          </BusyActionButton>
+      {/* Pinned to the bottom of the viewport so an outcome is visible next to
+          whichever action produced it, not only after scrolling to the page end. */}
+      {message || cashOutLedgerRetry ? (
+        <div className="contributor-compensation__status">
+          <ClaimAndCashOutStatus message={message} />
+          {cashOutLedgerRetry ? (
+            <div className="state-callout" data-state="partial" role="status">
+              <span className="state-callout__signal" aria-hidden="true" />
+              <p>The original transaction is saved for reconciliation. Retrying here does not submit another token transaction.</p>
+              <BusyActionButton
+                className="button button--secondary"
+                busy={busyAction === "ledger"}
+                disabled={busy}
+                onClick={() => void retryCashOutLedger()}
+                type="button"
+              >
+                {busyAction === "ledger" ? "Reconciling ledger…" : "Retry ledger reconciliation"}
+              </BusyActionButton>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

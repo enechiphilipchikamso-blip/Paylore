@@ -4,6 +4,7 @@ import { getPayrollClaimEscrow, getWorkspaceForUser } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
+import { logServerFailure, logServerRejection } from "../../../../../../../../../../server/server-error-log";
 import {
   PayrollConfidentialRecoveryError,
   recoverPayrollAllocation
@@ -127,6 +128,7 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
     if (error instanceof PayrollConfidentialRecoveryError) {
+      logServerRejection("payroll_recovery_rejected", error.code, error.statusCode);
       return NextResponse.json({
         error: error.code,
         retryable: error.statusCode === 503
@@ -135,7 +137,7 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
         headers: { "Cache-Control": "no-store" }
       });
     }
-    console.error(JSON.stringify({ event: "payroll_recovery_submission_failed" }));
+    logServerFailure("payroll_recovery_submission_failed", error);
     return NextResponse.json(
       { error: "payroll_recovery_submission_failed" },
       { status: 503, headers: { "Cache-Control": "no-store" } }

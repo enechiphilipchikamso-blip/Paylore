@@ -4,6 +4,7 @@ import { persistSolanaWebhookEvents } from "@paylore/database";
 import { loadPayloreConfig } from "../../../../server/config";
 import { getDatabase } from "../../../../server/db";
 import { normalizeHeliusWebhookPayload } from "../../../../server/solana/webhook-policy";
+import { logServerFailure } from "../../../../server/server-error-log";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const MAX_EVENTS_PER_DELIVERY = 100;
@@ -104,8 +105,8 @@ export async function POST(request: Request) {
       },
       { status: 202, headers: { "Cache-Control": "no-store" } }
     );
-  } catch {
-    console.error(JSON.stringify({ event: "helius_webhook_persistence_failed" }));
+  } catch (error) {
+    logServerFailure("helius_webhook_persistence_failed", error);
     return NextResponse.json(
       { error: "webhook_event_not_persisted" },
       { status: 503 }

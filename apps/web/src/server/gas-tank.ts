@@ -5,7 +5,6 @@ import {
   createSolanaRpc,
   getAddressEncoder,
   getBase64EncodedWireTransaction,
-  getCompiledTransactionMessageDecoder,
   getSignatureFromTransaction,
   getTransactionDecoder,
   isSolanaError,
@@ -31,7 +30,8 @@ import {
 } from "./reserve-crypto-policy";
 import { readSolanaRpc } from "./solana/rpc";
 import { inspectGasTankFundingTransaction } from "./gas-tank-policy";
-import { createGasTankFundingTransaction } from "../components/workspace/gas-tank-funding-transaction";
+import { isExpectedGasTankFundingMessage } from "../components/workspace/gas-tank-funding-transaction";
+import { SOLANA_MAX_TRANSACTION_BYTES } from "../components/workspace/gas-tank-funding-programs";
 import { configuredRpcEndpoint } from "./solana/rpc-configured";
 
 
@@ -282,8 +282,10 @@ export async function verifyWorkspaceGasTankFunding(
 
 /**
  * The administrator wallet only signs the reviewed transfer; Paylore submits it.
- * The signed message must be byte-for-byte the transfer Paylore prepared, so a
- * wallet cannot redirect or resize the funding before it is broadcast.
+ * The signed message must still contain exactly one transfer of the prepared
+ * amount from the administrator to this Gas Tank, so a wallet cannot redirect or
+ * resize the funding before it is broadcast. Wallet-added priority-fee or guard
+ * instructions are accepted; anything else is refused.
  */
 export async function submitWorkspaceGasTankFunding(
   db: Database,
@@ -300,33 +302,31 @@ export async function submitWorkspaceGasTankFunding(
   }
 
   let transaction: Transaction;
-  let recentBlockhash: string;
   try {
     const wireBytes = Buffer.from(input.transactionBase64, "base64");
-    if (wireBytes.toString("base64") !== input.transactionBase64) {
-      throw new Error("non-canonical encoding");
+    if (
+      wireBytes.toString("base64") !== input.transactionBase64 ||
+      wireBytes.length > SOLANA_MAX_TRANSACTION_BYTES
+    ) {
+      throw new Error("non-canonical or oversized encoding");
     }
     transaction = getTransactionDecoder().decode(wireBytes);
-    recentBlockhash = getCompiledTransactionMessageDecoder()
-      .decode(transaction.messageBytes).lifetimeToken;
   } catch {
     throw new GasTankFundingSubmissionError("funding_transaction_invalid");
   }
 
-  const expected = getTransactionDecoder().decode(
-    createGasTankFundingTransaction({
-      payer: input.payer,
-      destination: gasTank.address,
-      lamports: input.expectedLamports,
-      blockhash: recentBlockhash,
-      lastValidBlockHeight: 0
-    })
-  );
-  const signedMessage = Uint8Array.from(transaction.messageBytes);
-  const expectedMessage = Uint8Array.from(expected.messageBytes);
+  // The reviewed transfer is checked by meaning, not bytes: a wallet may add
+  // priority-fee or guard instructions, but the payer, Gas Tank address and
+  // amount must still be exactly what Paylore prepared for this administrator.
   if (
-    signedMessage.length !== expectedMessage.length ||
-    signedMessage.some((byte, index) => byte !== expectedMessage[index]) ||
+    !isExpectedGasTankFundingMessage(
+      Uint8Array.from(transaction.messageBytes),
+      {
+        payer: input.payer,
+        destination: gasTank.address,
+        lamports: input.expectedLamports
+      }
+    ) ||
     Object.keys(transaction.signatures).length !== 1
   ) {
     throw new GasTankFundingSubmissionError("funding_transaction_invalid");

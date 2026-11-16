@@ -15,6 +15,7 @@ import {
   CashOutLedgerVerificationError,
   verifyFinalizedCashOutTransaction
 } from "../../../../../../server/solana/cash-out-ledger-verification";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 const signature = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{80,90}$/);
 const schema = z.object({
@@ -146,7 +147,7 @@ export async function POST(
         headers: { "Cache-Control": "no-store" }
       });
     }
-    console.error(JSON.stringify({ event: "cash_out_ledger_reconciliation_failed" }));
+    logServerFailure("cash_out_ledger_reconciliation_failed", error);
     return NextResponse.json({ error: "cash_out_ledger_reconciliation_unavailable" }, {
       status: 503,
       headers: { "Cache-Control": "no-store" }

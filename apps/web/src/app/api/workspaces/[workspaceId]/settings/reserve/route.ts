@@ -18,6 +18,7 @@ import {
   initializeWorkspaceConfidentialReserveAccount,
   WorkspaceReserveInitializationError
 } from "../../../../../../server/solana/workspace-reserve";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 const reserveActionSchema = z.object({
   action: z.enum(["initialize", "restore", "initialize_confidential"]).default("initialize"),
@@ -93,7 +94,7 @@ export async function GET(
         status: error.statusCode, headers: { "Cache-Control": "no-store" }
       });
     }
-    console.error(JSON.stringify({ event: "workspace_reserve_reconciliation_failed" }));
+    logServerFailure("workspace_reserve_reconciliation_failed", error);
     return NextResponse.json(
       { error: "reserve_reconciliation_unavailable" },
       { status: 503, headers: { "Cache-Control": "no-store" } }

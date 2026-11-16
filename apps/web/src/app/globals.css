@@ -3069,6 +3069,16 @@ button[aria-busy="true"]::before {
   gap: var(--space-3);
 }
 
+.contributor-compensation__status {
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: 5;
+  display: grid;
+  gap: var(--space-3);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.18);
+  border-radius: var(--radius-md);
+}
+
 @media (max-width: 56rem) {
   .contributor-compensation__metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));

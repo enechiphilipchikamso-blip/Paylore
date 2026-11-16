@@ -143,7 +143,7 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   payroll_claim_escrow_balance_not_ready:
     "The confidential allocation account balance is not ready yet. Retry shortly.",
   payroll_claim_escrow_funding_failed:
-    "Funding the confidential allocation account failed on-chain. Retry shortly.",
+    "Funding the confidential allocation account did not complete. Paylore released the attempt and no funding is recorded, so it is safe to retry. If it repeats, the server log carries the exact cause.",
   payroll_claim_escrow_funding_conflict:
     "The confidential allocation account funding conflicts with an earlier attempt.",
   payroll_claim_creation_unverified:
@@ -169,7 +169,99 @@ const GAS_TANK_ERROR_MESSAGES: Record<string, string> = {
   payroll_allocation_not_recoverable:
     "This allocation is no longer eligible for recovery.",
   payroll_recovery_state_conflict:
-    "The allocation changed state during recovery. Refresh before retrying."
+    "The allocation changed state during recovery. Refresh before retrying.",
+
+  // Escrow funding and contributor claim (settlement).
+  payroll_allocation_not_found:
+    "This payroll allocation was not found for the connected wallet. Refresh the page.",
+  payroll_allocation_amount_invalid:
+    "This allocation's amount or claim identifier is invalid, so nothing was submitted.",
+  contributor_confidential_account_not_ready:
+    "Your confidential account is not set up and approved for this wallet yet. Finish confidential account setup, then retry.",
+  workspace_reserve_confidential_account_not_ready:
+    "The workspace Reserve confidential account is not approved and ready for transfers.",
+  payroll_claim_escrow_account_not_ready:
+    "The confidential allocation account is not approved to receive confidential credits yet.",
+  recovery_escrow_confidential_account_not_ready:
+    "The confidential allocation account is not approved for confidential transfers, so it cannot be recovered yet.",
+  escrow_funding_transaction_not_verified:
+    "The finalized funding transaction could not be verified against this allocation. Refresh the payroll run before funding again.",
+  escrow_funding_claim_state_not_verified:
+    "The funding transaction finalized, but the Claim account on Solana does not show as funded. Refresh the payroll run before funding again.",
+  settlement_claim_commitment_invalid:
+    "The Claim commitments recorded for this allocation are malformed, so nothing was submitted.",
+  settlement_claim_state_not_verified:
+    "The Claim account on Solana does not match this allocation, so Paylore stopped. Refresh; if it persists, contact support.",
+  settlement_transaction_not_finalized:
+    "The settlement transaction is not finalized or did not succeed on Solana. Refresh to see its recorded state.",
+  settlement_transfer_binding_invalid:
+    "The settlement transaction did not contain exactly one confidential transfer followed by one claim mark, so it was not accepted.",
+  confidential_transfer_plan_invalid:
+    "Paylore built a confidential transfer that failed its own safety check, so it was not submitted. Nothing moved. Retry; if it persists, contact support.",
+  confidential_transfer_instruction_invalid:
+    "The confidential transfer instruction failed Paylore's safety check, so it was not submitted. Nothing moved. Retry; if it persists, contact support.",
+  confidential_proof_contexts_invalid:
+    "Paylore could not record the proof accounts prepared for this confidential transfer. Nothing was submitted. Retry shortly.",
+  confidential_transfer_proof_setup_failed:
+    "Preparing the confidential transfer proofs failed on Solana. Paylore released the attempt and nothing moved. Retry shortly.",
+  confidential_transfer_submission_failed:
+    "Paylore could not confirm that the confidential transfer was submitted. Refresh to see its recorded state before retrying.",
+  confidential_settlement_failed:
+    "The confidential transfer could not be completed. Paylore released the attempt and no value moved. Retry shortly.",
+  payroll_confidential_settlement_failed:
+    "Paylore stopped the confidential transfer on an unexpected server error. The exact cause is in the server log. Refresh to see the recorded state before retrying.",
+  payroll_settlement_failure_ledger_conflict:
+    "The failure of this confidential transfer could not be recorded in the ledger. Refresh before retrying.",
+  payroll_settlement_outcome_ledger_conflict:
+    "The outcome of this confidential transfer could not be recorded in the ledger. Refresh to review it before retrying.",
+  authenticated_wallet_required:
+    "Sign in with your wallet to continue.",
+  contributor_record_not_found:
+    "No active contributor record was found for this wallet in this workspace.",
+
+  // Recovery.
+  invalid_recovery_request:
+    "The recovery request was incomplete. Choose a reason (and add a note when the reason is Other), then retry.",
+  payroll_recovery_reason_required:
+    "A note is required when the recovery reason is Other.",
+  payroll_recovery_reason_unavailable:
+    "The recovery reason saved for this allocation could not be read. Refresh the page and submit the recovery again.",
+  payroll_recovery_not_configured:
+    "Recovery is not configured for this deployment (wrapped-USDC mint, Payroll Program or amount-commitment secret is missing).",
+  payroll_recovery_token_account_missing:
+    "The allocation account or the Reserve account was not found on Solana, so nothing was recovered.",
+  recovery_escrow_available_balance_insufficient:
+    "The allocation account does not hold the full available confidential balance yet (part of it may still be pending). Retry shortly.",
+  recovery_proof_contexts_invalid:
+    "Paylore could not record the proof accounts for this recovery. Nothing was submitted. Retry shortly.",
+  confidential_recovery_transfer_invalid:
+    "The recovery transfer failed Paylore's safety check, so it was not submitted. Nothing moved. Retry; if it persists, contact support.",
+  confidential_recovery_submission_failed:
+    "Paylore could not confirm that the recovery transfer was submitted. Refresh the recovery status before retrying.",
+  payroll_recovery_balance_snapshot_missing:
+    "The recovery transfer finalized, but the balances recorded before it are missing, so Paylore cannot confirm the value moved. Do not recover again; contact support.",
+  payroll_recovery_reconciliation_conflict:
+    "The recovery transfer finalized, but Paylore could not match it to this allocation. Do not recover again; contact support.",
+  payroll_recovery_submission_failed:
+    "The recovery request hit an unexpected server error, so its final result is not known. Refresh the recovery status before doing anything else.",
+  payroll_recovery_status_unavailable:
+    "The recovery status could not be loaded. Retry shortly.",
+
+  // Gas Tank page (setup, funding).
+  gas_tank_operation_failed:
+    "The Gas Tank service hit an unexpected server error and the request did not complete. Nothing was signed by your wallet. The exact cause is in the server log; retry shortly.",
+  gas_tank_unavailable:
+    "The Gas Tank status could not be loaded. Retry shortly.",
+  invalid_gas_tank_action:
+    "Paylore did not recognise this Gas Tank request. Reload the page and retry.",
+  request_too_large:
+    "The request was too large for Paylore to accept. Reload the page and retry.",
+  funding_transaction_invalid:
+    "The signed transaction does not match the transfer you reviewed (payer, Gas Tank address, amount or instructions), so Paylore did not submit it. No funding was sent. Prepare the funding again.",
+  funding_transaction_rejected:
+    "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough SOL, then prepare the funding again.",
+  funding_transaction_not_eligible:
+    "The transaction is not an eligible Gas Tank funding transfer from your wallet for this amount, so it was not credited. Check the transaction reference and amount."
 };
 
 /** Codes a contributor cannot resolve; a workspace administrator must act. */
@@ -200,6 +292,27 @@ export function describeContributorSponsoredError(
     : text;
 }
 
+/** Why the server could not verify a contributor's confidential account setup transaction. */
+export function describeAccountVerificationFailure(
+  code: string | null | undefined,
+  httpStatus?: number
+): string {
+  switch (code) {
+    case "confidential_account_not_ready":
+      return "The finalized transaction did not leave an approved confidential account enabled for incoming confidential credits. Paylore has not marked the account ready.";
+    case "confidential_mint_unavailable":
+      return "The configured wrapped-USDC mint is unavailable, so the confidential account could not be verified. No account status was recorded.";
+    case "invalid_setup_transaction":
+      return "The transaction reference sent for verification is not a valid Solana signature. No account status was recorded.";
+    case "confidential_account_setup_failed":
+      return "Paylore could not verify the account transaction because of an unexpected server error. No account status was recorded. Keep the transaction reference and retry verification.";
+    default:
+      return code
+        ? describeContributorSponsoredError(code, httpStatus)
+        : "The account transaction has not been verified as finalized. Keep its transaction reference and retry verification.";
+  }
+}
+
 /** Codes that mean "the same request will succeed shortly"; callers may retry automatically. */
 export const GAS_TANK_RETRYABLE_PENDING_CODES = new Set([
   "payroll_claim_escrow_setup_pending"
@@ -218,5 +331,7 @@ export function describeGasTankError(
       ? `Paylore returned an unreadable response (HTTP ${httpStatus}). Nothing was signed by your wallet. Retry shortly.`
       : "Paylore could not be reached. Check your connection and retry.";
   }
-  return `The Gas Tank operation was rejected (reference: ${code}). Nothing was signed by your wallet.`;
+  // Not every code comes from a Gas Tank operation (payroll, claim and recovery
+  // share this helper), so do not claim anything about what was or was not done.
+  return `Paylore could not complete this request (reference: ${code}${httpStatus ? `, HTTP ${httpStatus}` : ""}). Quote the reference if this repeats.`;
 }

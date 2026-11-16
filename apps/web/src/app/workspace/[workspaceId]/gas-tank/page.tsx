@@ -13,6 +13,7 @@ import {
 import { GasTankActions } from "../../../../components/workspace/GasTankActions";
 import { getWorkspacePageContext } from "../../../../server/workspace-page-context";
 import { getWorkspaceGasTankSnapshot } from "../../../../server/gas-tank";
+import { logServerFailure } from "../../../../server/server-error-log";
 
 export const metadata: Metadata = {
   title: "Gas Tank",
@@ -56,8 +57,8 @@ export default async function WorkspaceGasTankPage({
           updatedAt: snapshot.updatedAt.toISOString()
         }
       : null;
-  } catch {
-    console.error(JSON.stringify({ event: "gas_tank_page_balance_unavailable" }));
+  } catch (error) {
+    logServerFailure("gas_tank_page_balance_unavailable", error);
     const stored = await getWorkspaceGasTank(context.db, workspaceId);
     if (stored) {
       gasTank = {
@@ -107,8 +108,8 @@ export default async function WorkspaceGasTankPage({
         clearsAt: window.clearsAt?.toISOString() ?? null,
         generatedAt: new Date().toISOString()
       };
-    } catch {
-      console.error(JSON.stringify({ event: "gas_tank_page_sponsorship_window_unavailable" }));
+    } catch (error) {
+      logServerFailure("gas_tank_page_sponsorship_window_unavailable", error);
     }
   }
 

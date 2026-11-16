@@ -36,6 +36,7 @@ import {
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { withWorkspaceGasTankKey } from "../gas-tank";
+import { logServerFailure } from "../server-error-log";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality,
@@ -966,6 +967,12 @@ async function fundPayrollClaimEscrow(
     }
     return reconcileFundingSignature(signature);
   } catch (error) {
+    // Record the real cause before it is reduced to a status code: callers only
+    // see `payroll_claim_escrow_funding_failed`, which does not say why.
+    logServerFailure("payroll_claim_escrow_funding_attempt_failed", error, {
+      workspaceId: input.workspaceId,
+      allocationId: input.allocationId
+    });
     const latest = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
     if (latest?.fundingSignature) return reconcileFundingSignature(latest.fundingSignature);
     if (latest?.fundingSourceAvailableBefore !== null && latest?.fundingSourceAvailableBefore !== undefined) {
@@ -1051,8 +1058,8 @@ export async function fundUnclaimedPayrollClaimEscrow(
       const rpc = createSolanaRpc(rpcEndpoint());
       const gasBalance = await rpc.getBalance(gasSigner.address, { commitment: "confirmed" }).send();
       // @solana/kit returns lamports as a bigint; Number.isSafeInteger(bigint)
-    // is always false, which previously rejected every funded Gas Tank.
-    if (BigInt(gasBalance.value) <= 0n) {
+      // is always false, which previously rejected every funded Gas Tank.
+      if (BigInt(gasBalance.value) <= 0n) {
         throw new PayrollConfidentialSettlementError("gas_tank_insufficient_balance", 409);
       }
 
@@ -1203,6 +1210,12 @@ export async function fundUnclaimedPayrollClaimEscrow(
           derived.aeKey.fill(0);
         }
       } catch (error) {
+        if (!(error instanceof PayrollConfidentialSettlementError)) {
+          logServerFailure("payroll_claim_escrow_funding_unexpected_failure", error, {
+            workspaceId: input.workspaceId,
+            allocationId: input.allocationId
+          });
+        }
         if (ownsSettlementAttempt) {
           const latestEscrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
           if (latestEscrow?.status === "ready" || latestEscrow?.status === "funded") {

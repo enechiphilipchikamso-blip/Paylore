@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 export default function WorkspaceError({
+  error,
   reset
 }: {
   error: Error & { digest?: string };
@@ -32,6 +33,9 @@ export default function WorkspaceError({
           <p id="workspace-error-title">
             The page did not finish loading. No workspace change has been
             confirmed.
+            {/* Next.js digest: a hash, never the error text. It matches the
+                server log entry for this failure, so support can find the cause. */}
+            {error.digest ? ` Reference: ${error.digest}.` : ""}
           </p>
         </div>
         <button

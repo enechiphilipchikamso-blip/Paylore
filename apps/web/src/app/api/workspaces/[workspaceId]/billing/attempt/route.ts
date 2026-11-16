@@ -7,6 +7,7 @@ import { clearSessionCookie, getSessionState } from "../../../../../../server/se
 import { PaymentVerificationError, verifySubscriptionPayment } from "../../../../../../server/solana/payment-verification";
 import { readSolanaRpc } from "../../../../../../server/solana/rpc";
 import { assessAmbiguousPaymentAttempt, PAYMENT_ATTEMPT_SIGNATURE_SCAN_LIMIT } from "../../../../../../server/solana/payment-attempt-reconciliation";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 const schema = z.object({ attemptId: z.string().uuid(), signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/).optional() });
 export const runtime = "nodejs";
@@ -140,7 +141,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     }
   } catch (error) {
     if (error instanceof RequestSecurityError) return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
-    console.error(JSON.stringify({ event: "subscription_payment_attempt_reconciliation_failed" }));
+    logServerFailure("subscription_payment_attempt_reconciliation_failed", error);
     return NextResponse.json({ error: "payment_attempt_reconciliation_failed" }, { status: 500 });
   }
 }

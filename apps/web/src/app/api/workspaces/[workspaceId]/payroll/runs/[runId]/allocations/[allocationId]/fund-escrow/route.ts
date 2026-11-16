@@ -3,6 +3,7 @@ import { getWorkspaceForUser } from "@paylore/database";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
+import { logServerFailure, logServerRejection } from "../../../../../../../../../../server/server-error-log";
 import {
   fundUnclaimedPayrollClaimEscrow,
   PayrollConfidentialSettlementError
@@ -46,12 +47,13 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
     if (error instanceof PayrollConfidentialSettlementError) {
+      logServerRejection("payroll_claim_escrow_funding_rejected", error.code, error.statusCode);
       return NextResponse.json({ error: error.code }, {
         status: error.statusCode,
         headers: { "Cache-Control": "no-store" }
       });
     }
-    console.error(JSON.stringify({ event: "payroll_claim_escrow_funding_failed" }));
+    logServerFailure("payroll_claim_escrow_funding_failed", error);
     return NextResponse.json({ error: "payroll_claim_escrow_funding_failed" }, {
       status: 503,
       headers: { "Cache-Control": "no-store" }

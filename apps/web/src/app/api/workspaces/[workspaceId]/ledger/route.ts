@@ -14,6 +14,7 @@ import {
   LEDGER_STATUSES,
   parseLedgerDate
 } from "../../../../../server/ledger-policy";
+import { logServerFailure } from "../../../../../server/server-error-log";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
@@ -186,8 +187,8 @@ export async function GET(request: Request, { params }: RouteContext) {
       { entries, nextCursor },
       { headers: { "Cache-Control": "no-store" } }
     );
-  } catch {
-    console.error(JSON.stringify({ event: "workspace_ledger_query_failed" }));
+  } catch (error) {
+    logServerFailure("workspace_ledger_query_failed", error);
     return NextResponse.json(
       { error: "workspace_ledger_unavailable" },
       { status: 503 }

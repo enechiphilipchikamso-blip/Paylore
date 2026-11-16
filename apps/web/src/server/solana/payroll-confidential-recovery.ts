@@ -32,6 +32,7 @@ import {
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { withWorkspaceGasTankKey } from "../gas-tank";
+import { logServerFailure } from "../server-error-log";
 import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
@@ -588,6 +589,12 @@ export async function recoverPayrollAllocation(
           escrowTokenAddress: escrow.tokenAccountAddress
         }, signature);
       } catch (error) {
+        if (!(error instanceof PayrollConfidentialRecoveryError)) {
+          logServerFailure("payroll_recovery_attempt_failed", error, {
+            workspaceId: input.workspaceId,
+            allocationId: input.allocationId
+          });
+        }
         const current = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId).catch(() => null);
         const submitted = submittedRecoverySignature ?? current?.recoverySignature ?? null;
         if (submitted) {
