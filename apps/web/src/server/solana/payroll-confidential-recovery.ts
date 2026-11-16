@@ -45,7 +45,6 @@ import { configuredRpcEndpoint } from "./rpc-configured";
 // existing resumable "pending" state and continued from its persisted signature.
 const FINALITY_TIMEOUT_MS = 40_000;
 const INSTRUCTIONS_SYSVAR = address("Sysvar1nstructions1111111111111111111111111");
-const SYSTEM_PROGRAM = address("11111111111111111111111111111111");
 const encoder = new TextEncoder();
 
 type Token = Awaited<ReturnType<typeof fetchToken>>["data"];
@@ -78,10 +77,6 @@ class FinalityFailedError extends Error {
   constructor(readonly signature: string) { super("The transaction failed at finality."); }
 }
 
-function object(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown> : null;
-}
 function isRecoveryReason(value: string | null): value is RecoveryReason {
   return value === "incorrect_allocation" ||
     value === "contributor_left_before_claim" ||

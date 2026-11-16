@@ -211,3 +211,30 @@ export function sumPreparedSponsoredRentReservations(
   }
   return reserved;
 }
+
+/**
+ * When counted Gas Tank operation records leave the rolling window.
+ *
+ * A record leaves 24 hours after its latest create or update. When more records
+ * than the limit are counted, new sponsored operations resume only once enough
+ * of them have left to bring the count back to the limit, which is the
+ * (count - limit)th record to leave, not simply the oldest one.
+ */
+export function summarizeGasTankSponsorshipWindowTiming(input: {
+  rows: ReadonlyArray<{ createdAt: Date; updatedAt: Date }>;
+  recordLimit: number;
+  windowMs: number;
+}) {
+  const leavesAt = input.rows
+    .map((row) => Math.max(row.createdAt.getTime(), row.updatedAt.getTime()) + input.windowMs)
+    .sort((left, right) => left - right);
+  const recordCount = leavesAt.length;
+  const limitReached = recordCount > input.recordLimit;
+  return {
+    recordCount,
+    limitReached,
+    nextReleaseAt: leavesAt[0] ?? null,
+    resumesAt: limitReached ? leavesAt[recordCount - input.recordLimit - 1] ?? null : null,
+    clearsAt: leavesAt[recordCount - 1] ?? null
+  };
+}

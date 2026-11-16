@@ -72,6 +72,8 @@ type SponsorshipWindow = {
   feeLamports: string;
   reservedFeesLamports: string;
   nextReleaseAt: string | null;
+  /** When enough records have left for new sponsored operations to resume (only set while the limit is reached). */
+  resumesAt: string | null;
   clearsAt: string | null;
   generatedAt: string;
 };
@@ -97,11 +99,14 @@ function SponsorshipWindowNotice({ window: usage }: { window: SponsorshipWindow 
   }, []);
   const nextRelease = usage.nextReleaseAt ? Date.parse(usage.nextReleaseAt) : null;
   const clears = usage.clearsAt ? Date.parse(usage.clearsAt) : null;
+  const resumes = usage.resumesAt ? Date.parse(usage.resumesAt) : null;
   const nextReleaseDue = nextRelease !== null && nextRelease <= now;
+  const resumeDue = resumes !== null && resumes <= now;
   useEffect(() => {
-    // Reload the server summary once the oldest counted operation leaves the window.
-    if (nextReleaseDue) router.refresh();
-  }, [nextReleaseDue, router]);
+    // Reload the server summary once the oldest counted operation, or the record
+    // that ends the limit, leaves the window.
+    if (nextReleaseDue || resumeDue) router.refresh();
+  }, [nextReleaseDue, resumeDue, router]);
   const remaining = Math.max(0, usage.recordLimit - usage.recordCount);
   const nearLimit = usage.limitReached || remaining <= Math.ceil(usage.recordLimit * 0.1);
   return (
@@ -116,7 +121,7 @@ function SponsorshipWindowNotice({ window: usage }: { window: SponsorshipWindow 
         <span className="state-callout__signal" aria-hidden="true" />
         <p>
           {usage.limitReached
-            ? `The 24-hour limit of ${usage.recordLimit.toLocaleString()} sponsored operation records is reached. New sponsored operations resume ${nextRelease !== null && !nextReleaseDue ? `in ${formatCountdown(nextRelease - now)}` : "shortly"}, when the oldest record leaves the window.`
+            ? `The 24-hour limit of ${usage.recordLimit.toLocaleString()} sponsored operation records is reached. New sponsored operations resume ${resumes !== null && !resumeDue ? `in ${formatCountdown(resumes - now)}` : "shortly"}, when enough records have left the window to bring the count back to the limit.`
             : usage.recordCount === 0
               ? `No sponsored operations are counted in the last 24 hours. Up to ${usage.recordLimit.toLocaleString()} operation records can be sponsored in any rolling 24-hour window.`
               : `${usage.recordCount.toLocaleString()} of ${usage.recordLimit.toLocaleString()} sponsored operation records are counted in the rolling 24-hour window (${remaining.toLocaleString()} remaining).`}

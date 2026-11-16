@@ -91,6 +91,7 @@ export default async function WorkspaceGasTankPage({
     feeLamports: string;
     reservedFeesLamports: string;
     nextReleaseAt: string | null;
+    resumesAt: string | null;
     clearsAt: string | null;
     generatedAt: string;
   } | null = null;
@@ -105,6 +106,7 @@ export default async function WorkspaceGasTankPage({
         feeLamports: window.feeLamports.toString(),
         reservedFeesLamports: window.reservedFeesLamports.toString(),
         nextReleaseAt: window.nextReleaseAt?.toISOString() ?? null,
+        resumesAt: window.resumesAt?.toISOString() ?? null,
         clearsAt: window.clearsAt?.toISOString() ?? null,
         generatedAt: new Date().toISOString()
       };
