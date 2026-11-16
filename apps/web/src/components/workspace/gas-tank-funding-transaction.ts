@@ -158,7 +158,8 @@ export function isExpectedGasTankFundingMessage(
 
   const message = decodeCompiledMessage(messageBytes);
   if (!message) return false;
-  if (message.addressTableLookups && message.addressTableLookups.length > 0) {
+  if (message.version === 1) return false;
+  if (message.version === 0 && message.addressTableLookups?.length) {
     return false;
   }
   if (message.header.numSignerAccounts !== 1) return false;
