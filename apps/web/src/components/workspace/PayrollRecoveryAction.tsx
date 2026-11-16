@@ -20,6 +20,14 @@ const RECOVERY_REASON_OPTIONS: Array<{ value: RecoveryReason; label: string }> =
   { value: "other", label: "Other" }
 ];
 
+/** Error codes after which a recovery transfer may already exist, so the result must be checked, not retried blindly. */
+const RECOVERY_OUTCOME_UNKNOWN_CODES: ReadonlySet<string> = new Set([
+  "payroll_recovery_submission_failed",
+  "confidential_recovery_submission_failed",
+  "payroll_recovery_balance_snapshot_missing",
+  "payroll_recovery_reconciliation_conflict"
+]);
+
 const RECOVERY_REASON_VALUES: ReadonlySet<string> = new Set(
   RECOVERY_REASON_OPTIONS.map((option) => option.value)
 );
@@ -191,22 +199,27 @@ export function PayrollRecoveryAction({
       }
 
       if (!response.ok) {
-        if (response.status >= 500 || result?.error === "payroll_recovery_submission_failed") {
+        // A busy workspace answers 409 with `status`, not `error`.
+        const code = result?.error ?? (result?.status === "workspace_busy" ? "workspace_busy" : null);
+        // Only an unreadable server failure, or a code that says a transfer may
+        // already exist, leaves the outcome unknown. Every other typed rejection
+        // happened before anything was submitted, so show its real reason and
+        // leave the form usable instead of locking it into "reconciliation".
+        const outcomeUnknown = code === null
+          ? response.status >= 500
+          : RECOVERY_OUTCOME_UNKNOWN_CODES.has(code);
+        setProgress("");
+        if (outcomeUnknown) {
           setReconciliationPending(true);
           setPendingPhase("recovery");
-          setProgress("");
           setMessage({
             state: "partial",
-            text: "Paylore could not determine the final recovery result yet. Check the existing recovery status before starting another recovery."
+            text: code === null
+              ? `Paylore could not read the server's answer (HTTP ${response.status}), so the final recovery result is not known. Check the existing recovery status before starting another recovery.`
+              : describeGasTankError(code, response.status)
           });
         } else {
-          setProgress("");
-          setMessage({
-            state: "error",
-            text: result?.error === "workspace_busy"
-              ? "Another payroll claim or recovery is being reconciled for this workspace. Check again after it finishes."
-              : describeGasTankError(result?.error, response.status)
-          });
+          setMessage({ state: "error", text: describeGasTankError(code, response.status) });
         }
         return;
       }

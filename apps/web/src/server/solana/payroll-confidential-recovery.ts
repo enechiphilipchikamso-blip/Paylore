@@ -32,6 +32,7 @@ import {
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { withWorkspaceGasTankKey } from "../gas-tank";
+import { logServerFailure } from "../server-error-log";
 import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
@@ -44,7 +45,6 @@ import { configuredRpcEndpoint } from "./rpc-configured";
 // existing resumable "pending" state and continued from its persisted signature.
 const FINALITY_TIMEOUT_MS = 40_000;
 const INSTRUCTIONS_SYSVAR = address("Sysvar1nstructions1111111111111111111111111");
-const SYSTEM_PROGRAM = address("11111111111111111111111111111111");
 const encoder = new TextEncoder();
 
 type Token = Awaited<ReturnType<typeof fetchToken>>["data"];
@@ -77,10 +77,6 @@ class FinalityFailedError extends Error {
   constructor(readonly signature: string) { super("The transaction failed at finality."); }
 }
 
-function object(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown> : null;
-}
 function isRecoveryReason(value: string | null): value is RecoveryReason {
   return value === "incorrect_allocation" ||
     value === "contributor_left_before_claim" ||
@@ -333,7 +329,9 @@ export async function recoverPayrollAllocation(
     return withWorkspaceGasTankKey(db, input.workspaceId, async (gasTankPrivateBytes) => {
     const gasSigner = await createKeyPairSignerFromBytes(gasTankPrivateBytes);
     const gasBalance = await createSolanaRpc(rpcEndpoint()).getBalance(gasSigner.address, { commitment: "confirmed" }).send();
-    if (!Number.isSafeInteger(gasBalance.value) || gasBalance.value <= 0) {
+    // @solana/kit returns lamports as a bigint; Number.isSafeInteger(bigint)
+    // is always false, which previously rejected every funded Gas Tank.
+    if (BigInt(gasBalance.value) <= 0n) {
       throw new PayrollConfidentialRecoveryError("gas_tank_insufficient_balance", 409);
     }
     const escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
@@ -586,6 +584,12 @@ export async function recoverPayrollAllocation(
           escrowTokenAddress: escrow.tokenAccountAddress
         }, signature);
       } catch (error) {
+        if (!(error instanceof PayrollConfidentialRecoveryError)) {
+          logServerFailure("payroll_recovery_attempt_failed", error, {
+            workspaceId: input.workspaceId,
+            allocationId: input.allocationId
+          });
+        }
         const current = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId).catch(() => null);
         const submitted = submittedRecoverySignature ?? current?.recoverySignature ?? null;
         if (submitted) {

@@ -15,6 +15,7 @@ import { clearSessionCookie, getSessionState } from "../../../../../server/sessi
 import { assertSameOrigin, RequestSecurityError } from "../../../../../server/security";
 import { getDatabase } from "../../../../../server/db";
 import { getWorkspaceGasTankSnapshot } from "../../../../../server/gas-tank";
+import { logServerFailure } from "../../../../../server/server-error-log";
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("request") }),
@@ -104,8 +105,8 @@ export async function GET(
       },
       { headers: { "Cache-Control": "no-store" } }
     );
-  } catch {
-    console.error(JSON.stringify({ event: "workspace_retention_read_failed" }));
+  } catch (error) {
+    logServerFailure("workspace_retention_read_failed", error);
     return NextResponse.json(
       { error: "workspace_retention_unavailable" },
       { status: 503 }
@@ -187,7 +188,7 @@ export async function POST(
         { status: 403 }
       );
     }
-    console.error(JSON.stringify({ event: "workspace_deletion_failed" }));
+    logServerFailure("workspace_deletion_failed", error);
     return NextResponse.json(
       { error: "workspace_deletion_unavailable" },
       { status: 503 }

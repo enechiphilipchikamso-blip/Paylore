@@ -8,6 +8,7 @@ import {
 import { clearSessionCookie, getSessionState } from "../../../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../server/security";
 import { getDatabase } from "../../../../../../server/db";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 const metadataSchema = z.object({
   organizationLabel: z.string().trim().max(120).nullable().optional(),
@@ -67,7 +68,7 @@ export async function PATCH(
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "contributor_update_failed" }));
+    logServerFailure("contributor_update_failed", error);
     return NextResponse.json({ error: "contributor_update_failed" }, { status: 500 });
   }
 }

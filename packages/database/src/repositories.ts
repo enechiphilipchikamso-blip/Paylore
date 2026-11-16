@@ -30,6 +30,7 @@ import type {
 import {
   operationDataForGasTankRetry,
   summarizeGasTankSponsorshipBudget,
+  summarizeGasTankSponsorshipWindowTiming,
   sumPreparedSponsoredRentReservations
 } from "./gas-tank-operation-history";
 import {
@@ -7595,6 +7596,85 @@ export async function getWorkspaceGasTankSponsorshipUsage(
     reservedFeeLamports: "100000",
     since
   });
+}
+
+/** Rolling 24-hour sponsorship window: operations stay counted until 24 hours after their latest update. */
+export const GAS_TANK_SPONSORSHIP_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Hard cap on Gas Tank operation records counted inside one rolling window. */
+export const GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT = 1000;
+
+/** Safety cap on light timing rows read for the window summary; far above the record limit. */
+const GAS_TANK_SPONSORSHIP_WINDOW_TIMING_ROW_CAP = 10_000;
+
+/**
+ * Read-only summary of the rolling 24-hour Gas Tank sponsorship window, including
+ * when the oldest counted operation leaves it, when new operations resume if the
+ * limit is reached, and when the window fully clears.
+ *
+ * Fees and transaction counts come from the newest operation records (bounded
+ * by the record limit, in a fixed order). The record count and every time come
+ * from a separate query over all counted records, so they stay exact even when
+ * more records than the limit are counted.
+ */
+export async function getWorkspaceGasTankSponsorshipWindow(
+  db: Database,
+  workspaceId: string,
+  now: Date = new Date()
+) {
+  const since = new Date(now.getTime() - GAS_TANK_SPONSORSHIP_WINDOW_MS);
+  const inWindow = and(
+    eq(gasTankOperations.workspaceId, workspaceId),
+    or(
+      gte(gasTankOperations.createdAt, since),
+      gte(gasTankOperations.updatedAt, since)
+    )
+  );
+  const [rows, timingRows] = await Promise.all([
+    db
+      .select({
+        status: gasTankOperations.status,
+        feeLamports: gasTankOperations.feeLamports,
+        failureCode: gasTankOperations.failureCode,
+        operationData: gasTankOperations.operationData,
+        createdAt: gasTankOperations.createdAt,
+        updatedAt: gasTankOperations.updatedAt
+      })
+      .from(gasTankOperations)
+      .where(inWindow)
+      .orderBy(desc(gasTankOperations.updatedAt))
+      .limit(GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT + 1),
+    db
+      .select({
+        createdAt: gasTankOperations.createdAt,
+        updatedAt: gasTankOperations.updatedAt
+      })
+      .from(gasTankOperations)
+      .where(inWindow)
+      .orderBy(asc(gasTankOperations.updatedAt))
+      .limit(GAS_TANK_SPONSORSHIP_WINDOW_TIMING_ROW_CAP)
+  ]);
+  const usage = summarizeGasTankSponsorshipBudget({
+    rows,
+    reservedFeeLamports: "100000",
+    since
+  });
+  const timing = summarizeGasTankSponsorshipWindowTiming({
+    rows: timingRows,
+    recordLimit: GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT,
+    windowMs: GAS_TANK_SPONSORSHIP_WINDOW_MS
+  });
+  return {
+    windowStartedAt: since,
+    recordCount: timing.recordCount,
+    recordLimit: GAS_TANK_SPONSORSHIP_WINDOW_OPERATION_LIMIT,
+    limitReached: timing.limitReached,
+    operationCount: usage.operationCount,
+    feeLamports: usage.feeLamports,
+    reservedFeesLamports: usage.reservedFeesLamports,
+    nextReleaseAt: timing.nextReleaseAt === null ? null : new Date(timing.nextReleaseAt),
+    resumesAt: timing.resumesAt === null ? null : new Date(timing.resumesAt),
+    clearsAt: timing.clearsAt === null ? null : new Date(timing.clearsAt)
+  };
 }
 
 

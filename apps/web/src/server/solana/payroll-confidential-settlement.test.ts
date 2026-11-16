@@ -308,7 +308,7 @@ vi.mock("@solana/kit", () => ({
   blockhash: (value: string) => value,
   createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserveAuthority })),
   createSolanaRpc: vi.fn(() => ({
-    getBalance: () => ({ send: async () => ({ value: 1_000_000_000 }) }),
+    getBalance: () => ({ send: async () => ({ value: 1_000_000_000n }) }),
     getSignatureStatuses: (signatures: string[]) => ({
       send: async () => ({
         value: signatures.map((signature) => ({

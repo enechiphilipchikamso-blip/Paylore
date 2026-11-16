@@ -9,6 +9,7 @@ import {
 import { clearSessionCookie, getSessionState } from "../../../../../server/session";
 import { assertSameOrigin, isValidSolanaAddress, RequestSecurityError } from "../../../../../server/security";
 import { getDatabase } from "../../../../../server/db";
+import { logServerFailure } from "../../../../../server/server-error-log";
 
 const contributorSchema = z.object({
   displayName: z.string().trim().min(1).max(120),
@@ -119,7 +120,7 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "contributor_create_failed" }));
+    logServerFailure("contributor_create_failed", error);
     return NextResponse.json({ error: "contributor_create_failed" }, { status: 500 });
   }
 }

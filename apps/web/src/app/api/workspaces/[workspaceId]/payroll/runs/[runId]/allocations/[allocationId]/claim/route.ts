@@ -3,6 +3,7 @@ import { findWorkspaceContributorByWallet, getWorkspaceForUser, getWorkspacePayr
 import { getDatabase } from "../../../../../../../../../../server/db";
 import { clearSessionCookie, getSessionState } from "../../../../../../../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../../../../server/security";
+import { logServerFailure, logServerRejection } from "../../../../../../../../../../server/server-error-log";
 import { PayrollConfidentialSettlementError, settleContributorPayrollAllocation } from "../../../../../../../../../../server/solana/payroll-confidential-settlement";
 
 type RouteContext = { params: Promise<{ workspaceId: string; runId: string; allocationId: string }> };
@@ -90,9 +91,10 @@ export async function POST(request: Request, { params }: RouteContext) {
   } catch (error) {
     if (error instanceof RequestSecurityError) return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     if (error instanceof PayrollConfidentialSettlementError) {
+      logServerRejection("payroll_confidential_settlement_rejected", error.code, error.statusCode);
       return NextResponse.json({ error: error.code }, { status: error.statusCode, headers: { "Cache-Control": "no-store" } });
     }
-    console.error(JSON.stringify({ event: "payroll_confidential_settlement_failed" }));
+    logServerFailure("payroll_confidential_settlement_failed", error);
     return NextResponse.json({ error: "payroll_confidential_settlement_failed" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

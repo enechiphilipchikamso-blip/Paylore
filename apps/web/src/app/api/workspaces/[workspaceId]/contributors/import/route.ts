@@ -8,6 +8,7 @@ import { clearSessionCookie, getSessionState } from "../../../../../../server/se
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../server/security";
 import { getDatabase } from "../../../../../../server/db";
 import { previewContributorFile } from "../../../../../../server/contributors-parser";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
@@ -59,7 +60,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (error instanceof Error && /file|CSV|XLSX|column|worksheet|quoted/i.test(error.message)) {
       return NextResponse.json({ error: "file_could_not_be_processed" }, { status: 400 });
     }
-    console.error(JSON.stringify({ event: "contributor_import_preview_failed" }));
+    logServerFailure("contributor_import_preview_failed", error);
     return NextResponse.json({ error: "file_could_not_be_processed" }, { status: 500 });
   }
 }

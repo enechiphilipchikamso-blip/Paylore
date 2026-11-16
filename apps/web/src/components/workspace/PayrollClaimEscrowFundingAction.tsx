@@ -7,6 +7,13 @@ import { describeGasTankError } from "./gas-tank-error-messages";
 
 type FundingStatus = "funded" | "pending" | "retry_ready" | "workspace_busy";
 
+/** Error codes raised after a funding transaction exists, so its result must be checked, not repeated. */
+const FUNDING_OUTCOME_UNKNOWN_CODES: ReadonlySet<string> = new Set([
+  "escrow_funding_transaction_not_verified",
+  "escrow_funding_claim_state_not_verified",
+  "payroll_claim_escrow_funding_conflict"
+]);
+
 export function PayrollClaimEscrowFundingAction({
   workspaceId,
   runId,
@@ -86,12 +93,21 @@ export function PayrollClaimEscrowFundingAction({
         });
         return;
       }
-      setPending(response.status >= 500);
+      // The funding outcome is unknown only when the server gave no readable
+      // reason (platform timeout, crash) or named a code that says a funding
+      // transaction already exists. Any other typed rejection happened before
+      // anything was submitted: show its real reason and keep the action usable.
+      const outcomeUnknown = result?.error
+        ? FUNDING_OUTCOME_UNKNOWN_CODES.has(result.error)
+        : response.status >= 500;
+      setPending(outcomeUnknown);
       setMessage({
-        state: response.status >= 500 ? "partial" : "error",
+        state: outcomeUnknown ? "partial" : "error",
         text: result?.error
           ? describeGasTankError(result.error, response.status)
-          : `Claim escrow funding could not be completed (HTTP ${response.status}).`
+          : response.status >= 500
+            ? `The server's answer could not be read (HTTP ${response.status}), so the funding result is not known. Check the existing operation before starting another transfer.`
+            : `Claim escrow funding could not be completed (HTTP ${response.status}).`
       });
     } catch (error) {
       setPending(true);

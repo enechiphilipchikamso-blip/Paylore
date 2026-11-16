@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSessionState } from "../../../../server/session";
 import { assertSameOrigin, RequestSecurityError } from "../../../../server/security";
 import { readSolanaRpc, SolanaRpcError } from "../../../../server/solana/rpc";
+import { logServerFailure } from "../../../../server/server-error-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
         error: error.rpcError ?? { code: -32603, message: error.message }
       }, { headers: { "Cache-Control": "no-store" } });
     }
-    console.error(JSON.stringify({ event: "browser_solana_rpc_failed" }));
+    logServerFailure("browser_solana_rpc_failed", error);
     return NextResponse.json({ error: "solana_rpc_unavailable" }, { status: 503 });
   }
 }

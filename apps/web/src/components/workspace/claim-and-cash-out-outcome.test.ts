@@ -29,6 +29,16 @@ describe("Claim & Cash Out outcome copy", () => {
     })).toMatchObject({ state: "error" });
   });
 
+  it("still reports allocations awaiting finality when others failed", () => {
+    expect(getClaimAndCashOutOutcome({
+      settled: 0, pending: 2, failed: 1, cleanupPending: 0, stateConflict: false,
+      failureReason: "The Gas Tank needs SOL."
+    })).toMatchObject({
+      state: "error",
+      text: expect.stringContaining("2 more await finality or retry")
+    });
+  });
+
   it("keeps finality and proof-context cleanup pending separate from success", () => {
     expect(getClaimAndCashOutOutcome({
       settled: 1, pending: 2, failed: 0, cleanupPending: 1, stateConflict: false

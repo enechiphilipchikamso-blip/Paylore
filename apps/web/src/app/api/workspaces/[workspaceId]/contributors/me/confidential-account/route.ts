@@ -17,6 +17,7 @@ import {
   ConfidentialAccountVerificationError,
   verifyConfidentialAccountSetup
 } from "../../../../../../../server/solana/confidential-account-verification";
+import { logServerFailure } from "../../../../../../../server/server-error-log";
 
 const setupSchema = z.object({
   signature: z.string().min(80).max(90)
@@ -176,7 +177,7 @@ export async function POST(
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "confidential_account_setup_failed" }));
+    logServerFailure("confidential_account_setup_failed", error);
     return NextResponse.json(
       { error: "confidential_account_setup_failed" },
       { status: 503 }

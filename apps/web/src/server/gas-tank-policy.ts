@@ -1,3 +1,9 @@
+import {
+  GAS_TANK_FUNDING_ALLOWED_EXTRA_PROGRAM_IDS,
+  GAS_TANK_FUNDING_MAX_INSTRUCTIONS,
+  SYSTEM_PROGRAM_ID
+} from "../components/workspace/gas-tank-funding-programs";
+
 type ParsedTransfer = {
   transaction?: unknown;
   meta?: unknown;
@@ -27,28 +33,51 @@ export function inspectGasTankFundingTransaction(
   const keys = message.accountKeys;
   const instructions = message.instructions;
   if (!Array.isArray(keys) || !Array.isArray(instructions) ||
-      instructions.length !== 1) {
+      instructions.length === 0 ||
+      instructions.length > GAS_TANK_FUNDING_MAX_INSTRUCTIONS) {
     return { status: "invalid" };
   }
-  const hasPayerSigner = keys.some(
-    (entry) =>
-      isRecord(entry) &&
-      entry.pubkey === input.payer &&
-      entry.signer === true
+  // The administrator wallet must be the only signer.
+  const signers = keys.filter(
+    (entry) => isRecord(entry) && entry.signer === true
   );
-  if (!hasPayerSigner) return { status: "invalid" };
-
-  const instruction = instructions[0];
   if (
-    !isRecord(instruction) ||
-    instruction.program !== "system" ||
-    !isRecord(instruction.parsed) ||
-    instruction.parsed.type !== "transfer" ||
-    !isRecord(instruction.parsed.info)
+    signers.length !== 1 ||
+    !isRecord(signers[0]) ||
+    signers[0].pubkey !== input.payer
   ) {
     return { status: "invalid" };
   }
-  const info = instruction.parsed.info;
+
+  // Exactly one System Program transfer. Wallets may add priority-fee or guard
+  // instructions around it; those are accepted only from allowlisted programs.
+  let transfer: Record<string, unknown> | null = null;
+  for (const instruction of instructions) {
+    if (!isRecord(instruction)) return { status: "invalid" };
+    if (
+      instruction.program === "system" ||
+      instruction.programId === SYSTEM_PROGRAM_ID
+    ) {
+      if (
+        transfer !== null ||
+        !isRecord(instruction.parsed) ||
+        instruction.parsed.type !== "transfer" ||
+        !isRecord(instruction.parsed.info)
+      ) {
+        return { status: "invalid" };
+      }
+      transfer = instruction.parsed.info;
+      continue;
+    }
+    if (
+      typeof instruction.programId !== "string" ||
+      !GAS_TANK_FUNDING_ALLOWED_EXTRA_PROGRAM_IDS.has(instruction.programId)
+    ) {
+      return { status: "invalid" };
+    }
+  }
+  if (transfer === null) return { status: "invalid" };
+  const info = transfer;
   if (
     info.source !== input.payer ||
     info.destination !== input.destination ||

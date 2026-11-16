@@ -17,6 +17,7 @@ import {
   verifyWorkspaceGasTankFunding
 } from "../../../../../server/gas-tank";
 import { readSolanaRpc } from "../../../../../server/solana/rpc";
+import { logServerFailure } from "../../../../../server/server-error-log";
 
 const fundingLamports = z
   .string()
@@ -106,8 +107,8 @@ export async function GET(
           }
         : null
     });
-  } catch {
-    console.error(JSON.stringify({ event: "gas_tank_snapshot_failed" }));
+  } catch (error) {
+    logServerFailure("gas_tank_snapshot_failed", error);
     return NextResponse.json(
       { error: "gas_tank_unavailable" },
       { status: 503 }
@@ -271,7 +272,7 @@ export async function POST(
         { status: 409 }
       );
     }
-    console.error(JSON.stringify({ event: "gas_tank_action_failed" }));
+    logServerFailure("gas_tank_action_failed", error);
     return NextResponse.json(
       { error: "gas_tank_operation_failed" },
       { status: 503 }

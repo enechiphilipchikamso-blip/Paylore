@@ -23,7 +23,8 @@ export function getClaimAndCashOutOutcome(input: {
     return {
       state: input.settled ? "partial" : "error",
       text: `${input.settled} allocation(s) settled; ${input.failed} need attention. Unverified transfers are not shown as complete.` +
-        (input.failureReason ? ` Reason: ${input.failureReason}` : "")
+        (input.failureReason ? ` Reason: ${input.failureReason}` : "") +
+        (input.pending ? ` ${input.pending} more await finality or retry; check them before claiming again.` : "")
     };
   }
   if (input.pending || input.cleanupPending) {

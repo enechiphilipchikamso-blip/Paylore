@@ -21,6 +21,7 @@ import {
   previewPayrollFile,
   type PayrollContributor
 } from "../../../../../../server/payroll-parser";
+import { logServerFailure } from "../../../../../../server/server-error-log";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string }>;
@@ -292,7 +293,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         { status: 400 }
       );
     }
-    console.error(JSON.stringify({ event: "payroll_draft_creation_failed" }));
+    logServerFailure("payroll_draft_creation_failed", error);
     return NextResponse.json(
       { error: "payroll_draft_creation_failed" },
       { status: 503 }

@@ -7,6 +7,7 @@ import {
 import { clearSessionCookie, getSessionState } from "../../../../../../../server/session";
 import { getDatabase } from "../../../../../../../server/db";
 import { assertSameOrigin, RequestSecurityError } from "../../../../../../../server/security";
+import { logServerFailure } from "../../../../../../../server/server-error-log";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; runId: string }>;
@@ -98,7 +99,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (error instanceof RequestSecurityError) {
       return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "payroll_draft_cancellation_failed" }));
+    logServerFailure("payroll_draft_cancellation_failed", error);
     return NextResponse.json(
       { error: "payroll_draft_cancellation_failed" },
       { status: 503 }

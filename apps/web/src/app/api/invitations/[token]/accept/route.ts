@@ -7,6 +7,7 @@ import {
   RequestSecurityError
 } from "../../../../../server/security";
 import { getDatabase } from "../../../../../server/db";
+import { logServerFailure } from "../../../../../server/server-error-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,7 +52,7 @@ export async function POST(
     ) {
       return NextResponse.json({ error: "invitation_wallet_mismatch" }, { status: 403 });
     }
-    console.error(JSON.stringify({ event: "contributor_invitation_accept_failed" }));
+    logServerFailure("contributor_invitation_accept_failed", error);
     return NextResponse.json({ error: "invitation_could_not_be_accepted" }, { status: 500 });
   }
 }

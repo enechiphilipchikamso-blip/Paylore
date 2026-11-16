@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { isWalletCancellation } from "../auth/walletErrors";
 import {
   findAuthenticatedWallet,
   WALLET_RECONNECT_REQUIRED
 } from "./authenticated-wallet";
+import { describeGasTankError } from "./gas-tank-error-messages";
 import {
   createGasTankFundingTransaction,
   gasTankFundingSignature,
@@ -63,13 +64,117 @@ const GAS_TANK_OPERATION_LABELS: Record<string, string> = {
   reserve_ordinary_usdc_confidential_funding: "Reserve confidential funding"
 };
 
+type SponsorshipWindow = {
+  recordCount: number;
+  recordLimit: number;
+  limitReached: boolean;
+  operationCount: number;
+  feeLamports: string;
+  reservedFeesLamports: string;
+  nextReleaseAt: string | null;
+  /** When enough records have left for new sponsored operations to resume (only set while the limit is reached). */
+  resumesAt: string | null;
+  clearsAt: string | null;
+  generatedAt: string;
+};
+
+function formatCountdown(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+/**
+ * Live view of the rolling 24-hour sponsorship window so administrators see
+ * the limit counting down before an operation is ever rejected by it.
+ */
+function SponsorshipWindowNotice({ window: usage }: { window: SponsorshipWindow }) {
+  const router = useRouter();
+  const [now, setNow] = useState(() => Date.parse(usage.generatedAt));
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+  const nextRelease = usage.nextReleaseAt ? Date.parse(usage.nextReleaseAt) : null;
+  const clears = usage.clearsAt ? Date.parse(usage.clearsAt) : null;
+  const resumes = usage.resumesAt ? Date.parse(usage.resumesAt) : null;
+  const nextReleaseDue = nextRelease !== null && nextRelease <= now;
+  const resumeDue = resumes !== null && resumes <= now;
+  useEffect(() => {
+    // Reload the server summary once the oldest counted operation, or the record
+    // that ends the limit, leaves the window.
+    if (nextReleaseDue || resumeDue) router.refresh();
+  }, [nextReleaseDue, resumeDue, router]);
+  const remaining = Math.max(0, usage.recordLimit - usage.recordCount);
+  const nearLimit = usage.limitReached || remaining <= Math.ceil(usage.recordLimit * 0.1);
+  return (
+    <section className="reserve-summary" aria-labelledby="gas-tank-window-heading">
+      <h3 id="gas-tank-window-heading">24-hour sponsorship window</h3>
+      <div
+        className="state-callout"
+        data-state={usage.limitReached ? "error" : nearLimit ? "partial" : "success"}
+        role="status"
+        aria-live="polite"
+      >
+        <span className="state-callout__signal" aria-hidden="true" />
+        <p>
+          {usage.limitReached
+            ? `The 24-hour limit of ${usage.recordLimit.toLocaleString()} sponsored operation records is reached. New sponsored operations resume ${resumes !== null && !resumeDue ? `in ${formatCountdown(resumes - now)}` : "shortly"}, when enough records have left the window to bring the count back to the limit.`
+            : usage.recordCount === 0
+              ? `No sponsored operations are counted in the last 24 hours. Up to ${usage.recordLimit.toLocaleString()} operation records can be sponsored in any rolling 24-hour window.`
+              : `${usage.recordCount.toLocaleString()} of ${usage.recordLimit.toLocaleString()} sponsored operation records are counted in the rolling 24-hour window (${remaining.toLocaleString()} remaining).`}
+        </p>
+      </div>
+      <dl className="billing-period">
+        <div>
+          <dt>Transactions counted (24 h)</dt>
+          <dd>{usage.operationCount.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>Network fees counted (24 h)</dt>
+          <dd>{formatSol(usage.feeLamports)} SOL</dd>
+        </div>
+        <div>
+          <dt>Reserved for in-flight transactions</dt>
+          <dd>{formatSol(usage.reservedFeesLamports)} SOL</dd>
+        </div>
+        <div>
+          <dt>Oldest record leaves the window</dt>
+          <dd>{nextRelease === null
+            ? "Nothing counted"
+            : nextReleaseDue
+              ? "Now — refreshing"
+              : `in ${formatCountdown(nextRelease - now)}`}</dd>
+        </div>
+        <div>
+          <dt>Window fully clears</dt>
+          <dd>{clears === null
+            ? "Already clear"
+            : clears <= now
+              ? "Now"
+              : `in ${formatCountdown(clears - now)} (${new Date(clears).toLocaleString()})`}</dd>
+        </div>
+      </dl>
+      <p className="notice">
+        The window is rolling, not a midnight reset: each operation stops counting
+        24 hours after its last update. The Gas Tank balance is checked separately
+        for every operation; reserved in-flight fees are released once their
+        transactions finalize or expire.
+      </p>
+    </section>
+  );
+}
+
 export function GasTankActions({
   workspaceId,
   walletAddress,
   gasTank,
   canManage,
   latestFunding,
-  operations
+  operations,
+  sponsorshipWindow = null
 }: {
   workspaceId: string;
   walletAddress: string;
@@ -96,6 +201,7 @@ export function GasTankActions({
     failureCode: string | null;
     createdAt: string;
   }>;
+  sponsorshipWindow?: SponsorshipWindow | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -117,6 +223,14 @@ export function GasTankActions({
     });
   }
 
+  /** The server's own reason for a failed request, instead of a fixed sentence that hides it. */
+  async function describeFailedResponse(response: Response, fallback: string): Promise<string> {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    return body?.error
+      ? describeGasTankError(body.error, response.status)
+      : `${fallback} (HTTP ${response.status})`;
+  }
+
   async function configure(action: "initialize" | "restore") {
     setBusy(true);
     setNotice(null);
@@ -125,9 +239,12 @@ export function GasTankActions({
       if (!response.ok) {
         setNotice({
           state: "error",
-          text: action === "initialize"
-            ? "Gas Tank setup could not be completed. Check the workspace status and try again."
-            : "The Gas Tank backup could not be verified. No change has been confirmed."
+          text: await describeFailedResponse(
+            response,
+            action === "initialize"
+              ? "Gas Tank setup could not be completed."
+              : "The Gas Tank backup could not be verified. No change has been confirmed."
+          )
         });
         return;
       }
@@ -167,7 +284,10 @@ export function GasTankActions({
     if (!response.ok) {
       setNotice({
         state: "error",
-        text: "The Gas Tank operation could not be completed. No success has been recorded. Check the operation details and try again."
+        text: await describeFailedResponse(
+          response,
+          "Paylore could not verify the funding transaction. No success has been recorded."
+        )
       });
       return "settled";
     }
@@ -195,11 +315,14 @@ export function GasTankActions({
   ) {
     let signed: ReturnType<typeof signedGasTankFunding>;
     try {
-      signed = signedGasTankFunding(
-        prepared.transaction,
-        signedTransaction,
-        prepared.payer
-      );
+      // Wallets may add priority-fee instructions or refresh the blockhash while
+      // signing, so the signed transaction is checked for the reviewed payer,
+      // Gas Tank address and amount instead of being compared byte for byte.
+      signed = signedGasTankFunding(signedTransaction, {
+        payer: prepared.payer,
+        destination: prepared.destination,
+        lamports: prepared.lamports
+      });
     } catch (error) {
       setNotice({
         state: "error",
@@ -231,8 +354,8 @@ export function GasTankActions({
       const result = await response.json().catch(() => null) as { error?: string } | null;
       setNotice({
         state: "error",
-        text: result?.error === "funding_transaction_rejected"
-          ? "The network rejected the funding transaction, so no funding was sent. Check that the wallet holds enough SOL, then prepare the funding again."
+        text: result?.error
+          ? describeGasTankError(result.error, response.status)
           : "Paylore could not accept the signed funding transaction. No funding was sent. Refresh this page and prepare the funding again."
       });
       return;
@@ -287,7 +410,10 @@ export function GasTankActions({
       if (!preparedResponse.ok) {
         setNotice({
           state: "error",
-          text: "Gas Tank funding could not be prepared. Check the workspace and network status before trying again."
+          text: await describeFailedResponse(
+            preparedResponse,
+            "Gas Tank funding could not be prepared."
+          )
         });
         return;
       }
@@ -525,6 +651,14 @@ export function GasTankActions({
             </div>
             <a href="#gas-tank-operations">View operations</a>
           </section>
+          {sponsorshipWindow ? (
+            <SponsorshipWindowNotice window={sponsorshipWindow} />
+          ) : (
+            <div className="state-callout" data-state="partial" role="status">
+              <span className="state-callout__signal" aria-hidden="true" />
+              <p>The 24-hour sponsorship window summary is unavailable right now. Reload the page to retry.</p>
+            </div>
+          )}
           {gasTank.lowBalance ? (
             <div className="state-callout" data-state="partial" role="status">
               <span className="state-callout__signal" aria-hidden="true" />
