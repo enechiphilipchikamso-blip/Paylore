@@ -58,7 +58,7 @@ type ExtraInstruction = {
 
 /** Builds a signed transaction the way a wallet might re-encode the reviewed transfer. */
 function walletEncoded(options: {
-  version?: "legacy" | 0;
+  version?: "legacy" | 0 | 1;
   leading?: ExtraInstruction[];
   lamports?: string;
   destination?: string;
@@ -170,6 +170,12 @@ describe("Gas Tank funding transaction", () => {
     expect(() =>
       signedGasTankFunding(walletEncoded({ version: "legacy" }), expected)
     ).not.toThrow();
+  });
+
+  it("refuses unsupported v1 messages", () => {
+    expect(() =>
+      signedGasTankFunding(walletEncoded({ version: 1 }), expected)
+    ).toThrow(GAS_TANK_FUNDING_CHANGED);
   });
 
   it("accepts a wallet that refreshes the blockhash", () => {
