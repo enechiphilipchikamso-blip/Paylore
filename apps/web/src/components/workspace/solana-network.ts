@@ -19,3 +19,8 @@ export function solanaExplorerTransactionUrl(signature: string): string {
   const url = `https://explorer.solana.com/tx/${encodeURIComponent(signature)}`;
   return SOLANA_NETWORK === "mainnet" ? url : `${url}?cluster=${SOLANA_NETWORK}`;
 }
+
+export function solanaExplorerAddressUrl(address: string): string {
+  const url = `https://explorer.solana.com/address/${encodeURIComponent(address)}`;
+  return SOLANA_NETWORK === "mainnet" ? url : `${url}?cluster=${SOLANA_NETWORK}`;
+}

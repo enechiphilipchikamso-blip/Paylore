@@ -110,8 +110,10 @@ describe("ContributorCompensation rendered settlement states", () => {
     const html = render();
 
     expect(html).toContain("Claim &amp; Cash Out");
+    expect(html).toContain("Ready to claim");
     expect(html).toContain("Unclaimed — no transfer recorded");
-    expect(html).toContain("Settlement pending — settlement-pending-signature");
+    expect(html).toContain("Settlement pending");
+    expect(html).toContain("settlement-pending-signature");
     expect(html).toContain("Settled");
     expect(html).toContain("finalized-settlement-signature");
     expect(html).toContain("Recovered");
@@ -144,6 +146,48 @@ describe("ContributorCompensation rendered settlement states", () => {
 
     expect(html).toContain("Confidential account setup is unavailable because the wrapped-USDC mint is not configured.");
     expect(html).toContain("No account setup or claim transaction can be submitted.");
+  });
+
+  it("summarizes claimable, settled and recovered amounts separately", () => {
+    const html = render();
+
+    expect(html).toContain('data-testid="payroll-summary"');
+    // 1.25 unclaimed + 2 settlement-pending are claimable; 3 settled; 4 recovered.
+    expect(html).toContain("3.25 wrapped USDC<small>2 allocation(s)</small>");
+    expect(html).toContain("3 wrapped USDC<small>1 allocation(s)</small>");
+    expect(html).toContain("4 wrapped USDC<small>1 allocation(s)</small>");
+  });
+
+  it("links references to the Solana Explorer while keeping the full value", () => {
+    const html = render();
+
+    expect(html).toContain("explorer.solana.com/tx/finalized-settlement-signature");
+    expect(html).toContain("explorer.solana.com/address/claim-pda-unclaimed");
+    expect(html).toContain('title="finalized-settlement-signature"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it("offers no claim action when nothing is claimable, even if other allocations exist", () => {
+    const [unclaimed] = baseProps.allocations;
+    const html = render({
+      ...baseProps,
+      allocations: [
+        { ...unclaimed!, id: "allocation-cancelled", status: "cancelled" },
+        { ...unclaimed!, id: "allocation-claimed-only", status: "claimed" }
+      ]
+    });
+
+    expect(html).toContain("Cancelled");
+    expect(html).toContain("This allocation was cancelled and is not payable.");
+    expect(html).not.toContain("Claim &amp; Cash Out");
+    expect(html).not.toContain("Claim eligible payroll");
+  });
+
+  it("explains why withdrawal and unwrap are unavailable until the balance is refreshed", () => {
+    const html = render();
+
+    expect(html).toContain("Refresh your balance to see what you can withdraw.");
+    expect(html).toContain("Refresh your balance to see your public wrapped-USDC balance.");
   });
 
   it("does not offer a claim action when no allocation is present", () => {

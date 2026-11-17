@@ -289,6 +289,147 @@ describe("payroll program transaction verification", () => {
     ).rejects.toThrow("invalid format");
   });
 
+  describe("claim-creation transactions that batch several allocations", () => {
+    const siblingContributorAddress = "SysvarRent111111111111111111111111111111111";
+    const siblingClaimId = "02".repeat(32);
+
+    async function siblingClaimInstruction(options: {
+      authority?: string;
+      commitmentHex?: string;
+      claimAddress?: string;
+    } = {}) {
+      const primary = await claimInstruction();
+      const [siblingClaim] = await getProgramDerivedAddress({
+        programAddress: programId,
+        seeds: [
+          new TextEncoder().encode("claim"),
+          getAddressEncoder().encode(address(primary.workspaceAddress)),
+          getAddressEncoder().encode(address(siblingContributorAddress)),
+          Buffer.from(siblingClaimId, "hex")
+        ]
+      });
+      const discriminator = createHash("sha256")
+        .update("global:create_claim")
+        .digest()
+        .subarray(0, 8);
+      const data = Buffer.concat([
+        discriminator,
+        Buffer.from(siblingClaimId, "hex"),
+        Buffer.from(options.commitmentHex ?? commitment, "hex"),
+        Buffer.from("aa".repeat(32), "hex"),
+        Buffer.from([1, 0, 0, 0]),
+        Buffer.from([1, 0, 0, 0]),
+        Buffer.from(amountCommitmentProof[0]!, "hex"),
+        Buffer.from(getAddressEncoder().encode(address(reserveTokenAccount)))
+      ]);
+      return {
+        programId,
+        accounts: [
+          options.authority ?? authorityAddress,
+          gasTankAddress,
+          siblingContributorAddress,
+          primary.workspaceAddress,
+          options.claimAddress ?? siblingClaim,
+          "11111111111111111111111111111111"
+        ],
+        data: encodeBase58(data)
+      };
+    }
+
+    async function verifyBatch(
+      instructions: Array<Awaited<ReturnType<typeof claimInstruction>> | Awaited<ReturnType<typeof siblingClaimInstruction>>>,
+      options: { allowSiblingClaims?: boolean } = {}
+    ) {
+      const primary = await claimInstruction();
+      vi.mocked(readSolanaRpc)
+        .mockResolvedValueOnce({
+          slot: 42,
+          transaction: {
+            signatures: [transactionSignature],
+            message: {
+              accountKeys: [
+                { pubkey: authorityAddress, signer: true },
+                { pubkey: gasTankAddress, signer: true }
+              ],
+              instructions
+            }
+          },
+          meta: { err: null }
+        })
+        .mockResolvedValueOnce(claimStateAccount(primary, { escrowFunded: false }));
+      return verifyPayrollClaimTransaction({
+        signature: transactionSignature,
+        authorityAddress,
+        workspaceId,
+        allocationCommitment: commitment,
+        ...(options.allowSiblingClaims ? { allowSiblingClaims: true } : {}),
+        claims: [{
+          claimId,
+          claimAddress: primary.claimAddress,
+          contributorAddress,
+          amountCommitment,
+          amountCommitmentProof,
+          amountCommitmentLeafIndex,
+          escrowTokenAccount
+        }]
+      });
+    }
+
+    it("rejects a batched transaction by default so submission paths account for every claim", async () => {
+      await expect(
+        verifyBatch([await claimInstruction(), await siblingClaimInstruction()])
+      ).rejects.toThrow("does not match the approved payroll");
+    });
+
+    it("verifies one allocation of a batched transaction when sibling claims are allowed", async () => {
+      await expect(
+        verifyBatch(
+          [await claimInstruction(), await siblingClaimInstruction()],
+          { allowSiblingClaims: true }
+        )
+      ).resolves.toBeUndefined();
+      await expect(
+        verifyBatch(
+          [await siblingClaimInstruction(), await claimInstruction()],
+          { allowSiblingClaims: true }
+        )
+      ).resolves.toBeUndefined();
+    });
+
+    it("still requires the expected claim to be present in the transaction", async () => {
+      await expect(
+        verifyBatch([await siblingClaimInstruction()], { allowSiblingClaims: true })
+      ).rejects.toThrow("does not contain every expected claim");
+    });
+
+    it("rejects a sibling claim bound to a different allocation commitment", async () => {
+      await expect(
+        verifyBatch(
+          [await claimInstruction(), await siblingClaimInstruction({ commitmentHex: "cd".repeat(32) })],
+          { allowSiblingClaims: true }
+        )
+      ).rejects.toThrow("does not match the approved payroll");
+    });
+
+    it("rejects a sibling claim created by a different authority", async () => {
+      await expect(
+        verifyBatch(
+          [await claimInstruction(), await siblingClaimInstruction({ authority: reserveAuthorityAddress })],
+          { allowSiblingClaims: true }
+        )
+      ).rejects.toThrow("does not match the approved payroll");
+    });
+
+    it("rejects a sibling claim whose Claim PDA does not derive from its contributor and identifier", async () => {
+      await expect(
+        verifyBatch(
+          [await claimInstruction(), await siblingClaimInstruction({ claimAddress: reserveAuthorityAddress })],
+          { allowSiblingClaims: true }
+        )
+      ).rejects.toThrow("does not match the approved payroll");
+    });
+  });
+
   it("rejects a Claim PDA whose on-chain state is not unclaimed", async () => {
     const instruction = await claimInstruction();
     vi.mocked(readSolanaRpc)

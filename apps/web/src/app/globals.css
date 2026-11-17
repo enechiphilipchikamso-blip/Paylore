@@ -3058,6 +3058,66 @@ button[aria-busy="true"]::before {
   margin-block: var(--space-4);
 }
 
+.contributor-compensation__summary dd small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.contributor-compensation__steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-5);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.contributor-compensation__next-step {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.contributor-compensation__next-step p {
+  margin: 0;
+}
+
+.contributor-compensation__detail {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.contributor-compensation__reference {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.contributor-compensation__amount {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.contributor-compensation__amount input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.contributor-compensation__hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.contributor-compensation__hint[data-state="error"] {
+  color: #a5323a;
+}
+
 .contributor-compensation__movement-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;

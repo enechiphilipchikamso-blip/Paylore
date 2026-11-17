@@ -38,6 +38,7 @@ import { withWorkspaceReserveKey } from "../reserve";
 import { withWorkspaceGasTankKey } from "../gas-tank";
 import { logServerFailure } from "../server-error-log";
 import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
+import { PayrollClaimVerificationError } from "./payroll-claim-verification-error";
 import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality,
   getProofContextAddresses, matchesExactConfidentialDebit
@@ -993,6 +994,28 @@ async function fundPayrollClaimEscrow(
   }
 }
 
+/**
+ * Verifies one allocation of its finalized claim-creation transaction. That
+ * transaction may batch other allocations of the run, so sibling claims are
+ * tolerated. A genuine mismatch is terminal (a retry cannot fix it), so it is
+ * logged with its real cause and reported as `payroll_claim_creation_unverified`
+ * rather than the retryable generic funding/settlement failure.
+ */
+async function verifyAllocationClaimCreation(
+  verification: Omit<Parameters<typeof verifyPayrollClaimTransaction>[0], "allowSiblingClaims">,
+  context: { workspaceId: string; allocationId: string }
+): Promise<void> {
+  try {
+    await verifyPayrollClaimTransaction({ ...verification, allowSiblingClaims: true });
+  } catch (error) {
+    if (error instanceof PayrollClaimVerificationError) {
+      logServerFailure("payroll_claim_creation_verification_failed", error, context);
+      throw new PayrollConfidentialSettlementError("payroll_claim_creation_unverified", 409);
+    }
+    throw error;
+  }
+}
+
 export async function fundUnclaimedPayrollClaimEscrow(
   db: Database,
   input: { workspaceId: string; runId: string; allocationId: string }
@@ -1099,7 +1122,7 @@ export async function fundUnclaimedPayrollClaimEscrow(
         const { workspace, reserveState } = await deriveWorkspaceReserve({
           authority: evidence.authorityAddress, workspaceId: input.workspaceId, programId
         });
-        await verifyPayrollClaimTransaction({
+        await verifyAllocationClaimCreation({
           signature: claimCreationSignature,
           authorityAddress: evidence.authorityAddress,
           workspaceId: input.workspaceId,
@@ -1113,7 +1136,7 @@ export async function fundUnclaimedPayrollClaimEscrow(
             amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
             escrowTokenAccount: escrow.tokenAccountAddress
           }]
-        });
+        }, { workspaceId: input.workspaceId, allocationId: input.allocationId });
         await ensureReserveConfidentialAccount({
           rpc, signer, mint, mintAccount, tokenAddress: reserveToken, elgamal, aesKey
         });
@@ -1608,24 +1631,25 @@ export async function settleContributorPayrollAllocation(
         }
       }
 
-      await verifyPayrollClaimTransaction({
-        signature: claimCreationSignature, authorityAddress: evidence.authorityAddress,
-        workspaceId: input.workspaceId, allocationCommitment: evidence.allocationCommitment,
-        claims: [{
-          claimId: allocation.claimId, claimAddress,
-          contributorAddress: input.contributorAddress,
-          amountCommitment,
-          amountCommitmentProof: allocation.amountCommitmentProof,
-          amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
-          escrowTokenAccount
-        }]
-      });
-
       let submittedSignature: string | undefined;
       let proofDurationMs: number | undefined;
       let proofContexts: string[] = allocation.settlementProofContextAddresses ?? [];
       let sequence = createConfidentialSequenceProgress();
       try {
+        // Verified inside the try so a failure releases the settlement attempt
+        // begun above instead of leaving the workspace blocked on it.
+        await verifyAllocationClaimCreation({
+          signature: claimCreationSignature, authorityAddress: evidence.authorityAddress,
+          workspaceId: input.workspaceId, allocationCommitment: evidence.allocationCommitment,
+          claims: [{
+            claimId: allocation.claimId, claimAddress,
+            contributorAddress: input.contributorAddress,
+            amountCommitment,
+            amountCommitmentProof: allocation.amountCommitmentProof,
+            amountCommitmentLeafIndex: allocation.amountCommitmentLeafIndex,
+            escrowTokenAccount
+          }]
+        }, { workspaceId: input.workspaceId, allocationId: input.allocationId });
         await ensureReserveConfidentialAccount({
           rpc, signer, mint, mintAccount, tokenAddress: reserveToken, elgamal, aesKey
         });
@@ -1849,6 +1873,13 @@ export async function settleContributorPayrollAllocation(
         }
         return reconciled;
       } catch (error) {
+        if (!(error instanceof PayrollConfidentialSettlementError)) {
+          // Record the real cause before it is reduced to a status code.
+          logServerFailure("payroll_claim_settlement_unexpected_failure", error, {
+            workspaceId: input.workspaceId,
+            allocationId: input.allocationId
+          });
+        }
         if (!submittedSignature) {
           if (proofContexts.length > 0) {
             const cleaned = await cleanupProofContexts(db, rpc, signer, {

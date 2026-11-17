@@ -6,6 +6,7 @@ import {
 } from "@solana/kit";
 import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { loadPayloreConfig } from "../config";
+import { PayrollClaimVerificationError } from "./payroll-claim-verification-error";
 import { readSolanaRpc } from "./rpc-configured";
 
 const BASE58_ALPHABET =
@@ -158,6 +159,18 @@ export async function verifyPayrollClaimTransaction(input: {
   workspaceId: string;
   allocationCommitment: string;
   claims: ExpectedPayrollClaim[];
+  /**
+   * A claim-creation transaction batches several allocations (up to
+   * PAYROLL_CLAIMS_PER_TRANSACTION `create_claim` instructions), and every
+   * allocation in the batch records the same creation signature. Callers that
+   * verify one allocation of such a batch (escrow funding, contributor
+   * settlement) set this so the other allocations' `create_claim` instructions
+   * are tolerated instead of rejected. A sibling instruction must still be
+   * bound to this authority, workspace, allocation commitment, payer and its
+   * own derived Claim PDA. Submission and sponsorship callers leave it unset
+   * and must account for every `create_claim` instruction in the transaction.
+   */
+  allowSiblingClaims?: boolean;
 }): Promise<void> {
   const config = loadPayloreConfig();
   const programId = config.PAYLORE_PAYROLL_PROGRAM_ID;
@@ -201,7 +214,7 @@ export async function verifyPayrollClaimTransaction(input: {
     !signedBy(accountKeys, input.authorityAddress) ||
     !Array.isArray(instructions)
   ) {
-    throw new Error("The payroll claim transaction is not finalized successfully.");
+    throw new PayrollClaimVerificationError("The payroll claim transaction is not finalized successfully.");
   }
 
   const createClaimDiscriminator =
@@ -217,7 +230,7 @@ export async function verifyPayrollClaimTransaction(input: {
           programId
         );
         if (derivedClaim.address !== claim.claimAddress) {
-          throw new Error("The submitted Claim PDA does not match this allocation.");
+          throw new PayrollClaimVerificationError("The submitted Claim PDA does not match this allocation.");
         }
         return [claim.claimId, {
           ...claim,
@@ -237,7 +250,7 @@ export async function verifyPayrollClaimTransaction(input: {
       !Array.isArray(instruction.accounts) ||
       !instruction.accounts.every((account) => typeof account === "string")
     ) {
-      throw new Error("The Payroll Program instruction is malformed.");
+      throw new PayrollClaimVerificationError("The Payroll Program instruction is malformed.");
     }
     const data = decodeBase58(instruction.data);
     if (
@@ -246,17 +259,46 @@ export async function verifyPayrollClaimTransaction(input: {
     ) {
       // CreateClaim accounts: authority, payer (Gas Tank), contributor, workspace, claim, system program.
       if (data.length < 144 || instruction.accounts.length !== 6) {
-        throw new Error("The Claim PDA instruction has an invalid format.");
+        throw new PayrollClaimVerificationError("The Claim PDA instruction has an invalid format.");
       }
       const claimId = Buffer.from(data.subarray(8, 40)).toString("hex");
       const expected = expectedClaims.get(claimId);
       const accounts = instruction.accounts as string[];
+      const payerAccepted = input.payerAddress !== undefined
+        ? accounts[1] === input.payerAddress
+        : signedBy(accountKeys, accounts[1]!);
+      if (!expected && input.allowSiblingClaims) {
+        // Another allocation batched into the same finalized transaction. It is
+        // not verified field by field here (that happened when its own batch was
+        // submitted), but it must provably belong to this workspace and run.
+        let siblingClaimAddress: string | null = null;
+        try {
+          siblingClaimAddress = (await deriveClaimAddress(
+            workspace,
+            accounts[2]!,
+            data.subarray(8, 40),
+            programId
+          )).address;
+        } catch {
+          siblingClaimAddress = null;
+        }
+        if (
+          siblingClaimAddress === null ||
+          accounts[0] !== input.authorityAddress ||
+          !payerAccepted ||
+          accounts[3] !== workspace ||
+          accounts[4] !== siblingClaimAddress ||
+          accounts[5] !== SYSTEM_PROGRAM_ADDRESS ||
+          !sameBytes(data.subarray(40, 72), commitment)
+        ) {
+          throw new PayrollClaimVerificationError("The on-chain claim instruction does not match the approved payroll.");
+        }
+        continue;
+      }
       if (
         !expected ||
         accounts[0] !== input.authorityAddress ||
-        (input.payerAddress !== undefined
-          ? accounts[1] !== input.payerAddress
-          : !signedBy(accountKeys, accounts[1]!)) ||
+        !payerAccepted ||
         accounts[2] !== expected.contributorAddress ||
         accounts[3] !== workspace ||
         accounts[4] !== expected.derivedClaim ||
@@ -277,13 +319,13 @@ export async function verifyPayrollClaimTransaction(input: {
           getAddressEncoder().encode(address(expected.escrowTokenAccount))
         )
       ) {
-        throw new Error("The on-chain claim instruction does not match the approved payroll.");
+        throw new PayrollClaimVerificationError("The on-chain claim instruction does not match the approved payroll.");
       }
       matchedClaims.add(claimId);
     }
   }
   if (matchedClaims.size !== expectedClaims.size) {
-    throw new Error("The finalized transaction does not contain every expected claim.");
+    throw new PayrollClaimVerificationError("The finalized transaction does not contain every expected claim.");
   }
 
   const claimStateDiscriminator = await instructionDiscriminator(
@@ -325,7 +367,7 @@ export async function verifyPayrollClaimTransaction(input: {
       data[201] !== 0 ||
       data[202] !== expected.claimBump
     ) {
-      throw new Error(
+      throw new PayrollClaimVerificationError(
         "The finalized Claim PDA account does not match the expected workspace, contributor, allocation, commitment, and unclaimed state."
       );
     }

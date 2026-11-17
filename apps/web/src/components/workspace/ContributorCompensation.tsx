@@ -13,6 +13,14 @@ import {
 } from "./gas-tank-error-messages";
 import { describeClientError } from "./client-error-message";
 import { assertConfidentialWithdrawalAvailable } from "./confidential-balance-policy";
+import {
+  describeAmountIssue,
+  describeContributorAllocation,
+  isClaimableAllocation,
+  shortReference,
+  summarizeContributorAllocations
+} from "./contributor-allocation-view";
+import { solanaExplorerAddressUrl, solanaExplorerTransactionUrl } from "./solana-network";
 
 import {
   applyConfidentialPendingBalance,
@@ -81,6 +89,21 @@ function parseUsdc(value: string): bigint {
     BigInt((fraction + "000000").slice(0, 6));
   if (amount <= 0n) throw new Error("Enter a positive USDC amount.");
   return amount;
+}
+
+/** A shortened, copy-friendly reference that opens in the Solana Explorer; the full value stays in the title and URL. */
+function ExplorerLink({ kind, value }: { kind: "tx" | "address"; value: string }) {
+  return (
+    <a
+      className="contributor-compensation__reference"
+      href={kind === "tx" ? solanaExplorerTransactionUrl(value) : solanaExplorerAddressUrl(value)}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={value}
+    >
+      <code>{shortReference(value)}</code>
+    </a>
+  );
 }
 
 export function ContributorCompensation({
@@ -274,7 +297,7 @@ export function ContributorCompensation({
         accountForBalance = accountResult.account as NonNullable<AccountState>;
         setCurrentAccount(accountForBalance);
       }
-      const eligible = allocations.filter((allocation) => allocation.status === "unclaimed" || allocation.status === "settlement_pending");
+      const eligible = allocations.filter((allocation) => isClaimableAllocation(allocation.status));
       if (eligible.length === 0) {
         setMessage({ state: "partial", text: "There are no unsettled payroll allocations available for this wallet." });
         return;
@@ -287,12 +310,16 @@ export function ContributorCompensation({
       let failureReason: string | null = null;
       let pendingReason: string | null = null;
       setMessage({ state: "partial", text: "Preparing confidential payroll settlement…" });
-      for (const allocation of eligible) {
+      for (const [position, allocation] of eligible.entries()) {
         if (!allocation.claimAddress || !allocation.transactionSignature) {
           failed++;
           failureReason ??= "A payroll allocation has no finalized Claim account on Solana yet, so it cannot be settled. Ask a workspace administrator to finish committing the payroll run.";
           continue;
         }
+        setMessage({
+          state: "partial",
+          text: `Settling payroll allocation ${position + 1} of ${eligible.length}… Paylore prepares the confidential transfer proofs on the server, which can take a minute. Keep this page open.`
+        });
         try {
           const response = await fetch(
             `/api/workspaces/${workspaceId}/payroll/runs/${allocation.runId}/allocations/${allocation.id}/claim`,
@@ -688,6 +715,29 @@ export function ContributorCompensation({
     }
   }
 
+  const summary = summarizeContributorAllocations(allocations);
+  const withdrawIssue = balance
+    ? describeAmountIssue({
+        rawAmount: withdrawAmount,
+        maxBaseUnits: balance.availableBalance,
+        maxLabel: `available confidential balance (${formatUsdc(balance.availableBalance)} wrapped USDC)`
+      })
+    : null;
+  const unwrapIssue = balance
+    ? describeAmountIssue({
+        rawAmount: unwrapAmount,
+        maxBaseUnits: balance.publicBalance,
+        maxLabel: `public wrapped-USDC balance (${formatUsdc(balance.publicBalance)} wrapped USDC)`
+      })
+    : null;
+  const withdrawHint = !balance
+    ? "Refresh your balance to see what you can withdraw."
+    : balance.availableBalance === 0n && balance.pendingBalance > 0n
+      ? "Your claimed funds are still pending. Apply the pending balance first to make them available."
+      : balance.availableBalance === 0n
+        ? "Nothing is available to withdraw yet."
+        : `Available to withdraw: ${formatUsdc(balance.availableBalance)} wrapped USDC.`;
+
   return (
     <div className="contributor-compensation">
       <section className="surface-card contributor-compensation__overview" aria-labelledby="compensation-heading">
@@ -721,26 +771,50 @@ export function ContributorCompensation({
             Company-sponsored setup uses the workspace Gas Tank for approved account-creation rent and network costs. Your wallet derives confidential keys locally and authorizes the exact transaction; Paylore never receives those keys or owns the account. Start from Claim &amp; Cash Out when an allocation is available. Payroll creation alone never creates or funds a confidential account.
           </p>
         ) : (
-          <div className="hero__actions">
-            <BusyActionButton
-              busy={busyAction === "refresh"}
-              className="button button--secondary"
-              disabled={busy}
-              onClick={() => void runBalanceAction("refresh")}
-              type="button"
-            >
-              {busyAction === "refresh" ? "Refreshing balance…" : "Refresh balance"}
-            </BusyActionButton>
-            <BusyActionButton
-              busy={busyAction === "apply"}
-              className="button button--secondary"
-              disabled={busy}
-              onClick={() => void runBalanceAction("apply")}
-              type="button"
-            >
-              {busyAction === "apply" ? "Applying pending balance…" : "Apply pending balance"}
-            </BusyActionButton>
-          </div>
+          <>
+            {balance && balance.pendingBalance > 0n ? (
+              <div className="state-callout" data-state="partial" role="status" data-testid="apply-pending-next-step">
+                <span className="state-callout__signal" aria-hidden="true" />
+                <div className="contributor-compensation__next-step">
+                  <p>
+                    <strong>Next step:</strong> {formatUsdc(balance.pendingBalance)} wrapped USDC is pending in your
+                    confidential account. Apply it to make it available to withdraw.
+                  </p>
+                  <BusyActionButton
+                    busy={busyAction === "apply"}
+                    className="button"
+                    disabled={busy}
+                    onClick={() => void runBalanceAction("apply")}
+                    type="button"
+                  >
+                    {busyAction === "apply" ? "Applying pending balance…" : "Apply pending balance"}
+                  </BusyActionButton>
+                </div>
+              </div>
+            ) : null}
+            <div className="hero__actions">
+              <BusyActionButton
+                busy={busyAction === "refresh"}
+                className="button button--secondary"
+                disabled={busy}
+                onClick={() => void runBalanceAction("refresh")}
+                type="button"
+              >
+                {busyAction === "refresh" ? "Refreshing balance…" : "Refresh balance"}
+              </BusyActionButton>
+              {balance && balance.pendingBalance > 0n ? null : (
+                <BusyActionButton
+                  busy={busyAction === "apply"}
+                  className="button button--secondary"
+                  disabled={busy}
+                  onClick={() => void runBalanceAction("apply")}
+                  type="button"
+                >
+                  {busyAction === "apply" ? "Applying pending balance…" : "Apply pending balance"}
+                </BusyActionButton>
+              )}
+            </div>
+          </>
         )}
       </section>
 
@@ -752,10 +826,31 @@ export function ContributorCompensation({
             <p>Review allocations assigned to your wallet and the finalized state of each claim.</p>
           </div>
         </header>
-        {allocations.some((allocation) => allocation.status !== "claimed" && allocation.status !== "recovered") ? (
+        {allocations.length > 0 ? (
+          <dl className="contributor-compensation__metrics contributor-compensation__summary" data-testid="payroll-summary">
+            <div>
+              <dt>Ready to claim</dt>
+              <dd>{formatUsdc(summary.claimableBaseUnits)} wrapped USDC<small>{summary.claimableCount} allocation(s)</small></dd>
+            </div>
+            <div>
+              <dt>Settled</dt>
+              <dd>{formatUsdc(summary.settledBaseUnits)} wrapped USDC<small>{summary.settledCount} allocation(s)</small></dd>
+            </div>
+            <div>
+              <dt>Recovered by your organization</dt>
+              <dd>{formatUsdc(summary.recoveredBaseUnits)} wrapped USDC<small>{summary.recoveredCount} allocation(s)</small></dd>
+            </div>
+          </dl>
+        ) : null}
+        {summary.claimableCount > 0 ? (
           <div className="workspace-setup__content contributor-compensation__claim">
             <h3>Claim eligible payroll</h3>
             <p>This starts company-sponsored account setup when needed, then settles eligible allocations. Completion is shown only after finalized transfer and reserve reconciliation.</p>
+            <ol className="contributor-compensation__steps">
+              <li><strong>Claim</strong> moves each allocation into your confidential account as a pending balance.</li>
+              <li><strong>Apply pending balance</strong> makes it available.</li>
+              <li><strong>Withdraw</strong> sends it to your public wrapped-USDC token account.</li>
+            </ol>
             <BusyActionButton
               className="button"
               busy={busyAction === "claim" || busyAction === "setup"}
@@ -792,32 +887,44 @@ export function ContributorCompensation({
                   </tr>
                 </thead>
                 <tbody>
-                  {allocations.map((allocation) => (
-                    <tr key={allocation.id} data-testid={`payroll-allocation-${allocation.id}`}>
-                      <td>
-                        {new Date(allocation.runCreatedAt).toLocaleDateString()}
-                        <br />
-                        <code>{allocation.runId}</code>
-                      </td>
-                      <td>{formatUsdc(BigInt(allocation.amountBaseUnits))} wrapped USDC</td>
-                      <td>
-                        {allocation.status === "claimed"
-                          ? `Settled${allocation.claimedAt ? ` on ${new Date(allocation.claimedAt).toLocaleString()}` : ""}${allocation.settlementSignature ? ` — ${allocation.settlementSignature}` : ""}`
-                          : allocation.status === "recovered"
-                            ? `Recovered${allocation.recoveredAt ? ` on ${new Date(allocation.recoveredAt).toLocaleString()}` : ""}`
-                            : allocation.status === "settlement_pending"
-                              ? `Settlement pending${allocation.settlementSignature ? ` — ${allocation.settlementSignature}` : ""}`
-                              : "Unclaimed — no transfer recorded"}
-                      </td>
-                      <td>
-                        {allocation.claimAddress ? (
-                          <code>{allocation.claimAddress}</code>
-                        ) : (
-                          "Not recorded"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {allocations.map((allocation) => {
+                    const state = describeContributorAllocation(allocation);
+                    const settledAt = allocation.status === "claimed" ? allocation.claimedAt
+                      : allocation.status === "recovered" ? allocation.recoveredAt : null;
+                    return (
+                      <tr key={allocation.id} data-testid={`payroll-allocation-${allocation.id}`}>
+                        <td>
+                          {new Date(allocation.runCreatedAt).toLocaleDateString()}
+                          <br />
+                          <code title={allocation.runId}>{shortReference(allocation.runId)}</code>
+                        </td>
+                        <td>{formatUsdc(BigInt(allocation.amountBaseUnits))} wrapped USDC</td>
+                        <td>
+                          <span className="payroll-status" data-tone={state.tone}>{state.label}</span>
+                          <br />
+                          <span className="contributor-compensation__detail">
+                            {state.detail}
+                            {settledAt ? ` on ${new Date(settledAt).toLocaleString()}` : ""}
+                          </span>
+                          {allocation.settlementSignature && (allocation.status === "claimed" || allocation.status === "settlement_pending") ? (
+                            <>
+                              <br />
+                              <span className="contributor-compensation__detail">
+                                Transaction: <ExplorerLink kind="tx" value={allocation.settlementSignature} />
+                              </span>
+                            </>
+                          ) : null}
+                        </td>
+                        <td>
+                          {allocation.claimAddress ? (
+                            <ExplorerLink kind="address" value={allocation.claimAddress} />
+                          ) : (
+                            "Not recorded"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -858,16 +965,46 @@ export function ContributorCompensation({
               <p>This moves the amount from your confidential available balance to your public wrapped-USDC token account. It does not convert to Circle USDC.</p>
               <label className="field">
                 <span>Amount to withdraw (wrapped USDC)</span>
-                <input
-                  inputMode="decimal"
-                  onChange={(event) => setWithdrawAmount(event.target.value)}
-                  value={withdrawAmount}
-                />
+                <span className="contributor-compensation__amount">
+                  <input
+                    autoComplete="off"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    aria-describedby="withdraw-hint"
+                    aria-invalid={withdrawIssue ? true : undefined}
+                    onChange={(event) => setWithdrawAmount(event.target.value)}
+                    value={withdrawAmount}
+                  />
+                  <BusyActionButton
+                    busy={false}
+                    className="button button--secondary"
+                    type="button"
+                    disabled={busy || !balance || balance.availableBalance <= 0n}
+                    onClick={() => balance && setWithdrawAmount(formatUsdc(balance.availableBalance))}
+                  >
+                    Max
+                  </BusyActionButton>
+                </span>
               </label>
+              <p
+                className="contributor-compensation__hint"
+                id="withdraw-hint"
+                data-state={withdrawIssue ? "error" : undefined}
+                role={withdrawIssue ? "alert" : undefined}
+              >
+                {withdrawIssue ?? withdrawHint}
+              </p>
               <BusyActionButton
                 className="button"
                 busy={busyAction === "cashout"}
-                disabled={busy || cashOutLedgerRetry !== null || !balance || balance.availableBalance <= 0n}
+                disabled={
+                  busy ||
+                  cashOutLedgerRetry !== null ||
+                  !balance ||
+                  balance.availableBalance <= 0n ||
+                  withdrawAmount.trim() === "" ||
+                  withdrawIssue !== null
+                }
                 onClick={() => void runBalanceAction("cashout")}
                 type="button"
               >
@@ -884,12 +1021,39 @@ export function ContributorCompensation({
               ) : null}
               <label className="field">
                 <span>Amount to unwrap (wrapped USDC)</span>
-                <input
-                  inputMode="decimal"
-                  onChange={(event) => setUnwrapAmount(event.target.value)}
-                  value={unwrapAmount}
-                />
+                <span className="contributor-compensation__amount">
+                  <input
+                    autoComplete="off"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    aria-describedby="unwrap-hint"
+                    aria-invalid={unwrapIssue ? true : undefined}
+                    onChange={(event) => setUnwrapAmount(event.target.value)}
+                    value={unwrapAmount}
+                  />
+                  <BusyActionButton
+                    busy={false}
+                    className="button button--secondary"
+                    type="button"
+                    disabled={busy || !balance || balance.publicBalance <= 0n}
+                    onClick={() => balance && setUnwrapAmount(formatUsdc(balance.publicBalance))}
+                  >
+                    Max
+                  </BusyActionButton>
+                </span>
               </label>
+              <p
+                className="contributor-compensation__hint"
+                id="unwrap-hint"
+                data-state={unwrapIssue ? "error" : undefined}
+                role={unwrapIssue ? "alert" : undefined}
+              >
+                {unwrapIssue ?? (!balance
+                  ? "Refresh your balance to see your public wrapped-USDC balance."
+                  : balance.publicBalance > 0n
+                    ? `Public wrapped USDC available to unwrap: ${formatUsdc(balance.publicBalance)}.`
+                    : "You have no public wrapped USDC to unwrap yet. Withdraw from your confidential balance first.")}
+              </p>
               <BusyActionButton
                 className="button button--secondary"
                 busy={busyAction === "unwrap"}
@@ -899,7 +1063,9 @@ export function ContributorCompensation({
                   !tokenWrapUnwrapEnabled ||
                   !balance ||
                   balance.publicBalance <= 0n ||
-                  !circleMint
+                  !circleMint ||
+                  unwrapAmount.trim() === "" ||
+                  unwrapIssue !== null
                 }
                 onClick={() => void runBalanceAction("unwrap")}
                 type="button"

@@ -7,6 +7,8 @@ import {
   fundUnclaimedPayrollClaimEscrow,
   settleContributorPayrollAllocation
 } from "./payroll-confidential-settlement";
+import { PayrollClaimVerificationError } from "./payroll-claim-verification-error";
+import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 
 const h = vi.hoisted(() => ({
   tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
@@ -737,6 +739,51 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(getContributorConfidentialAccount).not.toHaveBeenCalled();
     expect(h.executionOrder).toContain("escrow_funding");
     expect(h.executionOrder).not.toContain("transfer");
+  });
+
+  it("verifies the claim-creation transaction while tolerating other allocations batched in it", async () => {
+    await fundUnclaimedPayrollClaimEscrow({} as any, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+    });
+    expect(verifyPayrollClaimTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowSiblingClaims: true, claims: [expect.objectContaining({ claimId: h.claimId })] })
+    );
+    h.allocation.status = "unclaimed";
+    await settleContributorPayrollAllocation({} as any, input);
+    expect(verifyPayrollClaimTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowSiblingClaims: true, claims: [expect.objectContaining({ claimId: h.claimId })] })
+    );
+  });
+
+  it("reports a mismatched claim-creation transaction as terminal when funding, without submitting anything", async () => {
+    vi.mocked(verifyPayrollClaimTransaction).mockRejectedValueOnce(
+      new PayrollClaimVerificationError("The on-chain claim instruction does not match the approved payroll.")
+    );
+    await expect(fundUnclaimedPayrollClaimEscrow({} as any, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+    })).rejects.toMatchObject({ code: "payroll_claim_creation_unverified", statusCode: 409 });
+    expect(h.sendCount).toBe(0);
+    expect(h.escrowFunded).toBe(false);
+    expect(h.allocation.status).toBe("unclaimed");
+  });
+
+  it("reports a mismatched claim-creation transaction as terminal when claiming and releases the attempt", async () => {
+    vi.mocked(verifyPayrollClaimTransaction).mockRejectedValueOnce(
+      new PayrollClaimVerificationError("The on-chain claim instruction does not match the approved payroll.")
+    );
+    await expect(settleContributorPayrollAllocation({} as any, input))
+      .rejects.toMatchObject({ code: "payroll_claim_creation_unverified", statusCode: 409 });
+    expect(h.sendCount).toBe(0);
+    expect(h.releaseCalls).toBe(1);
+    expect(h.allocation.status).toBe("unclaimed");
+  });
+
+  it("keeps a transient verification failure retryable and releases the attempt", async () => {
+    vi.mocked(verifyPayrollClaimTransaction).mockRejectedValueOnce(new Error("RPC timeout"));
+    await expect(settleContributorPayrollAllocation({} as any, input))
+      .rejects.toMatchObject({ code: "confidential_settlement_failed", statusCode: 503 });
+    expect(h.releaseCalls).toBe(1);
+    expect(h.allocation.status).toBe("unclaimed");
   });
 
   it("refuses to fund a terminally claimed allocation", async () => {

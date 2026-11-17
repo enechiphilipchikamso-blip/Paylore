@@ -272,7 +272,8 @@ const ADMINISTRATOR_ACTION_CODES = new Set([
   "workspace_read_only",
   "workspace_reserve_not_initialized",
   "reserve_confidential_balance_insufficient",
-  "reserve_account_requires_mint_authority_approval"
+  "reserve_account_requires_mint_authority_approval",
+  "payroll_claim_creation_unverified"
 ]);
 
 /** Contributor-facing wording: fees are company-sponsored and Paylore never charges the contributor wallet instead. */
