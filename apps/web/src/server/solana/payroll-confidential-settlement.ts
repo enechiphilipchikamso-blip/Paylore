@@ -306,15 +306,18 @@ async function deriveWorkspaceReserve(input: { authority: string; workspaceId: s
 }
 function configureReserveInstruction(input: {
   programId: string; authority: string; workspace: string; reserveState: string;
-  reserveAuthority: string; reserveToken: string; mint: string;
+  payer: string; reserveAuthority: string; reserveToken: string; mint: string;
 }): Instruction {
+  // Matches the deployed ConfigureWorkspaceReserve account order: the Gas Tank
+  // payer signs (and pays rent) before reserve_state; the reserve only co-signs.
   return {
     programAddress: address(input.programId),
     accounts: [
       { address: address(input.authority), role: AccountRole.READONLY },
       { address: address(input.workspace), role: AccountRole.READONLY },
+      { address: address(input.payer), role: AccountRole.WRITABLE_SIGNER },
       { address: address(input.reserveState), role: AccountRole.WRITABLE },
-      { address: address(input.reserveAuthority), role: AccountRole.WRITABLE_SIGNER },
+      { address: address(input.reserveAuthority), role: AccountRole.READONLY_SIGNER },
       { address: address(input.reserveToken), role: AccountRole.READONLY },
       { address: address(input.mint), role: AccountRole.READONLY },
       { address: SYSTEM_PROGRAM, role: AccountRole.READONLY }
@@ -1142,7 +1145,7 @@ export async function fundUnclaimedPayrollClaimEscrow(
         });
         const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
           programId, authority: evidence.authorityAddress, workspace, reserveState,
-          reserveAuthority: signer.address, reserveToken, mint
+          payer: gasSigner.address, reserveAuthority: signer.address, reserveToken, mint
         })), undefined, [signer]);
         if (!configured.successful || configured.pending || configured.trackingFailed) {
           throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
@@ -1658,7 +1661,7 @@ export async function settleContributorPayrollAllocation(
         assertConfidentialStepAllowed(sequence, "reserve_configure");
         const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
           programId, authority: evidence.authorityAddress, workspace, reserveState,
-          reserveAuthority: signer.address, reserveToken, mint
+          payer: gasSigner.address, reserveAuthority: signer.address, reserveToken, mint
         })), undefined, [signer]);
         if (!configured.successful || configured.pending || configured.trackingFailed) {
           throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
