@@ -8,6 +8,7 @@ import {
   verifyPayrollClaimTransaction,
   verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
+import { parseCreateClaimInstruction } from "./webhook-policy";
 
 vi.mock("./rpc-configured", () => ({
   readSolanaRpc: vi.fn()
@@ -287,6 +288,19 @@ describe("payroll program transaction verification", () => {
         accounts: instruction.accounts.filter((_, index) => index !== 1)
       }, { payerAddress: gasTankAddress })
     ).rejects.toThrow("invalid format");
+  });
+
+  it("builds the same current-layout instruction that the webhook claim parser recognizes", async () => {
+    const instruction = await claimInstruction();
+    expect(parseCreateClaimInstruction(instruction, programId)).toEqual({
+      claimId,
+      allocationCommitment: commitment,
+      authorityAddress,
+      payerAddress: gasTankAddress,
+      contributorAddress,
+      workspaceAddress: instruction.workspaceAddress,
+      claimAddress: instruction.claimAddress
+    });
   });
 
   describe("claim-creation transactions that batch several allocations", () => {

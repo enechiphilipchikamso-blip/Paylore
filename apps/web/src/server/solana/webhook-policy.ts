@@ -323,3 +323,79 @@ export function findRecoverClaimInstruction(input: {
   }
   return result ?? { kind: "not_found" };
 }
+
+/**
+ * The current `create_claim` instruction layout, taken from the Payroll Program
+ * source (`programs/payroll/src/lib.rs`: the `create_claim` arguments and the
+ * `CreateClaim` accounts struct) and mirrored by the IDL that
+ * `scripts/audit-payroll-program-idl.mjs` audits. Update all three together.
+ *
+ * Instruction data (Anchor, Borsh):
+ *   0..8      discriminator            sha256("global:create_claim")[..8]
+ *   8..40     claim_id                 [u8; 32]
+ *   40..72    allocation_commitment    [u8; 32]
+ *   72..104   amount_commitment        [u8; 32]
+ *   104..108  amount_commitment_leaf_index  u32 little-endian
+ *   108..112  amount_commitment_proof length n  u32 little-endian
+ *   112..     amount_commitment_proof  n * [u8; 32]
+ *   then      escrow_token_account     [u8; 32]
+ *   => exactly 144 + 32 * n bytes
+ *
+ * Accounts, in order: authority, payer, contributor, workspace, claim, system_program.
+ */
+const CREATE_CLAIM_DISCRIMINATOR = createHash("sha256")
+  .update("global:create_claim")
+  .digest()
+  .subarray(0, 8);
+const CREATE_CLAIM_FIXED_DATA_LENGTH = 144;
+const CREATE_CLAIM_ACCOUNT_COUNT = 6;
+/** Deepest amount-commitment proof the verifier and the sponsorship route accept. */
+const MAX_AMOUNT_COMMITMENT_PROOF_DEPTH = 16;
+
+export type CreateClaimInstructionMatch = {
+  claimId: string;
+  allocationCommitment: string;
+  authorityAddress: string;
+  payerAddress: string;
+  contributorAddress: string;
+  workspaceAddress: string;
+  claimAddress: string;
+};
+
+/**
+ * Parses one program instruction as a current-layout `create_claim`. Returns
+ * null for anything else, including a `create_claim` discriminator whose data
+ * length, proof length or account count is not the exact current layout, so an
+ * unrecognized layout is never treated as a claim. Field-level agreement with
+ * the approved payroll (amount commitment, proof, escrow, PDA) is checked
+ * afterwards by `verifyPayrollClaimTransaction`, not here.
+ */
+export function parseCreateClaimInstruction(
+  instruction: Record<string, unknown>,
+  payrollProgramId: string
+): CreateClaimInstructionMatch | null {
+  if (instruction.programId !== payrollProgramId ||
+      typeof instruction.data !== "string" ||
+      !Array.isArray(instruction.accounts)) return null;
+  const data = decodeBase58Instruction(instruction.data);
+  if (!data || data.length < CREATE_CLAIM_FIXED_DATA_LENGTH ||
+      !CREATE_CLAIM_DISCRIMINATOR.every((byte, index) => data[index] === byte)) return null;
+  const proofLength = new DataView(data.buffer, data.byteOffset, data.byteLength)
+    .getUint32(108, true);
+  if (proofLength > MAX_AMOUNT_COMMITMENT_PROOF_DEPTH ||
+      data.length !== CREATE_CLAIM_FIXED_DATA_LENGTH + proofLength * 32) return null;
+  const accounts = instruction.accounts;
+  if (accounts.length !== CREATE_CLAIM_ACCOUNT_COUNT ||
+      accounts.some((account) => typeof account !== "string")) return null;
+  const [authorityAddress, payerAddress, contributorAddress, workspaceAddress, claimAddress] =
+    accounts as string[];
+  return {
+    claimId: Buffer.from(data.subarray(8, 40)).toString("hex"),
+    allocationCommitment: Buffer.from(data.subarray(40, 72)).toString("hex"),
+    authorityAddress: authorityAddress!,
+    payerAddress: payerAddress!,
+    contributorAddress: contributorAddress!,
+    workspaceAddress: workspaceAddress!,
+    claimAddress: claimAddress!
+  };
+}

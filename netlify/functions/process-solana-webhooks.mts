@@ -19,6 +19,7 @@ import {
   recordVerifiedGasTankFundingEvent,
   getPayrollAllocationForChainReconciliation,
   getPayrollAllocationsForChainReconciliationByClaimIds,
+  getWorkspacePayrollRun,
   recordPayrollClaimSubmission,
   recordVerifiedPayrollRecoveryEvent,
   updateSubscriptionPaymentAttemptStatus,
@@ -32,7 +33,8 @@ import {
   findFinalizeClaimedInstruction,
   findRecoverClaimInstruction,
   getFinalizedLedgerReconciliationDisposition,
-  getWebhookTransactionBindingError
+  getWebhookTransactionBindingError,
+  parseCreateClaimInstruction
 } from "../../apps/web/src/server/solana/webhook-policy";
 import {
   derivePayrollReserveTokenAccount,
@@ -58,27 +60,6 @@ type FinalizedTransaction = {
     message?: { accountKeys?: unknown; instructions?: Array<Record<string, unknown>> };
   };
 } | null;
-
-const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-function decodeBase58(value: string): Uint8Array | null {
-  let number = 0n;
-  for (const character of value) {
-    const digit = BASE58_ALPHABET.indexOf(character);
-    if (digit < 0) return null;
-    number = number * 58n + BigInt(digit);
-  }
-  const bytes: number[] = [];
-  while (number > 0n) {
-    bytes.unshift(Number(number & 0xffn));
-    number >>= 8n;
-  }
-  for (const character of value) {
-    if (character !== "1") break;
-    bytes.unshift(0);
-  }
-  return Uint8Array.from(bytes);
-}
 
 function configuredRpc() {
   const config = parsePayloreConfig(process.env);
@@ -370,10 +351,6 @@ async function reconcileEvent(
     transaction?: { message?: { instructions?: Array<Record<string, unknown>> } };
   };
   const instructions = parsed.transaction?.message?.instructions ?? [];
-  const createClaimDiscriminator = createHash("sha256")
-    .update("global:create_claim")
-    .digest()
-    .subarray(0, 8);
   const transactionBody = transaction as unknown as {
     transaction?: {
       signatures?: unknown;
@@ -399,21 +376,16 @@ async function reconcileEvent(
     commitment: string;
   }> = [];
   for (const instruction of instructions) {
-    if (instruction.programId !== payrollProgramId ||
-        typeof instruction.data !== "string" ||
-        !Array.isArray(instruction.accounts)) continue;
-    const data = decodeBase58(instruction.data);
-    if (!data || data.length !== 72 ||
-        !Buffer.from(data.subarray(0, 8)).equals(createClaimDiscriminator)) continue;
-    const accounts = instruction.accounts;
-    if (accounts.length !== 5 ||
-        accounts.some((account) => typeof account !== "string")) continue;
+    // Only the exact current create_claim layout is recognized (see
+    // parseCreateClaimInstruction); any other shape is skipped, never trusted.
+    const claim = parseCreateClaimInstruction(instruction, payrollProgramId);
+    if (!claim) continue;
     claimInstructions.push({
-      claimId: Buffer.from(data.subarray(8, 40)).toString("hex"),
-      commitment: Buffer.from(data.subarray(40, 72)).toString("hex"),
-      authorityAddress: accounts[0] as string,
-      contributorAddress: accounts[1] as string,
-      claimAddress: accounts[3] as string
+      claimId: claim.claimId,
+      commitment: claim.allocationCommitment,
+      authorityAddress: claim.authorityAddress,
+      contributorAddress: claim.contributorAddress,
+      claimAddress: claim.claimAddress
     });
   }
   if (claimInstructions.length > 0) {
@@ -452,7 +424,6 @@ async function reconcileEvent(
     }
     const byClaimId = new Map(allocations.map((allocation) => [allocation.claimId, allocation]));
     const first = allocations[0];
-    const submittedClaims: Array<{ claimId: string; claimAddress: string }> = [];
     for (const claim of claimInstructions) {
       const allocation = byClaimId.get(claim.claimId);
       if (!allocation ||
@@ -471,7 +442,6 @@ async function reconcileEvent(
         });
         return "dead_letter";
       }
-      submittedClaims.push({ claimId: claim.claimId, claimAddress: claim.claimAddress });
     }
     if (!first || !first.allocationCommitment ||
         claimInstructions.some((claim) =>
@@ -486,17 +456,42 @@ async function reconcileEvent(
       });
       return "dead_letter";
     }
+    // The verifier compares the finalized instruction against the approved
+    // payroll, so its expectations come from the database (as the commit route
+    // does), never from the instruction under test.
+    const payrollRun = await getWorkspacePayrollRun(db, first.workspaceId, first.runId);
+    const expectedClaims: Parameters<typeof verifyPayrollClaimTransaction>[0]["claims"] = [];
+    for (const claim of claimInstructions) {
+      const approved = payrollRun?.allocations.find(
+        (candidate) => candidate.claimId === claim.claimId
+      );
+      const escrow = approved
+        ? await getPayrollClaimEscrow(db, first.workspaceId, approved.id)
+        : null;
+      if (!approved || approved.amountCommitment === null ||
+          approved.amountCommitmentProof === null ||
+          approved.amountCommitmentLeafIndex === null ||
+          !escrow || !["ready", "funding", "funded"].includes(escrow.status)) {
+        await retry("payroll_claim_commitment_data_not_ready");
+        return deadLetter ? "dead_letter" : "retry_pending";
+      }
+      expectedClaims.push({
+        claimId: claim.claimId,
+        claimAddress: claim.claimAddress,
+        contributorAddress: claim.contributorAddress,
+        amountCommitment: approved.amountCommitment,
+        amountCommitmentProof: approved.amountCommitmentProof,
+        amountCommitmentLeafIndex: approved.amountCommitmentLeafIndex,
+        escrowTokenAccount: escrow.tokenAccountAddress
+      });
+    }
     try {
       await verifyPayrollClaimTransaction({
         signature: event.transactionSignature,
         authorityAddress: claimInstructions[0].authorityAddress,
         workspaceId: first.workspaceId,
         allocationCommitment: first.allocationCommitment,
-        claims: claimInstructions.map((claim) => ({
-          claimId: claim.claimId,
-          claimAddress: claim.claimAddress,
-          contributorAddress: claim.contributorAddress
-        }))
+        claims: expectedClaims
       });
     } catch {
       await retry("payroll_claim_chain_state_not_reconciled");
@@ -508,7 +503,11 @@ async function reconcileEvent(
       signature: event.transactionSignature,
       programId: payrollProgramId,
       authorityAddress: claimInstructions[0].authorityAddress,
-      claims: submittedClaims,
+      claims: expectedClaims.map((claim) => ({
+        claimId: claim.claimId,
+        claimAddress: claim.claimAddress,
+        escrowTokenAccount: claim.escrowTokenAccount
+      })),
       now
     });
     if (

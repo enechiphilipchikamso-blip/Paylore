@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   findFinalizeClaimedInstruction,
   getFinalizedLedgerReconciliationDisposition,
-  getWebhookTransactionBindingError
+  getWebhookTransactionBindingError,
+  parseCreateClaimInstruction
 } from "../../apps/web/src/server/solana/webhook-policy";
 
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -23,21 +24,57 @@ function encodeBase58(bytes: Uint8Array): string {
 }
 
 describe("Solana payroll event decoding invariants", () => {
-  it("uses the Anchor create_claim discriminator and exact 72-byte payload", () => {
+  const payrollProgramId = "PayrollProgram1111111111111111111111111111111";
+  const createClaimAccounts = [
+    "authority-address", "payer-address", "contributor-address",
+    "workspace-address", "claim-address", "11111111111111111111111111111111"
+  ];
+  function createClaimPayload(proofLength: number) {
     const discriminator = createHash("sha256").update("global:create_claim").digest().subarray(0, 8);
-    const payload = Buffer.concat([discriminator, Buffer.alloc(32, 1), Buffer.alloc(32, 2)]);
-    expect(payload).toHaveLength(72);
-    expect(Buffer.from(payload.subarray(0, 8))).toEqual(discriminator);
-    const encoded = encodeBase58(payload);
-    expect(encoded.length).toBeGreaterThan(0);
-    expect(Buffer.from(encoded, "base64")).not.toEqual(payload);
+    const leafIndex = Buffer.alloc(4);
+    leafIndex.writeUInt32LE(0);
+    const declaredProofLength = Buffer.alloc(4);
+    declaredProofLength.writeUInt32LE(proofLength);
+    return Buffer.concat([
+      discriminator,
+      Buffer.alloc(32, 1), // claim_id
+      Buffer.alloc(32, 2), // allocation_commitment
+      Buffer.alloc(32, 3), // amount_commitment
+      leafIndex,
+      declaredProofLength,
+      Buffer.alloc(32 * proofLength, 4),
+      Buffer.alloc(32, 5) // escrow_token_account
+    ]);
+  }
+
+  it("recognizes the Anchor create_claim discriminator with the current 144-byte-plus-proof payload", () => {
+    const payload = createClaimPayload(1);
+    expect(payload).toHaveLength(144 + 32);
+    const claim = parseCreateClaimInstruction(
+      { programId: payrollProgramId, accounts: createClaimAccounts, data: encodeBase58(payload) },
+      payrollProgramId
+    );
+    expect(claim).toMatchObject({
+      claimId: "01".repeat(32),
+      allocationCommitment: "02".repeat(32),
+      authorityAddress: "authority-address",
+      contributorAddress: "contributor-address",
+      claimAddress: "claim-address"
+    });
   });
 
-  it("does not accept an instruction with a truncated claim commitment", () => {
-    const discriminator = createHash("sha256").update("global:create_claim").digest().subarray(0, 8);
-    const malformed = Buffer.concat([discriminator, Buffer.alloc(32, 1), Buffer.alloc(31, 2)]);
-    expect(malformed).toHaveLength(71);
-    expect(malformed.length).not.toBe(72);
+  it("does not accept an instruction with a truncated payload or the previous layout", () => {
+    const truncated = createClaimPayload(1).subarray(0, 144 + 31);
+    expect(parseCreateClaimInstruction(
+      { programId: payrollProgramId, accounts: createClaimAccounts, data: encodeBase58(truncated) },
+      payrollProgramId
+    )).toBeNull();
+    const previousLayout = createClaimPayload(0).subarray(0, 72);
+    expect(previousLayout).toHaveLength(72);
+    expect(parseCreateClaimInstruction(
+      { programId: payrollProgramId, accounts: createClaimAccounts.slice(0, 5), data: encodeBase58(previousLayout) },
+      payrollProgramId
+    )).toBeNull();
   });
 
   it("distinguishes recovery reasons by their committed bytes", () => {

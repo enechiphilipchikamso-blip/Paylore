@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   findRecoverClaimInstruction,
   getFinalizedLedgerReconciliationDisposition,
   getWebhookTransactionBindingError,
-  normalizeHeliusWebhookPayload
+  normalizeHeliusWebhookPayload,
+  parseCreateClaimInstruction
 } from "./webhook-policy";
 
 const signature = "1".repeat(64);
@@ -240,5 +243,153 @@ describe("finalized recovery instruction trust boundary", () => {
     transaction.transaction.message.instructions.push(transaction.transaction.message.instructions[1]);
     expect(findRecoverClaimInstruction({ transaction, payrollProgramId: programId }))
       .toMatchObject({ kind: "invalid", errorCode: "duplicate_recover_claim_instruction" });
+  });
+});
+
+describe("create_claim webhook instruction parsing", () => {
+  const programId = "PayrollProgram1111111111111111111111111111111";
+  const createClaimDiscriminator = createHash("sha256")
+    .update("global:create_claim")
+    .digest()
+    .subarray(0, 8);
+  const currentAccounts = [
+    "authority-address", "payer-address", "contributor-address",
+    "workspace-address", "claim-address", "11111111111111111111111111111111"
+  ];
+
+  /** Builds the current layout: 144 + 32 * proofLength bytes of Borsh data. */
+  function claimInstruction(options: {
+    proofLength?: number;
+    declaredProofLength?: number;
+    extraBytes?: number;
+    discriminator?: Uint8Array;
+    programId?: string;
+    accounts?: unknown[];
+    data?: unknown;
+  } = {}) {
+    const proofLength = options.proofLength ?? 1;
+    const leafIndex = Buffer.alloc(4);
+    leafIndex.writeUInt32LE(1);
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(options.declaredProofLength ?? proofLength);
+    const data = Buffer.concat([
+      options.discriminator ?? createClaimDiscriminator,
+      Buffer.alloc(32, 1), // claim_id
+      Buffer.alloc(32, 2), // allocation_commitment
+      Buffer.alloc(32, 3), // amount_commitment
+      leafIndex,           // amount_commitment_leaf_index
+      declared,            // amount_commitment_proof length
+      Buffer.alloc(32 * proofLength, 4),
+      Buffer.alloc(32, 5), // escrow_token_account
+      Buffer.alloc(options.extraBytes ?? 0, 9)
+    ]);
+    return {
+      programId: options.programId ?? programId,
+      accounts: options.accounts ?? currentAccounts,
+      data: "data" in options ? options.data : encodeBase58(data)
+    };
+  }
+
+  it("parses the current layout and reads each account by its current position", () => {
+    expect(parseCreateClaimInstruction(claimInstruction(), programId)).toEqual({
+      claimId: "01".repeat(32),
+      allocationCommitment: "02".repeat(32),
+      authorityAddress: "authority-address",
+      payerAddress: "payer-address",
+      contributorAddress: "contributor-address",
+      workspaceAddress: "workspace-address",
+      claimAddress: "claim-address"
+    });
+  });
+
+  it("accepts every proof depth from an empty proof up to the supported maximum", () => {
+    for (const proofLength of [0, 1, 2, 16]) {
+      expect(
+        parseCreateClaimInstruction(claimInstruction({ proofLength }), programId)
+      ).not.toBeNull();
+    }
+  });
+
+  it("does not recognize the previous 72-byte, five-account layout", () => {
+    const legacyData = Buffer.concat([
+      createClaimDiscriminator, Buffer.alloc(32, 1), Buffer.alloc(32, 2)
+    ]);
+    expect(legacyData).toHaveLength(72);
+    expect(parseCreateClaimInstruction({
+      programId,
+      data: encodeBase58(legacyData),
+      accounts: ["authority-address", "contributor-address", "workspace-address", "claim-address", "11111111111111111111111111111111"]
+    }, programId)).toBeNull();
+    expect(parseCreateClaimInstruction(claimInstruction({
+      accounts: currentAccounts.slice(0, 5)
+    }), programId)).toBeNull();
+  });
+
+  it("rejects the wrong account count and non-string accounts", () => {
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ accounts: [...currentAccounts, "extra-account"] }), programId
+    )).toBeNull();
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ accounts: [...currentAccounts.slice(0, 5), 7] }), programId
+    )).toBeNull();
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ accounts: "not-an-array" as unknown as unknown[] }), programId
+    )).toBeNull();
+  });
+
+  it("rejects data whose length does not match its declared proof length", () => {
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ proofLength: 1, declaredProofLength: 2 }), programId
+    )).toBeNull();
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ proofLength: 2, declaredProofLength: 1 }), programId
+    )).toBeNull();
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ extraBytes: 1 }), programId
+    )).toBeNull();
+  });
+
+  it("rejects a proof deeper than the verifier supports even when the length is self-consistent", () => {
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ proofLength: 17 }), programId
+    )).toBeNull();
+  });
+
+  it("rejects truncated data, a different program, a different instruction and missing data", () => {
+    expect(parseCreateClaimInstruction({
+      programId,
+      accounts: currentAccounts,
+      data: encodeBase58(Buffer.concat([createClaimDiscriminator, Buffer.alloc(100, 1)]))
+    }, programId)).toBeNull();
+    expect(parseCreateClaimInstruction(
+      claimInstruction({ programId: "SomeOtherProgram111111111111111111111111111" }), programId
+    )).toBeNull();
+    expect(parseCreateClaimInstruction(claimInstruction({
+      discriminator: createHash("sha256").update("global:finalize_claimed").digest().subarray(0, 8)
+    }), programId)).toBeNull();
+    expect(parseCreateClaimInstruction(claimInstruction({ data: undefined }), programId)).toBeNull();
+    expect(parseCreateClaimInstruction(claimInstruction({ data: "0OIl-not-base58" }), programId)).toBeNull();
+  });
+
+  it("matches the account order and argument list declared in the Payroll Program source", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../../../../../programs/payroll/src/lib.rs", import.meta.url)),
+      "utf8"
+    );
+    const handler = /pub fn create_claim\(([\s\S]*?)\)\s*->\s*Result<\(\)>/.exec(source);
+    expect(handler).not.toBeNull();
+    const args = [...handler![1]!.matchAll(/^\s*(\w+):/gm)].map((match) => match[1]);
+    // The parser reads data in exactly this order (after the 8-byte discriminator).
+    expect(args).toEqual([
+      "ctx", "claim_id", "allocation_commitment", "amount_commitment",
+      "amount_commitment_leaf_index", "amount_commitment_proof", "escrow_token_account"
+    ]);
+    const accountsStruct = /pub struct CreateClaim<'info> \{([\s\S]*?)\n\}/.exec(source);
+    expect(accountsStruct).not.toBeNull();
+    const accounts = [...accountsStruct![1]!.matchAll(/^\s*pub (\w+):/gm)].map((match) => match[1]);
+    // The parser reads accounts in exactly this order.
+    expect(accounts).toEqual([
+      "authority", "payer", "contributor", "workspace", "claim", "system_program"
+    ]);
   });
 });
