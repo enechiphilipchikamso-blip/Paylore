@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { describeClientError } from "./client-error-message";
 import { describeGasTankError } from "./gas-tank-error-messages";
+import { describeFundingPending } from "./payroll-claim-escrow-funding-messages";
 
 type FundingStatus = "funded" | "pending" | "retry_ready" | "workspace_busy";
 
@@ -55,16 +56,18 @@ export function PayrollClaimEscrowFundingAction({
         status?: FundingStatus;
         signature?: string;
         warning?: string;
+        stage?: string;
         error?: string;
       } | null;
       if (response.ok && result?.status === "funded") {
-        setPending(false);
-        setMessage({
-          state: "success",
-          text: result.warning === "proof_context_cleanup_pending"
-            ? `The claim escrow is funded and verified. Proof-context cleanup is still pending. ${result.signature ? `Transaction: ${result.signature}` : ""}`
-            : `The claim escrow is funded and verified. ${result.signature ? `Transaction: ${result.signature}` : ""}`
-        });
+        const cleanupPending = result.warning === "proof_context_cleanup_pending";
+        setPending(cleanupPending);
+        setMessage(cleanupPending
+          ? { state: "partial", text: describeFundingPending("proof_cleanup_pending", result.signature) }
+          : {
+              state: "success",
+              text: `The claim escrow is funded and verified. ${result.signature ? `Transaction: ${result.signature}` : ""}`.trim()
+            });
         router.refresh();
         return;
       }
@@ -72,7 +75,7 @@ export function PayrollClaimEscrowFundingAction({
         setPending(true);
         setMessage({
           state: "partial",
-          text: `Escrow funding is still being reconciled. Retry this same action to check the existing operation; do not start another transfer.${result.signature ? ` Transaction: ${result.signature}` : ""}`
+          text: describeFundingPending(result.stage, result.signature)
         });
         return;
       }
@@ -80,7 +83,7 @@ export function PayrollClaimEscrowFundingAction({
         setPending(false);
         setMessage({
           state: "error",
-          text: "The funding transaction did not finalize. The allocation remains unclaimed and no escrow funding was recorded. Review the reserve balance before retrying."
+          text: "The funding attempt did not finalize and no transfer was recorded, so no funds moved. The hold on this allocation was released; you can fund the escrow again."
         });
         router.refresh();
         return;
@@ -133,7 +136,7 @@ export function PayrollClaimEscrowFundingAction({
         aria-busy={busy}
         onClick={() => void fundEscrow()}
       >
-        {busy ? "Funding claim escrow…" : pending ? "Check escrow funding" : "Fund claim escrow"}
+        {busy ? (pending ? "Checking funding…" : "Funding claim escrow…") : pending ? "Check funding" : "Fund claim escrow"}
       </button>
       {message ? (
         <div

@@ -193,10 +193,14 @@ export default async function PayrollRunDetailPage({
                 const eligibility = assessPayrollRecoveryEligibility({
                   claimState: allocation.status,
                   claimAddress: allocation.claimAddress,
-                  escrowStatus: allocation.escrowStatus
+                  escrowStatus: allocation.escrowStatus,
+                  settlementSignature: allocation.settlementSignature
                 });
                 const canRecover = eligibility.state === "eligible" || eligibility.state === "reconcile";
-                const allocationStatus = statusView(ALLOCATION_STATUS, allocation.status);
+                // Funding holds the allocation in settlement_pending; say so instead of implying a claim is settling.
+                const allocationStatus = eligibility.state === "funding_hold"
+                  ? { label: "Escrow funding hold", tone: "partial" as const }
+                  : statusView(ALLOCATION_STATUS, allocation.status);
                 return (
                   <li className="payroll-allocation" id={`allocation-${allocation.id}`} key={allocation.id}>
                     <div className="payroll-allocation__header">
@@ -234,6 +238,13 @@ export default async function PayrollRunDetailPage({
                                 programId={payrollProgramId}
                                 canRecover={canRecover}
                               />
+                            ) : eligibility.state === "funding_hold" ? (
+                              <>
+                                {eligibility.label}{" "}
+                                <Link href={`/workspace/${workspaceId}/recovery/${payrollRun.run.id}/${allocation.id}`}>
+                                  Check funding
+                                </Link>
+                              </>
                             ) : eligibility.label}
                           </dd>
                         </div>

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "./client";
-import { listWorkspacePayrollRecoveryQueue, recordPayrollRecovery } from "./repositories";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { getWorkspacePayrollRecoveryQueue, listWorkspacePayrollRecoveryQueue, recordPayrollRecovery } from "./repositories";
 
 function query(result: unknown) {
   const builder: Record<string, any> = {};
@@ -60,6 +61,28 @@ describe("workspace payroll recovery queue query", () => {
     expect(builder.where).toHaveBeenCalledTimes(1);
     expect(builder.orderBy).toHaveBeenCalledTimes(1);
     expect(builder.limit).not.toHaveBeenCalled();
+  });
+});
+
+describe("recovery queue for Claim escrow funding", () => {
+  it("lists unclaimed allocations and allocations held by a funding lock, with their escrow state", async () => {
+    const rows = [
+      { id: "allocation-a", status: "unclaimed", escrowStatus: "funded", escrowFundingSignature: "sig-a" },
+      { id: "allocation-b", status: "settlement_pending", escrowStatus: "funding", escrowFundingSignature: null }
+    ];
+    const builder = query(rows);
+    const db = { select: vi.fn(() => builder) } as unknown as Database;
+
+    await expect(getWorkspacePayrollRecoveryQueue(db, "workspace-a")).resolves.toEqual(rows);
+
+    expect(builder.leftJoin).toHaveBeenCalledTimes(1);
+    const condition = new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]);
+    expect(condition.params).toEqual(expect.arrayContaining([
+      "workspace-a", "unclaimed", "settlement_pending", "ready", "funding", "funded"
+    ]));
+    // A recorded settlement signature means a contributor claim holds the lock, so it is not listed.
+    expect(condition.sql).toContain("\"settlement_signature\" is null");
+    expect(condition.sql).toContain("\"claim_address\" is not null");
   });
 });
 

@@ -37,7 +37,9 @@ import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
-import { classifyTransactionFinality, getProofContextAddresses } from "./payroll-confidential-settlement-policy";
+import {
+  classifyTransactionFinality, getProofContextAddresses, pickContextStateAuthority
+} from "./payroll-confidential-settlement-policy";
 import { configuredRpcEndpoint } from "./rpc-configured";
 
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
@@ -239,23 +241,36 @@ async function cleanupRecoveryProofContexts(
   gasSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
   input: { workspaceId: string; allocationId: string; addresses: string[] }
 ): Promise<boolean> {
-  let resolved = true;
-  for (const addressText of new Set(input.addresses)) {
+  // The Gas Tank pays for and owns these contexts, and only a context's recorded
+  // authority can close it, so the authority is read from each account.
+  const addressEncoder = getAddressEncoder();
+  const candidates = [gasSigner, signer].flatMap((candidate) => {
+    try {
+      return [{ signer: candidate, addressBytes: new Uint8Array(addressEncoder.encode(address(candidate.address))) }];
+    } catch {
+      return [];
+    }
+  });
+  const closeContext = async (addressText: string): Promise<boolean> => {
     try {
       const account = await fetchEncodedAccount(rpc, address(addressText));
-      if (!account.exists) continue;
-      if (account.programAddress !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) { resolved = false; continue; }
+      if (!account.exists) return true;
+      if (account.programAddress !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) return false;
+      const authority = pickContextStateAuthority(account.data, candidates);
+      if (!authority) return false;
       const close = closeContextStateProof({
         contextState: address(addressText),
-        authority: signer,
-        destination: address(signer.address)
+        authority,
+        destination: address(authority.address)
       });
       const result = await executePlan(rpc, gasSigner, singleInstructionPlan(close), undefined, [signer]);
-      if (!result.successful || result.pending || result.trackingFailed) resolved = false;
+      return result.successful && !result.pending && !result.trackingFailed;
     } catch {
-      resolved = false;
+      return false;
     }
-  }
+  };
+  // Independent closes confirm together rather than one finality wait after another.
+  const resolved = (await Promise.all([...new Set(input.addresses)].map(closeContext))).every(Boolean);
   if (!resolved) return false;
   return clearPayrollClaimEscrowProofContexts(db, {
     workspaceId: input.workspaceId, allocationId: input.allocationId, phase: "recovery"

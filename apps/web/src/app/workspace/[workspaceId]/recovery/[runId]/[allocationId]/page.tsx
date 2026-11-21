@@ -9,6 +9,11 @@ import {
   WorkspaceNavigation
 } from "../../../../../../components/workspace/WorkspaceNavigation";
 import { loadPayloreConfig } from "../../../../../../server/config";
+import {
+  describePayrollFundingHold,
+  isPayrollFundingHold
+} from "../../../../../../server/payroll-recovery-queue-policy";
+import { isOrphanedAttempt } from "../../../../../../server/solana/payroll-confidential-settlement-policy";
 import { getWorkspacePageContext } from "../../../../../../server/workspace-page-context";
 import { getFinalizedPayrollClaimState, type FinalizedPayrollClaimState } from "../../../../../../server/solana/payroll-program-verification";
 
@@ -83,10 +88,28 @@ export default async function WorkspaceRecoveryDetailPage({
     escrow?.status === "ready" &&
     finalizedClaimState?.status === "unclaimed" &&
     !finalizedClaimState.escrowFunded;
-  const canReconcileFunding = escrow?.status === "funding" &&
+  // Funding holds the allocation in settlement_pending for its whole attempt. A hold with no
+  // settlement transaction is checked from here, whatever the escrow reached, and does not
+  // depend on the chain read below: the server verifies the chain itself.
+  const fundingHold = isPayrollFundingHold({
+    claimState: allocation.status,
+    escrowStatus: escrow?.status ?? null,
+    settlementSignature: allocation.settlementSignature
+  });
+  const fundingHoldReason = fundingHold
+    ? describePayrollFundingHold({
+        escrowStatus: escrow?.status ?? null,
+        fundingSignature: escrow?.fundingSignature ?? null,
+        stale: isOrphanedAttempt(allocation.updatedAt)
+      })
+    : null;
+  const canReconcileFunding = (escrow?.status === "funding" &&
     (allocation.status === "unclaimed" || allocation.status === "settlement_pending") &&
     allocation.settlementSignature === null &&
-    finalizedClaimState?.status === "unclaimed";
+    finalizedClaimState?.status === "unclaimed") ||
+    (fundingHold &&
+      finalizedClaimState?.status !== "claimed" &&
+      finalizedClaimState?.status !== "recovered");
   const fundingAvailable = Boolean(escrow?.tokenAccountAddress) &&
     (canStartFunding || canReconcileFunding);
 
@@ -119,7 +142,13 @@ export default async function WorkspaceRecoveryDetailPage({
           <div><dt>Claim PDA</dt><dd><code>{allocation.claimAddress}</code></dd></div>
           <div><dt>Confidential escrow</dt><dd><code>{escrow?.tokenAccountAddress ?? "Not prepared"}</code></dd></div>
           <div><dt>Escrow funding</dt><dd>{
-            finalizedClaimState?.escrowFunded && escrow?.status === "funded"
+            fundingHold
+              ? escrow?.status === "funded"
+                ? "Funded; the hold on this allocation is not released yet"
+                : escrow?.status === "funding"
+                  ? "Funding in progress or stopped; check funding to verify it"
+                  : "Funding attempt stopped before any transfer was recorded"
+              : finalizedClaimState?.escrowFunded && escrow?.status === "funded"
               ? "Funded"
               : finalizedClaimState?.status === "unclaimed" &&
                   !finalizedClaimState.escrowFunded && escrow?.status === "funded"
@@ -146,6 +175,11 @@ export default async function WorkspaceRecoveryDetailPage({
           <div className="state-callout" data-state="partial" role="status">
             <span className="state-callout__signal" aria-hidden="true" />
             <p>This allocation is already recorded as recovered. No second recovery may be submitted.</p>
+          </div>
+        ) : fundingHoldReason && finalizedClaimState?.status !== "settlement_pending" ? (
+          <div className="state-callout" data-state="partial" role="status">
+            <span className="state-callout__signal" aria-hidden="true" />
+            <p>This allocation is held by claim escrow funding, not by a contributor claim. {fundingHoldReason}</p>
           </div>
         ) : finalizedClaimState?.status === "settlement_pending" || allocation.status === "settlement_pending" ? (
           <div className="state-callout" data-state="partial" role="status">
@@ -182,8 +216,10 @@ export default async function WorkspaceRecoveryDetailPage({
 
       {fundingAvailable ? (
         <section className="surface-card" aria-labelledby="claim-escrow-funding-heading">
-          <h3 id="claim-escrow-funding-heading">Fund claim escrow</h3>
-          <p>Move this allocation’s exact amount from the workspace Confidential Payroll Reserve into its claim escrow. This does not claim or recover the allocation.</p>
+          <h3 id="claim-escrow-funding-heading">{canReconcileFunding ? "Check claim escrow funding" : "Fund claim escrow"}</h3>
+          <p>{canReconcileFunding
+            ? "A funding attempt exists for this allocation. Checking verifies it on-chain, records the result and releases the hold, or rolls the attempt back when no transfer was made. It never starts a second transfer."
+            : "Move this allocation’s exact amount from the workspace Confidential Payroll Reserve into its claim escrow. This does not claim or recover the allocation."}</p>
           <PayrollClaimEscrowFundingAction
             workspaceId={workspaceId}
             runId={runId}

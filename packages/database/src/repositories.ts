@@ -4661,6 +4661,15 @@ export async function listContributorPayrollAllocations(
     .limit(100);
 }
 
+/**
+ * Allocations an administrator can act on from Recovery: allocations stored as
+ * unclaimed, and allocations held in settlement_pending by Claim escrow funding.
+ * Funding takes the settlement lock for its whole attempt, so a funding that is
+ * waiting on the network, or that stopped before releasing it, would otherwise
+ * drop out of this list while still blocking the workspace. A recorded settlement
+ * signature means a contributor claim owns the lock, and that is not listed.
+ * Read-only: it relies on existing columns and changes no table.
+ */
 export async function getWorkspacePayrollRecoveryQueue(
   db: Database,
   workspaceId: string
@@ -4675,6 +4684,9 @@ export async function getWorkspacePayrollRecoveryQueue(
       claimId: payrollAllocations.claimId,
       claimAddress: payrollAllocations.claimAddress,
       status: payrollAllocations.status,
+      lockUpdatedAt: payrollAllocations.updatedAt,
+      escrowStatus: payrollClaimEscrows.status,
+      escrowFundingSignature: payrollClaimEscrows.fundingSignature,
       runCreatedAt: payrollRuns.createdAt
     })
     .from(payrollAllocations)
@@ -4692,11 +4704,26 @@ export async function getWorkspacePayrollRecoveryQueue(
         eq(contributors.workspaceId, payrollAllocations.workspaceId)
       )
     )
+    .leftJoin(
+      payrollClaimEscrows,
+      and(
+        eq(payrollClaimEscrows.allocationId, payrollAllocations.id),
+        eq(payrollClaimEscrows.workspaceId, payrollAllocations.workspaceId),
+        eq(payrollClaimEscrows.payrollRunId, payrollAllocations.payrollRunId)
+      )
+    )
     .where(
       and(
         eq(payrollAllocations.workspaceId, workspaceId),
-        eq(payrollAllocations.status, "unclaimed"),
-        isNotNull(payrollAllocations.claimAddress)
+        isNotNull(payrollAllocations.claimAddress),
+        or(
+          eq(payrollAllocations.status, "unclaimed"),
+          and(
+            eq(payrollAllocations.status, "settlement_pending"),
+            isNull(payrollAllocations.settlementSignature),
+            inArray(payrollClaimEscrows.status, ["ready", "funding", "funded"])
+          )
+        )
       )
     )
     .orderBy(asc(payrollRuns.createdAt), asc(payrollAllocations.createdAt));

@@ -79,3 +79,68 @@ export function matchesExactConfidentialDebit(input: {
   const after = BigInt(input.sourceAvailableAfter);
   return before >= after && before - after === amount;
 }
+
+/**
+ * A proof-context lock older than this cannot belong to a request that is still
+ * running (synchronous functions stop within a minute), so it is an orphan left
+ * by a crashed or timed-out request and may be rolled back by an administrator.
+ */
+export const ORPHANED_ATTEMPT_AFTER_MS = 3 * 60 * 1000;
+
+/** True only for a recorded timestamp older than the orphan threshold; a missing timestamp is never stale. */
+export function isOrphanedAttempt(updatedAt: Date | null | undefined, now: number = Date.now()): boolean {
+  return updatedAt instanceof Date && now - updatedAt.getTime() > ORPHANED_ATTEMPT_AFTER_MS;
+}
+
+/** The ZK ElGamal proof program stores the context-state authority in the first 32 bytes of the account. */
+export function readContextStateAuthority(data: unknown): Uint8Array | null {
+  if (!(data instanceof Uint8Array) || data.length < 33) return null;
+  return data.subarray(0, 32);
+}
+
+function sameBytes(left: ArrayLike<number>, right: ArrayLike<number>): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+/**
+ * Picks the signer that is the recorded authority of a proof context. Only the
+ * authority can close it, and it is whichever account paid for the proof
+ * transactions (the Gas Tank), so the signer is read from the account instead of assumed.
+ */
+export function pickContextStateAuthority<T extends { address: string }>(
+  data: unknown,
+  candidates: ReadonlyArray<{ signer: T; addressBytes: Uint8Array }>
+): T | null {
+  const authority = readContextStateAuthority(data);
+  if (!authority) return null;
+  return candidates.find((candidate) => sameBytes(candidate.addressBytes, authority))?.signer ?? null;
+}
+
+const RESERVE_STATE_DISCRIMINATOR_LENGTH = 8;
+const RESERVE_STATE_ADDRESS_LENGTH = 32;
+
+/**
+ * Reads the on-chain WorkspaceReserveState (workspace, reserve authority, reserve
+ * token account, mint). ConfigureWorkspaceReserve is idempotent for an identical
+ * configuration, so an already matching state needs no transaction — and no wait
+ * for finality — on every funding or claim request.
+ */
+export function matchesConfiguredReserveState(
+  data: unknown,
+  expected: { workspace: Uint8Array; reserveAuthority: Uint8Array; reserveToken: Uint8Array; mint: Uint8Array }
+): boolean {
+  if (!(data instanceof Uint8Array) ||
+      data.length < RESERVE_STATE_DISCRIMINATOR_LENGTH + RESERVE_STATE_ADDRESS_LENGTH * 4 + 1) return false;
+  const field = (index: number) => data.subarray(
+    RESERVE_STATE_DISCRIMINATOR_LENGTH + index * RESERVE_STATE_ADDRESS_LENGTH,
+    RESERVE_STATE_DISCRIMINATOR_LENGTH + (index + 1) * RESERVE_STATE_ADDRESS_LENGTH
+  );
+  return sameBytes(field(0), expected.workspace) &&
+    sameBytes(field(1), expected.reserveAuthority) &&
+    sameBytes(field(2), expected.reserveToken) &&
+    sameBytes(field(3), expected.mint);
+}

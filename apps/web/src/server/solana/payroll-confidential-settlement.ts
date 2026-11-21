@@ -41,7 +41,8 @@ import { verifyPayrollClaimTransaction } from "./payroll-program-verification";
 import { PayrollClaimVerificationError } from "./payroll-claim-verification-error";
 import {
   bindSettlementPendingStateToConfidentialTransfer, classifyTransactionFinality,
-  getProofContextAddresses, matchesExactConfidentialDebit
+  getProofContextAddresses, isOrphanedAttempt, matchesConfiguredReserveState,
+  matchesExactConfidentialDebit, pickContextStateAuthority
 } from "./payroll-confidential-settlement-policy";
 import { reconcileFinalizedSettlement } from "./payroll-settlement-reconciliation";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
@@ -73,10 +74,26 @@ export type PayrollSettlementResult = {
   warning?: "proof_context_cleanup_pending";
 };
 
+/**
+ * Why a funding request did not finish. Reported with every non-funded result so
+ * the administrator, the page, and the server log can say what is outstanding
+ * instead of a bare "pending".
+ */
+export type PayrollClaimEscrowFundingStage =
+  | "claim_settlement_in_progress"
+  | "funding_in_progress"
+  | "proof_setup_unconfirmed"
+  | "transfer_unconfirmed"
+  | "transfer_outcome_unknown"
+  | "balances_unverified"
+  | "proof_cleanup_pending"
+  | "lock_release_pending";
+
 export type PayrollClaimEscrowFundingResult = {
   status: "funded" | "pending" | "retry_ready" | "workspace_busy";
   signature?: string;
   warning?: "proof_context_cleanup_pending";
+  stage?: PayrollClaimEscrowFundingStage;
 };
 
 export class PayrollConfidentialSettlementError extends Error {
@@ -203,37 +220,89 @@ async function executePlan(
     throw error;
   }
 }
+type KeySigner = Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+
+/**
+ * Closes the proof contexts of one confidential transfer. The Gas Tank pays for
+ * and owns those contexts, and only a context's recorded authority may close it,
+ * so the authority is read from each account. The Gas Tank is always the fee
+ * payer: the reserve authority holds no SOL.
+ */
 export async function cleanupProofContexts(
   db: Database,
   rpc: ReturnType<typeof createSolanaRpc>,
-  signer: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>,
+  signer: KeySigner,
+  gasSigner: KeySigner,
   input: { workspaceId: string; runId: string; allocationId: string; addresses: string[] }
 ): Promise<boolean> {
-  let allContextsResolved = true;
-  for (const addressText of new Set(input.addresses)) {
+  const addressEncoder = getAddressEncoder();
+  const candidates = [gasSigner, signer].flatMap((candidate) => {
+    try {
+      return [{ signer: candidate, addressBytes: new Uint8Array(addressEncoder.encode(address(candidate.address))) }];
+    } catch {
+      return [];
+    }
+  });
+  const closeContext = async (addressText: string): Promise<boolean> => {
     try {
       const encoded = await fetchEncodedAccount(rpc, address(addressText));
-      if (!encoded.exists) continue;
+      if (!encoded.exists) return true;
       const owner = encoded.programAddress ?? object(encoded)?.owner;
-      if (owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) {
-        allContextsResolved = false;
-        continue;
-      }
+      if (owner !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) return false;
+      const authority = pickContextStateAuthority(object(encoded)?.data, candidates);
+      if (!authority) return false;
       const ix = closeContextStateProof({
         contextState: address(addressText),
-        authority: signer,
-        destination: address(signer.address)
+        authority,
+        destination: address(authority.address)
       });
-      const result = await executePlan(rpc, signer, singleInstructionPlan(ix));
-      if (!result.successful || result.pending || result.trackingFailed) {
-        allContextsResolved = false;
-      }
+      const result = await executePlan(rpc, gasSigner, singleInstructionPlan(ix), undefined, [signer]);
+      return result.successful && !result.pending && !result.trackingFailed;
     } catch {
-      allContextsResolved = false;
+      return false;
     }
-  }
+  };
+  // The closes are independent, so they confirm together instead of one finality
+  // wait after another (three in a row would outlast a synchronous request).
+  const resolved = await Promise.all([...new Set(input.addresses)].map(closeContext));
   // Durable tracking is retained unless every known context is absent or finalized closed.
-  return allContextsResolved ? clearPayrollSettlementProofContexts(db, input) : false;
+  return resolved.every(Boolean) ? clearPayrollSettlementProofContexts(db, input) : false;
+}
+
+/**
+ * Ensures the program's WorkspaceReserveState matches this reserve. The program
+ * treats an identical configuration as a no-op, so an already matching state is
+ * not re-sent: that transaction cost a finality wait on every request and, with
+ * the proof steps, pushed funding past the platform's time limit.
+ */
+async function ensureReserveProgramConfigured(input: {
+  rpc: ReturnType<typeof createSolanaRpc>;
+  gasSigner: KeySigner;
+  signer: KeySigner;
+  programId: string; authority: string; workspace: string; reserveState: string;
+  reserveToken: string; mint: string;
+}): Promise<void> {
+  try {
+    const encoder32 = getAddressEncoder();
+    const encoded = await fetchEncodedAccount(input.rpc, address(input.reserveState));
+    if (encoded.exists && (encoded.programAddress ?? object(encoded)?.owner) === input.programId &&
+        matchesConfiguredReserveState(object(encoded)?.data, {
+          workspace: new Uint8Array(encoder32.encode(address(input.workspace))),
+          reserveAuthority: new Uint8Array(encoder32.encode(address(input.signer.address))),
+          reserveToken: new Uint8Array(encoder32.encode(address(input.reserveToken))),
+          mint: new Uint8Array(encoder32.encode(address(input.mint)))
+        })) return;
+  } catch {
+    // An unreadable state falls through to the idempotent configuration below.
+  }
+  const configured = await executePlan(input.rpc, input.gasSigner, singleInstructionPlan(configureReserveInstruction({
+    programId: input.programId, authority: input.authority, workspace: input.workspace,
+    reserveState: input.reserveState, payer: input.gasSigner.address,
+    reserveAuthority: input.signer.address, reserveToken: input.reserveToken, mint: input.mint
+  })), undefined, [input.signer]);
+  if (!configured.successful || configured.pending || configured.trackingFailed) {
+    throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
+  }
 }
 export async function proofSetupFinality(
   rpc: ReturnType<typeof createSolanaRpc>,
@@ -654,8 +723,15 @@ async function fundPayrollClaimEscrow(
     allocationCommitment: string; amountCommitment: string;
     proofContexts: string[]; contextSignatures: string[];
   }
-): Promise<{ status: "funded" | "pending" | "retry_ready"; signature?: string; warning?: "proof_context_cleanup_pending" }> {
+): Promise<{
+  status: "funded" | "pending" | "retry_ready"; signature?: string;
+  warning?: "proof_context_cleanup_pending"; stage?: PayrollClaimEscrowFundingStage;
+}> {
   const amount = BigInt(input.amountBaseUnits);
+  // The proof contexts this attempt created are tracked here as well as in the
+  // database: reconciling within the same request must close those, not the
+  // (empty) list the allocation held before the attempt began.
+  let contexts = input.proofContexts;
   let escrow = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
   if (!escrow || escrow.payrollRunId !== input.runId || escrow.claimId !== input.claimId ||
       escrow.tokenAccountAddress !== input.escrowTokenAccount) {
@@ -714,9 +790,9 @@ async function fundPayrollClaimEscrow(
           destinationPending !== 0n || !claim || claim.status !== "unclaimed" || claim.escrowFunded) {
         return { status: "pending" as const, signature };
       }
-      const cleaned = await cleanupProofContexts(db, rpc, signer, {
+      const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId, runId: input.runId,
-        allocationId: input.allocationId, addresses: input.proofContexts
+        allocationId: input.allocationId, addresses: contexts
       });
       if (!cleaned) return { status: "pending" as const, signature, warning: "proof_context_cleanup_pending" as const };
       const reset = await resetFailedPayrollClaimEscrowFunding(db, {
@@ -767,12 +843,16 @@ async function fundPayrollClaimEscrow(
     if (recorded.status !== "funded" && recorded.status !== "duplicate") {
       return { status: "pending" as const, signature };
     }
-    const cleaned = await cleanupProofContexts(db, rpc, signer, {
+    const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, runId: input.runId,
-      allocationId: input.allocationId, addresses: input.proofContexts
+      allocationId: input.allocationId, addresses: contexts
     });
+    // The funding itself is verified and recorded; an unfinished cleanup is a warning, not a pending funding.
     return cleaned ? { status: "funded" as const, signature }
-      : { status: "pending" as const, signature, warning: "proof_context_cleanup_pending" as const };
+      : {
+        status: "funded" as const, signature,
+        warning: "proof_context_cleanup_pending" as const, stage: "proof_cleanup_pending" as const
+      };
   };
 
   if (escrow.status === "funded") {
@@ -812,29 +892,53 @@ async function fundPayrollClaimEscrow(
       claim: input.claim, claimId: input.claimId, allocationCommitment: input.allocationCommitment,
       amountCommitment: input.amountCommitment, escrowTokenAccount: input.escrowTokenAccount
     }).catch(() => null);
-    if (!claim || claim.status !== "unclaimed" || claim.escrowFunded) return { status: "pending" };
+    if (!claim || claim.status !== "unclaimed" || claim.escrowFunded) {
+      return { status: "pending", stage: "balances_unverified" };
+    }
     const balances = await readBalances();
+    if (escrow.fundingSourceAvailableBefore === null && escrow.fundingDestinationAvailableBefore === null &&
+        isOrphanedAttempt(escrow.updatedAt)) {
+      // The balance snapshot is recorded before any proof or transfer is sent, so
+      // none was sent. The request that began funding is gone: roll back its lock.
+      const abandoned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
+        workspaceId: input.workspaceId, runId: input.runId,
+        allocationId: input.allocationId, addresses: contexts
+      });
+      if (!abandoned) {
+        return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+      }
+      const abandonedReset = await resetFailedPayrollClaimEscrowFunding(db, {
+        workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
+      });
+      const abandonedReleased = await releaseUnsubmittedPayrollSettlementAttempt(db, {
+        workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+      });
+      return abandonedReset && abandonedReleased
+        ? { status: "retry_ready" } : { status: "pending", stage: "lock_release_pending" };
+    }
     if (escrow.fundingSourceAvailableBefore === null || escrow.fundingDestinationAvailableBefore === null ||
         balances.source.confidential.availableBalance.toString() !== escrow.fundingSourceAvailableBefore ||
         balances.destination.confidential.availableBalance.toString() !== escrow.fundingDestinationAvailableBefore ||
         balances.destination.confidential.pendingBalance !== 0n) {
-      return { status: "pending" };
+      return { status: "pending", stage: "balances_unverified" };
     }
     const finality = input.contextSignatures.length
       ? await proofSetupFinality(rpc, input.contextSignatures) : "finalized";
-    if (finality === "pending") return { status: "pending" };
-    const cleaned = await cleanupProofContexts(db, rpc, signer, {
+    if (finality === "pending") return { status: "pending", stage: "proof_setup_unconfirmed" };
+    const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, runId: input.runId,
-      allocationId: input.allocationId, addresses: input.proofContexts
+      allocationId: input.allocationId, addresses: contexts
     });
-    if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
+    if (!cleaned) {
+      return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+    }
     const reset = await resetFailedPayrollClaimEscrowFunding(db, {
       workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
     });
     const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
     });
-    return reset && released ? { status: "retry_ready" } : { status: "pending" };
+    return reset && released ? { status: "retry_ready" } : { status: "pending", stage: "lock_release_pending" };
   }
 
   if (escrow.status !== "ready") {
@@ -844,7 +948,9 @@ async function fundPayrollClaimEscrow(
     workspaceId: input.workspaceId, allocationId: input.allocationId
   });
   if (started.status === "funded") return { status: "funded" };
-  if (started.status === "pending") return { status: "pending", signature: started.signature };
+  if (started.status === "pending") {
+    return { status: "pending", signature: started.signature, stage: "funding_in_progress" };
+  }
   if (started.status !== "started") {
     throw new PayrollConfidentialSettlementError("payroll_claim_escrow_not_ready", 409);
   }
@@ -879,17 +985,29 @@ async function fundPayrollClaimEscrow(
     sourceAvailableBefore: sourceBefore, destinationAvailableBefore: destinationBefore
   });
   if (prepared.status !== "prepared" && prepared.status !== "duplicate") {
+    // Nothing was submitted, so release the locks taken above instead of stranding them.
+    await resetFailedPayrollClaimEscrowFunding(db, {
+      workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
+    });
+    await releaseUnsubmittedPayrollSettlementAttempt(db, {
+      workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+    });
     throw new PayrollConfidentialSettlementError("payroll_claim_escrow_state_conflict", 409);
   }
 
-  let contexts = input.proofContexts;
+  let stage: "proof_setup" | "transfer" = "proof_setup";
   try {
     const mintAccount = (await fetchMint(rpc, address(input.mint))).data;
     const rawPlan = await getConfidentialTransferInstructionPlan({
       sourceToken: address(input.reserveToken), mint: address(input.mint), mintAccount,
       destinationToken: address(input.escrowTokenAccount),
       sourceTokenAccount: before.source.token, destinationTokenAccount: before.destination.token,
-      authority: signer, amount, sourceElgamalKeypair: elgamal, aesKey, payer: signer, rpc
+      authority: signer, amount, sourceElgamalKeypair: elgamal, aesKey,
+      // The Gas Tank pays every network fee and the proof-context rent, and owns
+      // the contexts. The reserve authority holds no SOL and only signs as owner:
+      // making it the payer failed this step at preflight, before any signature
+      // existed, which left the allocation "Settlement pending".
+      payer: gasSigner, rpc
     });
     const transferPlan = rawPlan;
     if (transferPlan.kind !== "sequential" || transferPlan.plans.length !== 3 ||
@@ -918,20 +1036,24 @@ async function fundPayrollClaimEscrow(
         workspaceId: input.workspaceId, runId: input.runId,
         allocationId: input.allocationId, signature
       })) throw new Error("Escrow proof setup signature persistence failed.");
-    });
-    if (setup.pending) return { status: "pending", signature: setup.signatures.at(-1) };
+    }, [signer]);
+    if (setup.pending) {
+      return { status: "pending", signature: setup.signatures.at(-1), stage: "proof_setup_unconfirmed" };
+    }
     if (!setup.successful || setup.trackingFailed) {
-      const cleaned = await cleanupProofContexts(db, rpc, signer, {
+      const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: contexts
       });
-      if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
+      if (!cleaned) {
+        return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+      }
       const reset = await resetFailedPayrollClaimEscrowFunding(db, {
         workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
       });
       const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
         workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
       });
-      return reset && released ? { status: "retry_ready" } : { status: "pending" };
+      return reset && released ? { status: "retry_ready" } : { status: "pending", stage: "lock_release_pending" };
     }
 
     const atomicPlan = nonDivisibleSequentialInstructionPlan([
@@ -943,6 +1065,9 @@ async function fundPayrollClaimEscrow(
         amountCommitmentContext: amountContext
       })
     ]);
+    // From here a transaction may reach the cluster even if its response is lost,
+    // so a failure can no longer be rolled back without checking the chain.
+    stage = "transfer";
     const submission = await executePlan(rpc, gasSigner, atomicPlan, async (signature) => {
       const attached = await attachPayrollClaimEscrowFundingSignature(db, {
         workspaceId: input.workspaceId, allocationId: input.allocationId, signature,
@@ -954,20 +1079,22 @@ async function fundPayrollClaimEscrow(
         });
         throw new Error("Escrow funding submission is awaiting durable reconciliation.");
       }
-    });
+    }, [signer]);
     const signature = submission.signatures.at(-1);
     if (!signature) {
-      const cleaned = await cleanupProofContexts(db, rpc, signer, {
+      const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
         workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: contexts
       });
-      if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
+      if (!cleaned) {
+        return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+      }
       const reset = await resetFailedPayrollClaimEscrowFunding(db, {
         workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
       });
       const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
         workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
       });
-      return reset && released ? { status: "retry_ready" } : { status: "pending" };
+      return reset && released ? { status: "retry_ready" } : { status: "pending", stage: "lock_release_pending" };
     }
     return reconcileFundingSignature(signature);
   } catch (error) {
@@ -979,13 +1106,16 @@ async function fundPayrollClaimEscrow(
     });
     const latest = await getPayrollClaimEscrow(db, input.workspaceId, input.allocationId);
     if (latest?.fundingSignature) return reconcileFundingSignature(latest.fundingSignature);
-    if (latest?.fundingSourceAvailableBefore !== null && latest?.fundingSourceAvailableBefore !== undefined) {
-      return { status: "pending" };
-    }
-    const cleaned = await cleanupProofContexts(db, rpc, signer, {
+    // Before the transfer is submitted nothing can have moved, so the attempt is
+    // rolled back and its locks released. Holding them on any error after the
+    // balance snapshot is what kept an allocation "Settlement pending" forever.
+    if (stage === "transfer") return { status: "pending", stage: "transfer_outcome_unknown" };
+    const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: contexts
     });
-    if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
+    if (!cleaned) {
+      return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+    }
     await resetFailedPayrollClaimEscrowFunding(db, {
       workspaceId: input.workspaceId, allocationId: input.allocationId, signature: null
     });
@@ -1045,10 +1175,27 @@ export async function fundUnclaimedPayrollClaimEscrow(
       !escrow.tokenAccountAddress) {
     throw new PayrollConfidentialSettlementError("payroll_claim_escrow_not_found", 409);
   }
-  if (allocation.status === "settlement_pending" &&
-      (allocation.settlementSignature || escrow.status !== "funding" ||
-       (escrow.fundingSignature === null && escrow.fundingSourceAvailableBefore === null))) {
-    return { status: "pending", signature: allocation.settlementSignature ?? undefined };
+  // A settlement_pending allocation is held by a lock. A recorded settlement
+  // signature means a contributor claim owns it. Otherwise the lock is funding's:
+  // funding that has recorded a snapshot or signature is reconciled below, and a
+  // lock whose request has long since ended is an orphan that is rolled back
+  // here. Only a lock that may still belong to a live request is left alone.
+  const orphanedLock = allocation.status === "settlement_pending" && !allocation.settlementSignature &&
+    (escrow.status === "funding"
+      ? escrow.fundingSignature === null && escrow.fundingSourceAvailableBefore === null
+        && isOrphanedAttempt(escrow.updatedAt)
+      : isOrphanedAttempt(allocation.updatedAt));
+  if (allocation.status === "settlement_pending" && !orphanedLock) {
+    if (allocation.settlementSignature) {
+      return {
+        status: "pending", signature: allocation.settlementSignature,
+        stage: "claim_settlement_in_progress"
+      };
+    }
+    if (escrow.status !== "funding" ||
+        (escrow.fundingSignature === null && escrow.fundingSourceAvailableBefore === null)) {
+      return { status: "pending", stage: "funding_in_progress" };
+    }
   }
   if (allocation.status !== "unclaimed" && allocation.status !== "settlement_pending") {
     throw new PayrollConfidentialSettlementError("payroll_claim_state_conflict", 409);
@@ -1090,7 +1237,26 @@ export async function fundUnclaimedPayrollClaimEscrow(
       }
 
       let ownsSettlementAttempt = false;
-      if (allocation.status === "unclaimed") {
+      let lockedAllocation = allocation.status === "settlement_pending";
+      if (orphanedLock && escrow.status !== "funding") {
+        // Funding ended without releasing its lock (the response was lost, or the
+        // release failed). Close any leftover proof accounts, free the lock, and
+        // continue as a fresh funding of the same allocation.
+        const closed = await cleanupProofContexts(db, rpc, signer, gasSigner, {
+          workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
+          addresses: allocation.settlementProofContextAddresses ?? []
+        });
+        if (!closed) {
+          return { status: "pending", warning: "proof_context_cleanup_pending", stage: "proof_cleanup_pending" };
+        }
+        const freed = await releaseUnsubmittedPayrollSettlementAttempt(db, {
+          workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
+        });
+        if (!freed) return { status: "pending", stage: "lock_release_pending" };
+        if (escrow.status === "funded") return { status: "funded" };
+        lockedAllocation = false;
+      }
+      if (!lockedAllocation) {
         const attempt = await beginPayrollSettlementAttempt(db, {
           workspaceId: input.workspaceId, runId: input.runId,
           allocationId: input.allocationId, claimAddress,
@@ -1143,13 +1309,10 @@ export async function fundUnclaimedPayrollClaimEscrow(
         await ensureReserveConfidentialAccount({
           rpc, signer, mint, mintAccount, tokenAddress: reserveToken, elgamal, aesKey
         });
-        const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
-          programId, authority: evidence.authorityAddress, workspace, reserveState,
-          payer: gasSigner.address, reserveAuthority: signer.address, reserveToken, mint
-        })), undefined, [signer]);
-        if (!configured.successful || configured.pending || configured.trackingFailed) {
-          throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
-        }
+        await ensureReserveProgramConfigured({
+          rpc, gasSigner, signer, programId, authority: evidence.authorityAddress,
+          workspace, reserveState, reserveToken, mint
+        });
 
         let reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
         assertConfidentialAccount(reserveBalance.token, signer.address, mint, "workspace_reserve_confidential_account_not_ready");
@@ -1175,7 +1338,10 @@ export async function fundUnclaimedPayrollClaimEscrow(
         if (amountMaterial.amountCommitment !== amountCommitment) {
           throw new PayrollConfidentialSettlementError("payroll_amount_commitment_mismatch", 409);
         }
-        if (reserveBalance.confidential.availableBalance < amount) {
+        // The reserve only has to cover the amount while the escrow is still to be funded.
+        // Once the transfer has been sent or recorded the reserve is already debited, and
+        // requiring the full amount again would block verifying the funding that took it.
+        if (escrow.status === "ready" && reserveBalance.confidential.availableBalance < amount) {
           const shortfall = amount - reserveBalance.confidential.availableBalance;
           if (reserveBalance.token.amount < shortfall) {
             throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
@@ -1201,7 +1367,7 @@ export async function fundUnclaimedPayrollClaimEscrow(
             reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           }
         }
-        if (reserveBalance.confidential.availableBalance < amount) {
+        if (escrow.status === "ready" && reserveBalance.confidential.availableBalance < amount) {
           throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
         }
 
@@ -1217,16 +1383,21 @@ export async function fundUnclaimedPayrollClaimEscrow(
           proofContexts: allocation.settlementProofContextAddresses ?? [],
           contextSignatures: allocation.settlementContextSignatures ?? []
         });
-        if (funding.status === "funded" && ownsSettlementAttempt) {
+        // Funding holds the settlement lock for its whole attempt, whether this
+        // request took it or an earlier one did (a re-check). Once the funding is
+        // verified the lock must be released, or the allocation reads "Settlement
+        // pending" forever. An unfinished proof cleanup keeps it, with its tracking.
+        if (funding.status === "funded" && !funding.warning && (ownsSettlementAttempt || lockedAllocation)) {
           const released = await releaseUnsubmittedPayrollSettlementAttempt(db, {
             workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId
           });
-          if (!released) return { status: "pending", signature: funding.signature };
+          if (!released) return { status: "pending", signature: funding.signature, stage: "lock_release_pending" };
         }
         return {
           status: funding.status,
           ...(funding.signature ? { signature: funding.signature } : {}),
-          ...(funding.warning ? { warning: funding.warning } : {})
+          ...(funding.warning ? { warning: funding.warning } : {}),
+          ...(funding.stage ? { stage: funding.stage } : {})
         };
         } finally {
           secret.free();
@@ -1345,7 +1516,7 @@ async function reconcileSettlement(
     if (claimState.status !== "unclaimed" || !claimState.escrowFunded) {
       return { status: "state_conflict", signature: input.settlementSignature };
     }
-    const cleaned = await cleanupProofContexts(db, rpc, signer, {
+    const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
       addresses: input.proofContexts
     });
@@ -1420,7 +1591,7 @@ async function reconcileSettlement(
       });
       return tx.status === "claimed" || tx.status === "duplicate" ? tx.status : "conflict";
     },
-    cleanupProofContexts: () => cleanupProofContexts(db, rpc, signer, {
+    cleanupProofContexts: () => cleanupProofContexts(db, rpc, signer, gasSigner, {
       workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId,
       addresses: input.proofContexts
     })
@@ -1604,7 +1775,7 @@ export async function settleContributorPayrollAllocation(
             (claimEscrow.status === "funded" && !claimState.escrowFunded)) {
           return { status: "pending" };
         }
-        const cleaned = await cleanupProofContexts(db, rpc, signer, {
+        const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
           workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: contexts
         });
         if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
@@ -1659,13 +1830,10 @@ export async function settleContributorPayrollAllocation(
         const reserveTokenAccount = (await fetchToken(rpc, address(reserveToken))).data;
         assertConfidentialAccount(reserveTokenAccount, signer.address, mint, "workspace_reserve_confidential_account_not_ready");
         assertConfidentialStepAllowed(sequence, "reserve_configure");
-        const configured = await executePlan(rpc, gasSigner, singleInstructionPlan(configureReserveInstruction({
-          programId, authority: evidence.authorityAddress, workspace, reserveState,
-          payer: gasSigner.address, reserveAuthority: signer.address, reserveToken, mint
-        })), undefined, [signer]);
-        if (!configured.successful || configured.pending || configured.trackingFailed) {
-          throw new PayrollConfidentialSettlementError("reserve_program_configuration_failed", 503);
-        }
+        await ensureReserveProgramConfigured({
+          rpc, gasSigner, signer, programId, authority: evidence.authorityAddress,
+          workspace, reserveState, reserveToken, mint
+        });
         sequence = advanceConfidentialSequence(sequence, "reserve_configure", "finalized");
 
         let reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
@@ -1693,7 +1861,10 @@ export async function settleContributorPayrollAllocation(
         if (amountCommitment !== amountCommitmentMaterial.amountCommitment) {
           throw new PayrollConfidentialSettlementError("payroll_amount_commitment_mismatch", 409);
         }
-        if (reserveBalance.confidential.availableBalance < amount) {
+        // The reserve only has to cover the amount while the escrow is still to be funded.
+        // Once the transfer has been sent or recorded the reserve is already debited, and
+        // requiring the full amount again would block verifying the funding that took it.
+        if (claimEscrow.status === "ready" && reserveBalance.confidential.availableBalance < amount) {
           const shortfall = amount - reserveBalance.confidential.availableBalance;
           if (reserveBalance.token.amount < shortfall) {
             throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
@@ -1723,7 +1894,7 @@ export async function settleContributorPayrollAllocation(
             reserveBalance = await readReserveBalance(rpc, reserveToken, secret, aesKey);
           }
         }
-        if (reserveBalance.confidential.availableBalance < amount) {
+        if (claimEscrow.status === "ready" && reserveBalance.confidential.availableBalance < amount) {
           throw new PayrollConfidentialSettlementError("reserve_confidential_balance_insufficient", 409);
         }
 
@@ -1736,7 +1907,9 @@ export async function settleContributorPayrollAllocation(
           proofContexts,
           contextSignatures: allocation.settlementContextSignatures ?? []
         });
-        if (funding.status === "pending") {
+        // A funded escrow whose proof cleanup is unfinished still tracks those
+        // contexts; the claim waits so that tracking is not dropped below.
+        if (funding.status === "pending" || funding.warning) {
           return {
             status: "pending", signature: funding.signature,
             ...(funding.warning ? { warning: funding.warning } : {})
@@ -1809,7 +1982,7 @@ export async function settleContributorPayrollAllocation(
         }, [signer]);
         if (setup.pending) return { status: "pending", signature: setup.signatures.at(-1) };
         if (!setup.successful || setup.trackingFailed) {
-          const cleaned = await cleanupProofContexts(db, rpc, signer, {
+          const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
             workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: proofContexts
           });
           if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };
@@ -1885,7 +2058,7 @@ export async function settleContributorPayrollAllocation(
         }
         if (!submittedSignature) {
           if (proofContexts.length > 0) {
-            const cleaned = await cleanupProofContexts(db, rpc, signer, {
+            const cleaned = await cleanupProofContexts(db, rpc, signer, gasSigner, {
               workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId, addresses: proofContexts
             });
             if (!cleaned) return { status: "pending", warning: "proof_context_cleanup_pending" };

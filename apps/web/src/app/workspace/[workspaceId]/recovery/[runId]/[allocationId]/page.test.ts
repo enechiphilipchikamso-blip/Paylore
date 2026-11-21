@@ -213,6 +213,72 @@ describe("workspace payroll recovery detail", () => {
     expect(mocks.recoveryProps).toBeNull();
   });
 
+  describe("allocation held by claim escrow funding", () => {
+    const escrow = (status: string, extra: Record<string, unknown> = {}) => ({
+      allocationId: "allocation-a",
+      workspaceId: "workspace-a",
+      payrollRunId: "run-a",
+      claimId: allocation.claimId,
+      tokenAccountAddress: "claim-escrow-a",
+      status,
+      amountBaseUnits: "1250000",
+      ...extra
+    });
+    const hold = (overrides: Record<string, unknown> = {}) => mocks.getWorkspacePayrollRun.mockResolvedValue({
+      ...payroll,
+      allocations: [{ ...allocation, status: "settlement_pending", updatedAt: new Date(Date.now() - 60 * 60 * 1000), ...overrides }]
+    });
+
+    it("says the hold is from funding, states the reason, and offers Check funding", async () => {
+      hold();
+      mocks.getPayrollClaimEscrow.mockResolvedValue(escrow("funding"));
+      mocks.getFinalizedPayrollClaimState.mockResolvedValue({ status: "unclaimed", escrowFunded: false });
+
+      const html = renderToStaticMarkup(await RecoveryDetailPage({ params }));
+
+      expect(html).toContain("held by claim escrow funding, not by a contributor claim");
+      expect(html).toContain("recorded no transfer and has stopped");
+      expect(html).toContain("Check claim escrow funding");
+      expect(html).not.toContain("Settlement is pending. Reconcile the existing claim transaction");
+      expect(mocks.fundingProps).toMatchObject({ initiallyPending: true });
+      expect(mocks.recoveryProps).toBeNull();
+    });
+
+    it("still offers Check funding when the finalized chain state cannot be read", async () => {
+      hold();
+      mocks.getPayrollClaimEscrow.mockResolvedValue(escrow("funding", { fundingSignature: "funding-signature" }));
+      mocks.getFinalizedPayrollClaimState.mockRejectedValue(new Error("rpc unavailable"));
+
+      const html = renderToStaticMarkup(await RecoveryDetailPage({ params }));
+
+      expect(html).toContain("A funding transfer was submitted and its result is not verified yet.");
+      expect(mocks.fundingProps).toMatchObject({ initiallyPending: true });
+    });
+
+    it("offers Check funding to release the hold once the escrow is funded", async () => {
+      hold();
+      mocks.getPayrollClaimEscrow.mockResolvedValue(escrow("funded", { fundingSignature: "funding-signature" }));
+
+      const html = renderToStaticMarkup(await RecoveryDetailPage({ params }));
+
+      expect(html).toContain("Funded; the hold on this allocation is not released yet");
+      expect(mocks.fundingProps).toMatchObject({ initiallyPending: true });
+      expect(mocks.recoveryProps).toBeNull();
+    });
+
+    it("leaves a contributor claim settlement alone", async () => {
+      hold({ settlementSignature: "claim-settlement-signature" });
+      mocks.getPayrollClaimEscrow.mockResolvedValue(escrow("settlement_pending"));
+      mocks.getFinalizedPayrollClaimState.mockResolvedValue({ status: "settlement_pending", escrowFunded: true });
+
+      const html = renderToStaticMarkup(await RecoveryDetailPage({ params }));
+
+      expect(html).toContain("Settlement is pending. Reconcile the existing claim transaction");
+      expect(html).not.toContain("held by claim escrow funding");
+      expect(mocks.fundingProps).toBeNull();
+    });
+  });
+
   it("keeps an unknown or cross-run allocation out of the detail view", async () => {
     mocks.getWorkspacePayrollRun.mockResolvedValue({
       ...payroll,

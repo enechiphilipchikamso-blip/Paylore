@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   zkProofProgram: "ZkEgalProof111111111111111111111111111111",
   reserveAuthority: "ReserveAuthority1111111111111111111111111",
+  gasTank: "GasTankSigner1111111111111111111111111111",
+  lastTransferPayer: "",
   contributor: "ContributorWallet11111111111111111111111",
   destination: "ContributorTokenAccount11111111111111111",
   reserveToken: "ReserveTokenAccount111111111111111111111",
@@ -36,6 +38,7 @@ const h = vi.hoisted(() => ({
   allocation: null as any,
   payroll: null as any,
   escrowStatus: "ready",
+  escrowUpdatedAt: new Date() as Date,
   fundingSignature: null as string | null,
   fundingSourceAvailableBefore: null as string | null,
   fundingSourceAvailableAfter: null as string | null,
@@ -58,6 +61,8 @@ const h = vi.hoisted(() => ({
   applyComplete: false,
   depositComplete: false,
   failStep: null as string | null,
+  // Simulates an RPC preflight rejection: sendTransaction throws before any signature exists.
+  throwStep: null as string | null,
   balanceMode: "enough",
   reserveAccountExists: true,
   reserveAvailable: 2_000_000n,
@@ -251,6 +256,7 @@ function resetHarness(): void {
       settlementSourceAvailableBefore: null
     },
     escrowStatus: "ready",
+    escrowUpdatedAt: new Date(),
     fundingSignature: null,
     fundingSourceAvailableBefore: null,
     fundingSourceAvailableAfter: null,
@@ -273,6 +279,7 @@ function resetHarness(): void {
     applyComplete: false,
     depositComplete: false,
     failStep: null,
+    throwStep: null,
     balanceMode: "enough",
     reserveAccountExists: true,
     reserveAvailable: 2_000_000n,
@@ -308,7 +315,10 @@ vi.mock("@solana/kit", () => ({
   AccountRole: { READONLY: 0, WRITABLE: 1, READONLY_SIGNER: 2, WRITABLE_SIGNER: 3 },
   address: (value: string) => value,
   blockhash: (value: string) => value,
-  createKeyPairSignerFromBytes: vi.fn(async () => ({ address: h.reserveAuthority })),
+  // The Gas Tank key (filled with 5) is a different account from the reserve authority key (filled with 9).
+  createKeyPairSignerFromBytes: vi.fn(async (bytes: Uint8Array) => ({
+    address: bytes[0] === 5 ? h.gasTank : h.reserveAuthority
+  })),
   createSolanaRpc: vi.fn(() => ({
     getBalance: () => ({ send: async () => ({ value: 1_000_000_000n }) }),
     getSignatureStatuses: (signatures: string[]) => ({
@@ -325,6 +335,7 @@ vi.mock("@solana/kit", () => ({
     }),
     sendTransaction: () => ({
       send: async () => {
+        if (h.throwStep === h.currentStep) throw new Error("preflight simulation failed");
         const signature = "settlement-signature-" + (++h.sendCount);
         h.signatureSteps[signature] = h.currentStep;
         const pending = h.pendingSteps.has(h.currentStep) || h.pendingSignatures.has(signature);
@@ -415,7 +426,12 @@ vi.mock("@solana/kit", () => ({
   fetchEncodedAccount: async (_rpc: unknown, accountAddress: string) => {
     if (accountAddress === h.reserveToken) return { exists: h.reserveAccountExists, owner: h.tokenProgram };
     if (accountAddress === h.escrowToken) return { exists: true, owner: h.tokenProgram };
-    if (h.contextAccounts.has(accountAddress)) return { exists: true, owner: h.zkProofProgram };
+    if (h.contextAccounts.has(accountAddress)) {
+      // The proof program records the context authority (the payer, i.e. the Gas Tank) in the first 32 bytes.
+      const data = new Uint8Array(33);
+      data.set(addressBytes(h.gasTank));
+      return { exists: true, owner: h.zkProofProgram, data };
+    }
     return { exists: false, owner: h.tokenProgram };
   },
   isSome: (value: unknown) => Boolean(value && typeof value === "object" &&
@@ -469,8 +485,9 @@ vi.mock("@solana-program/token-2022/confidential", () => ({
     data: new Uint8Array([token === h.escrowToken ? 204 : 201])
   })),
   getConfidentialTransferInstructionPlan: vi.fn(async ({
-    sourceToken, destinationToken
-  }: { sourceToken: string; destinationToken: string }) => {
+    sourceToken, destinationToken, payer
+  }: { sourceToken: string; destinationToken: string; payer: { address: string } }) => {
+    h.lastTransferPayer = payer.address;
     const funding = destinationToken === h.escrowToken;
     h.currentPlanMode = funding ? "funding" : "payout";
     const contexts = funding ? [h.context1, h.context2, h.context3] : [h.context4, h.context5, h.context6];
@@ -557,7 +574,7 @@ vi.mock("@paylore/database", () => ({
   getPayrollClaimEscrow: vi.fn(async () => ({
     workspaceId: input.workspaceId, payrollRunId: input.runId, allocationId: input.allocationId,
     claimId: h.claimId, tokenAccountAddress: h.escrowToken, status: h.escrowStatus,
-    fundingSignature: h.fundingSignature, fundingSourceAvailableBefore: h.fundingSourceAvailableBefore,
+    updatedAt: h.escrowUpdatedAt, fundingSignature: h.fundingSignature, fundingSourceAvailableBefore: h.fundingSourceAvailableBefore,
     fundingSourceAvailableAfter: h.fundingSourceAvailableAfter,
     fundingDestinationAvailableBefore: h.fundingDestinationAvailableBefore,
     fundingDestinationAvailableAfter: h.fundingDestinationAvailableAfter
@@ -685,7 +702,7 @@ vi.mock("../reserve", () => ({
 }));
 vi.mock("../gas-tank", () => ({
   withWorkspaceGasTankKey: async (_db: unknown, _workspaceId: string, run: (bytes: Uint8Array) => Promise<unknown>) =>
-    run(new Uint8Array(64).fill(9))
+    run(new Uint8Array(64).fill(5))
 }));
 vi.mock("./payroll-program-verification", () => ({
   verifyPayrollClaimTransaction: vi.fn(async () => undefined)
@@ -819,6 +836,19 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.clearContextsCalls).toBe(2);
   });
 
+  it("settles a claim from an escrow the organization already funded, even when the reserve is drained", async () => {
+    h.escrowStatus = "funded";
+    h.escrowFunded = true;
+    h.escrowAvailable = 1_250_000n;
+    h.reserveAvailable = 0n;
+    h.reservePublicAmount = 0n;
+    const result = await settleContributorPayrollAllocation({} as any, input);
+    expect(result).toMatchObject({ status: "claimed", signature: payoutSignature() });
+    expect(h.executionOrder).not.toContain("deposit");
+    expect(h.executionOrder).not.toContain("escrow_funding");
+    expect(h.ledgerCalls).toBe(1);
+  });
+
   it("deposits to the reserve before funding the Claim escrow when transparent funds are available", async () => {
     h.balanceMode = "low";
     h.reserveAvailable = 0n;
@@ -901,6 +931,143 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.ledgerCalls).toBe(0);
     expect(h.escrowStatus).toBe("ready");
     expect(h.releaseCalls).toBe(1);
+  });
+
+  describe("funding a Claim escrow", () => {
+    const fundInput = { workspaceId: input.workspaceId, runId: input.runId, allocationId: input.allocationId };
+    const staleAt = () => new Date(Date.now() - 10 * 60 * 1000);
+
+    it("pays for funding with the Gas Tank, never with the reserve that holds no SOL", async () => {
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result.status).toBe("funded");
+      expect(h.lastTransferPayer).toBe(h.gasTank);
+      expect(h.lastTransferPayer).not.toBe(h.reserveAuthority);
+    });
+
+    it("rolls back funding and releases the settlement lock when the proof setup is rejected before sending", async () => {
+      h.throwStep = "funding_proof_setup";
+      await expect(fundUnclaimedPayrollClaimEscrow({} as any, fundInput)).rejects.toMatchObject({ statusCode: 503 });
+      expect(h.escrowStatus).toBe("ready");
+      expect(h.allocation.status).toBe("unclaimed");
+      expect(h.releaseCalls).toBeGreaterThanOrEqual(1);
+      expect(h.executionOrder).not.toContain("escrow_funding");
+      expect(h.escrowFunded).toBe(false);
+    });
+
+    it("can fund again after a rejected attempt without any manual cleanup", async () => {
+      h.throwStep = "funding_proof_setup";
+      await expect(fundUnclaimedPayrollClaimEscrow({} as any, fundInput)).rejects.toBeDefined();
+      h.throwStep = null;
+      const retried = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(retried.status).toBe("funded");
+      expect(h.escrowStatus).toBe("funded");
+      expect(h.allocation.status).toBe("unclaimed");
+      expect(h.escrowAvailable + h.escrowPending).toBe(1_250_000n);
+    });
+
+    it("keeps the lock and reports an unknown outcome when the funding transfer itself may have been sent", async () => {
+      h.throwStep = "escrow_funding";
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result).toMatchObject({ status: "pending", stage: "transfer_outcome_unknown" });
+      expect(h.escrowStatus).toBe("funding");
+      expect(h.allocation.status).toBe("settlement_pending");
+      expect(h.releaseCalls).toBe(0);
+    });
+
+    it("releases the settlement lock once a pending funding is verified on a later check", async () => {
+      h.pendingSteps.add("escrow_funding");
+      let clock = 0;
+      const clockSpy = vi.spyOn(Date, "now").mockImplementation(() =>
+        h.currentStep === "escrow_funding" && h.sendCount > 0 ? (clock++ === 0 ? 0 : 121_000) : 0
+      );
+      const first = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      clockSpy.mockRestore();
+      expect(first.status).toBe("pending");
+      expect(h.allocation.status).toBe("settlement_pending");
+      expect(h.escrowStatus).toBe("funding");
+
+      // The network finalizes the transfer that was still unconfirmed.
+      h.pendingSteps.delete("escrow_funding");
+      h.reserveAvailable -= 1_250_000n;
+      h.escrowPending += 1_250_000n;
+      h.escrowFunded = true;
+
+      const second = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(second.status).toBe("funded");
+      expect(h.escrowStatus).toBe("funded");
+      expect(h.allocation.status).toBe("unclaimed");
+      expect(h.sendCount).toBeGreaterThan(0);
+    });
+
+    it("keeps the lock when funding is verified but its proof accounts could not be closed", async () => {
+      h.failStep = "funding_context_close";
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result).toMatchObject({ status: "funded", warning: "proof_context_cleanup_pending" });
+      expect(h.escrowStatus).toBe("funded");
+      expect(h.allocation.status).toBe("settlement_pending");
+    });
+
+    it("leaves a lock that may belong to a live request alone", async () => {
+      h.allocation.status = "settlement_pending";
+      h.allocation.updatedAt = new Date();
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result).toMatchObject({ status: "pending", stage: "funding_in_progress" });
+      expect(h.sendCount).toBe(0);
+      expect(h.releaseCalls).toBe(0);
+    });
+
+    it("heals a lock left behind by a funding request that ended without releasing it", async () => {
+      h.allocation.status = "settlement_pending";
+      h.allocation.updatedAt = staleAt();
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result.status).toBe("funded");
+      expect(h.releaseCalls).toBeGreaterThanOrEqual(1);
+      expect(h.escrowStatus).toBe("funded");
+      expect(h.allocation.status).toBe("unclaimed");
+    });
+
+    it("rolls back a stale funding that never recorded a balance snapshot, before any proof or transfer", async () => {
+      h.allocation.status = "settlement_pending";
+      h.escrowStatus = "funding";
+      h.escrowUpdatedAt = staleAt();
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result.status).toBe("retry_ready");
+      expect(h.escrowStatus).toBe("ready");
+      expect(h.allocation.status).toBe("unclaimed");
+      expect(h.executionOrder).not.toContain("funding_proof_setup");
+      expect(h.executionOrder).not.toContain("escrow_funding");
+      expect(h.releaseCalls).toBe(1);
+    });
+
+    it("verifies a sent funding even though the reserve no longer holds the full amount", async () => {
+      h.pendingSteps.add("escrow_funding");
+      let clock = 0;
+      const clockSpy = vi.spyOn(Date, "now").mockImplementation(() =>
+        h.currentStep === "escrow_funding" && h.sendCount > 0 ? (clock++ === 0 ? 0 : 121_000) : 0
+      );
+      await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      clockSpy.mockRestore();
+      h.pendingSteps.delete("escrow_funding");
+      h.reserveAvailable -= 1_250_000n;
+      h.escrowPending += 1_250_000n;
+      h.escrowFunded = true;
+      h.executionOrder.length = 0;
+
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result.status).toBe("funded");
+      expect(h.executionOrder).not.toContain("deposit");
+    });
+
+    it("never touches a lock held by a contributor claim", async () => {
+      h.allocation.status = "settlement_pending";
+      h.allocation.settlementSignature = "claim-settlement-signature";
+      h.allocation.updatedAt = staleAt();
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result).toMatchObject({
+        status: "pending", signature: "claim-settlement-signature", stage: "claim_settlement_in_progress"
+      });
+      expect(h.releaseCalls).toBe(0);
+    });
   });
 
   it("releases a failed finalized payout for safe retry without posting a ledger entry", async () => {

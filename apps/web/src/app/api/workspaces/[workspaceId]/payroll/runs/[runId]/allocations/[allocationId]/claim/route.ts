@@ -57,6 +57,12 @@ export async function POST(request: Request, { params }: RouteContext) {
       throw error;
     }
     if (result.status !== "claimed" && result.status !== "already_settled") {
+      // A claim that ends without settling is logged with its result so a stuck claim can be traced.
+      logServerRejection("payroll_claim_settlement_not_settled", result.status, 200, {
+        workspaceId, runId, allocationId,
+        warning: result.warning ?? null,
+        signature: result.signature ?? null
+      });
       const ledgerStatus = result.status === "pending" || result.status === "workspace_busy"
         ? "pending" as const : "failed" as const;
       const outcome = await recordWorkspaceNonFinancialOutcome(db, {

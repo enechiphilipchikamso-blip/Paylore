@@ -23,6 +23,11 @@ describe("contributor allocation presentation", () => {
       describeContributorAllocation({ status, amountBaseUnits: "1", ...extra });
     expect(view("unclaimed")).toMatchObject({ label: "Ready to claim", tone: "partial", detail: "Unclaimed — no transfer recorded" });
     expect(view("settlement_pending").label).toBe("Settlement pending");
+    expect(view("settlement_pending").detail).toContain("no payout transaction is recorded yet");
+    expect(describeContributorAllocation({
+      status: "settlement_pending", amountBaseUnits: "1", claimAddress: "claim", transactionSignature: "tx",
+      settlementSignature: "settlement-tx"
+    }).detail).toContain("waiting for the network to finalize");
     expect(view("claimed")).toMatchObject({ label: "Settled", tone: "success" });
     expect(view("recovered").label).toBe("Recovered");
     expect(view("recovery_pending").label).toBe("Recovery pending");

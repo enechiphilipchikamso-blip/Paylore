@@ -7,6 +7,8 @@ export type ContributorAllocationView = {
   amountBaseUnits: string;
   claimAddress: string | null;
   transactionSignature: string | null;
+  /** Recorded once the claim's settlement transaction was submitted. */
+  settlementSignature?: string | null;
 };
 
 export type AllocationTone = "success" | "partial" | "error" | "neutral";
@@ -38,7 +40,13 @@ export function describeContributorAllocation(allocation: ContributorAllocationV
             detail: "No finalized Claim account is recorded yet, so this cannot be claimed."
           };
     case "settlement_pending":
-      return { label: "Settlement pending", tone: "partial", detail: "Settlement pending" };
+      return {
+        label: "Settlement pending",
+        tone: "partial",
+        detail: allocation.settlementSignature
+          ? "Your claim transaction was submitted and is waiting for the network to finalize it. Claim again to verify it."
+          : "Your claim is being prepared and no payout transaction is recorded yet, so nothing has been paid. Claim again to continue it."
+      };
     case "claimed":
       return { label: "Settled", tone: "success", detail: "Settled" };
     case "recovery_pending":

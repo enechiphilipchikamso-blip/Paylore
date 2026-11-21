@@ -21,11 +21,10 @@ test.describe("workspace payroll recovery queue", () => {
       await page.goto(process.env.PAYLORE_E2E_RECOVERY_URL!);
       await expect(page.getByRole("heading", { name: "Recover unclaimed payroll" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Recovery queue" })).toBeVisible();
-      await expect(page.getByText(/Financial recovery is unavailable until the confidential reserve restoration can be verified/)).toBeVisible();
 
       const reviewLinks = page.getByRole("link", { name: "Review allocation" });
       if (await reviewLinks.count() === 0) {
-        await expect(page.getByText("No unclaimed payroll allocations are currently in the recovery queue.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Nothing to review" })).toBeVisible();
         return;
       }
 

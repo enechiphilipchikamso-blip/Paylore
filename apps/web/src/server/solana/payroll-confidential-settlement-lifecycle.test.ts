@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { address, getAddressEncoder } from "@solana/kit";
 import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
 
 const mocks = vi.hoisted(() => ({
@@ -112,6 +113,10 @@ describe("confidential proof setup finality", () => {
 });
 
 describe("confidential proof-context cleanup", () => {
+  // The Gas Tank (all-zero address bytes) pays for and owns proof contexts; the reserve only signs.
+  const gasTank = { address: "11111111111111111111111111111111" };
+  const reserve = { address: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" };
+  const gasTankContext = { exists: true, owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS, data: new Uint8Array(33) };
   const cleanupInput = {
     workspaceId: "workspace-a",
     runId: "run-a",
@@ -122,7 +127,7 @@ describe("confidential proof-context cleanup", () => {
   it("clears durable context tracking only after every context is already absent", async () => {
     mocks.fetchEncodedAccount.mockResolvedValue({ exists: false });
     mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(true);
     expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
     expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
@@ -130,7 +135,7 @@ describe("confidential proof-context cleanup", () => {
 
   it("retains durable tracking when a context is owned by an unexpected program", async () => {
     mocks.fetchEncodedAccount.mockResolvedValue({ exists: true, owner: "unexpected-program" });
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "reserve" } as never, cleanupInput);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
@@ -138,10 +143,7 @@ describe("confidential proof-context cleanup", () => {
 
 
   it("closes every owned context before clearing durable tracking", async () => {
-    mocks.fetchEncodedAccount.mockResolvedValue({
-      exists: true,
-      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
-    });
+    mocks.fetchEncodedAccount.mockResolvedValue(gasTankContext);
     mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => ({
       successful: true,
       pending: false,
@@ -149,7 +151,7 @@ describe("confidential proof-context cleanup", () => {
       trackingFailed: false
     }));
     mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(true);
     expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
     expect(mocks.createTransactionPlanExecutorWithConcurrentLeaves).toHaveBeenCalledTimes(2);
@@ -161,14 +163,11 @@ describe("confidential proof-context cleanup", () => {
     ["pending", { successful: false, pending: true, signatures: ["close-signature"], trackingFailed: false }],
     ["signature tracking failure", { successful: false, pending: false, signatures: ["close-signature"], trackingFailed: true }]
   ] as const)("retains durable context records when close is %s", async (_label, _outcome) => {
-    mocks.fetchEncodedAccount.mockResolvedValue({
-      exists: true,
-      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
-    });
+    mocks.fetchEncodedAccount.mockResolvedValue(gasTankContext);
     mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async () => {
       throw new Error(`${_label}: close did not finalize`);
     });
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
   });
@@ -176,22 +175,19 @@ describe("confidential proof-context cleanup", () => {
   it("retains tracked contexts when the durable clear operation cannot be committed", async () => {
     mocks.fetchEncodedAccount.mockResolvedValue({ exists: false });
     mocks.clearPayrollSettlementProofContexts.mockResolvedValue(false);
-    await expect(cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput))
+    await expect(cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput))
       .resolves.toBe(false);
     expect(mocks.clearPayrollSettlementProofContexts).toHaveBeenCalledOnce();
   });
 
   it("continues checking remaining contexts after one owned-context close fails", async () => {
-    mocks.fetchEncodedAccount.mockResolvedValue({
-      exists: true,
-      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
-    });
+    mocks.fetchEncodedAccount.mockResolvedValue(gasTankContext);
     mocks.createTransactionPlanExecutorWithConcurrentLeaves
       .mockImplementationOnce(() => async () => { throw new Error("first close failed"); })
       .mockImplementationOnce(() => async () => ({
         successful: true, pending: false, signatures: ["second-close"], trackingFailed: false
       }));
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.fetchEncodedAccount).toHaveBeenCalledTimes(2);
     expect(mocks.createTransactionPlanExecutorWithConcurrentLeaves).toHaveBeenCalledTimes(2);
@@ -199,12 +195,63 @@ describe("confidential proof-context cleanup", () => {
   });
 
   it("keeps durable tracking when closing an owned proof context fails", async () => {
-    mocks.fetchEncodedAccount.mockResolvedValue({
-      exists: true,
-      owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS
-    });
-    const result = await cleanupProofContexts({} as never, {} as never, { address: "11111111111111111111111111111111" } as never, cleanupInput);
+    mocks.fetchEncodedAccount.mockResolvedValue(gasTankContext);
+    const result = await cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput);
     expect(result).toBe(false);
     expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+
+  const successfulClose = { successful: true, pending: false, signatures: ["close-signature"], trackingFailed: false };
+
+  function captureClosePlans() {
+    const plans: Array<{ instruction?: { accounts?: Array<{ address: string; signer?: { address: string } }> } }> = [];
+    mocks.createTransactionPlanExecutorWithConcurrentLeaves.mockImplementation(() => async (plan: never) => {
+      plans.push(plan);
+      return successfulClose;
+    });
+    return plans;
+  }
+
+  it("closes a Gas Tank owned context with the Gas Tank as authority and refunds its rent to the Gas Tank", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue(gasTankContext);
+    const plans = captureClosePlans();
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    await expect(cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput))
+      .resolves.toBe(true);
+    expect(plans).toHaveLength(2);
+    for (const plan of plans) {
+      const [, destination, authority] = plan.instruction!.accounts!;
+      expect(authority!.address).toBe(gasTank.address);
+      expect(destination!.address).toBe(gasTank.address);
+    }
+  });
+
+  it("closes a context owned by the reserve authority with the reserve as authority", async () => {
+    const reserveBytes = new Uint8Array(33);
+    reserveBytes.set(getAddressEncoder().encode(address(reserve.address)));
+    mocks.fetchEncodedAccount.mockResolvedValue({ ...gasTankContext, data: reserveBytes });
+    const plans = captureClosePlans();
+    mocks.clearPayrollSettlementProofContexts.mockResolvedValue(true);
+    await expect(cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput))
+      .resolves.toBe(true);
+    expect(plans[0]!.instruction!.accounts![2]!.address).toBe(reserve.address);
+  });
+
+  it("sends nothing and keeps tracking when a context belongs to neither signer", async () => {
+    const foreign = new Uint8Array(33).fill(9);
+    mocks.fetchEncodedAccount.mockResolvedValue({ ...gasTankContext, data: foreign });
+    const plans = captureClosePlans();
+    await expect(cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput))
+      .resolves.toBe(false);
+    expect(plans).toHaveLength(0);
+    expect(mocks.clearPayrollSettlementProofContexts).not.toHaveBeenCalled();
+  });
+
+  it("keeps tracking when account data is unreadable", async () => {
+    mocks.fetchEncodedAccount.mockResolvedValue({ exists: true, owner: ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS });
+    const plans = captureClosePlans();
+    await expect(cleanupProofContexts({} as never, {} as never, reserve as never, gasTank as never, cleanupInput))
+      .resolves.toBe(false);
+    expect(plans).toHaveLength(0);
   });
 });

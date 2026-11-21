@@ -17,6 +17,10 @@ vi.mock("../../../../components/workspace/WorkspaceNavigation", () => ({
   WorkspaceNavigation: () => null,
   WorkspaceLegalFooter: () => null
 }));
+vi.mock("../../../../components/workspace/PayrollClaimEscrowFundingAction", () => ({
+  PayrollClaimEscrowFundingAction: ({ allocationId, initiallyPending }: { allocationId: string; initiallyPending?: boolean }) =>
+    createElement("button", { "data-funding-action": allocationId, "data-pending": String(Boolean(initiallyPending)) }, "Check funding")
+}));
 vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); }
 }));
@@ -37,6 +41,9 @@ const allocation = {
   claimId: "01".repeat(32),
   claimAddress: "claim-pda-a",
   status: "unclaimed",
+  lockUpdatedAt: new Date("2026-10-01T00:00:00.000Z"),
+  escrowStatus: "funded",
+  escrowFundingSignature: "funding-signature",
   runCreatedAt: new Date("2026-10-01T00:00:00.000Z")
 };
 
@@ -68,7 +75,42 @@ describe("workspace payroll recovery queue", () => {
     expect(html).toContain("1.25 wrapped USDC");
     expect(html).toContain("claim-pda-a");
     expect(html).toContain('href="/workspace/workspace-a/recovery/run-a/allocation-a"');
-    expect(html).toContain("Financial recovery is unavailable");
+    expect(html).toContain("1 allocation: 1 eligible for recovery.");
+    expect(html).toContain("Eligible for recovery");
+    expect(html).not.toContain("Financial recovery is unavailable");
+    expect(html).not.toContain("data-funding-action");
+  });
+
+  it("shows the reason an allocation is not eligible instead of a generic notice", async () => {
+    mocks.getWorkspacePayrollRecoveryQueue.mockResolvedValue([{ ...allocation, escrowStatus: "ready" }]);
+
+    const html = renderToStaticMarkup(await RecoveryQueuePage({
+      params: Promise.resolve({ workspaceId: "workspace-a" })
+    }));
+
+    expect(html).toContain("Claim escrow is not funded");
+    expect(html).toContain("not eligible yet");
+  });
+
+  it("keeps an allocation held by escrow funding in the queue with its reason and a Check funding action", async () => {
+    mocks.getWorkspacePayrollRecoveryQueue.mockResolvedValue([{
+      ...allocation,
+      status: "settlement_pending",
+      escrowStatus: "funding",
+      escrowFundingSignature: null,
+      lockUpdatedAt: new Date(Date.now() - 60 * 60 * 1000)
+    }]);
+
+    const html = renderToStaticMarkup(await RecoveryQueuePage({
+      params: Promise.resolve({ workspaceId: "workspace-a" })
+    }));
+
+    expect(html).toContain("Held by escrow funding");
+    expect(html).toContain("Claim escrow funding hold — check funding");
+    expect(html).toContain("recorded no transfer and has stopped");
+    expect(html).toContain('data-funding-action="allocation-a"');
+    expect(html).toContain('data-pending="true"');
+    expect(html).not.toContain("Claim settlement in progress");
   });
 
   it("renders an explicit empty state when no unclaimed Claim PDAs exist", async () => {
@@ -79,8 +121,8 @@ describe("workspace payroll recovery queue", () => {
     });
     const html = renderToStaticMarkup(page);
 
-    expect(html).toContain("No unclaimed allocations to review");
-    expect(html).toContain("When the workspace has payroll allocations that remain unclaimed");
+    expect(html).toContain("Nothing to review");
+    expect(html).toContain("held while their claim escrow is being funded");
     expect(html).toContain("workspace-empty-state");
     expect(html).not.toContain("Review allocation");
   });

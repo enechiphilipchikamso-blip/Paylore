@@ -2,10 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getWorkspacePayrollRecoveryQueue } from "@paylore/database";
+import { PayrollClaimEscrowFundingAction } from "../../../../components/workspace/PayrollClaimEscrowFundingAction";
 import {
   WorkspaceLegalFooter,
   WorkspaceNavigation
 } from "../../../../components/workspace/WorkspaceNavigation";
+import {
+  assessPayrollRecoveryEligibility,
+  describePayrollFundingHold,
+  summarizePayrollRecoveryQueue
+} from "../../../../server/payroll-recovery-queue-policy";
+import { isOrphanedAttempt } from "../../../../server/solana/payroll-confidential-settlement-policy";
 import { getWorkspacePageContext } from "../../../../server/workspace-page-context";
 
 export const metadata: Metadata = {
@@ -34,7 +41,24 @@ export default async function WorkspaceRecoveryQueuePage({
   );
   if (context.workspace.role !== "organization_admin") notFound();
 
-  const recoveryQueue = await getWorkspacePayrollRecoveryQueue(context.db, workspaceId);
+  const recoveryQueue = (await getWorkspacePayrollRecoveryQueue(context.db, workspaceId)).map((allocation) => {
+    const eligibility = assessPayrollRecoveryEligibility({
+      claimState: allocation.status,
+      claimAddress: allocation.claimAddress,
+      escrowStatus: allocation.escrowStatus
+    });
+    return {
+      allocation,
+      eligibility,
+      holdReason: eligibility.state === "funding_hold"
+        ? describePayrollFundingHold({
+            escrowStatus: allocation.escrowStatus,
+            fundingSignature: allocation.escrowFundingSignature,
+            stale: isOrphanedAttempt(allocation.lockUpdatedAt)
+          })
+        : null
+    };
+  });
 
   return (
     <div className="protected-wrap workspace-page">
@@ -54,16 +78,11 @@ export default async function WorkspaceRecoveryQueuePage({
 
       <section className="surface-card" aria-labelledby="recovery-queue-heading">
         <h3 id="recovery-queue-heading">Recovery queue</h3>
-        <p className="notice" role="note">
-          This list includes only allocations recorded as unclaimed with a Claim
-          PDA. Financial recovery is unavailable until the confidential reserve
-          restoration can be verified; reviewing an item does not move funds or
-          change its claim state.
-        </p>
+        <p role="note">{summarizePayrollRecoveryQueue(recoveryQueue.map((item) => item.eligibility))}</p>
         {recoveryQueue.length === 0 ? (
           <div className="workspace-empty-state">
-            <h3>No unclaimed allocations to review</h3>
-            <p>When the workspace has payroll allocations that remain unclaimed, they will appear here with their Claim PDA status.</p>
+            <h3>Nothing to review</h3>
+            <p>Allocations that are unclaimed, or held while their claim escrow is being funded, appear here with the reason they cannot be recovered yet.</p>
           </div>
         ) : (
           <div className="table-scroll">
@@ -75,23 +94,36 @@ export default async function WorkspaceRecoveryQueuePage({
                   <th scope="col">Contributor wallet</th>
                   <th scope="col">Allocation (wrapped USDC)</th>
                   <th scope="col">Claim state</th>
+                  <th scope="col">Recovery status</th>
                   <th scope="col">Claim PDA</th>
-                  <th scope="col">Details</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {recoveryQueue.map((allocation) => (
+                {recoveryQueue.map(({ allocation, eligibility, holdReason }) => (
                   <tr key={allocation.id}>
                     <td><code>{allocation.runId}</code></td>
                     <td>{allocation.runCreatedAt.toLocaleString()}</td>
                     <td><code>{allocation.contributorWalletAddress}</code></td>
                     <td>{formatUsdc(allocation.amountBaseUnits)} wrapped USDC</td>
-                    <td>Unclaimed</td>
+                    <td>{eligibility.state === "funding_hold" ? "Held by escrow funding" : "Unclaimed"}</td>
+                    <td>
+                      {eligibility.label}
+                      {holdReason ? <p>{holdReason}</p> : null}
+                    </td>
                     <td><code>{allocation.claimAddress}</code></td>
                     <td>
                       <Link href={`/workspace/${workspaceId}/recovery/${allocation.runId}/${allocation.id}`}>
                         Review allocation
                       </Link>
+                      {eligibility.state === "funding_hold" ? (
+                        <PayrollClaimEscrowFundingAction
+                          workspaceId={workspaceId}
+                          runId={allocation.runId}
+                          allocationId={allocation.id}
+                          initiallyPending
+                        />
+                      ) : null}
                     </td>
                   </tr>
                 ))}
