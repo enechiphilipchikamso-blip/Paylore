@@ -21,7 +21,11 @@ const STAGE_MESSAGES: Record<PayrollClaimEscrowFundingStage, string> = {
   proof_cleanup_pending:
     "The escrow is funded. Closing the temporary proof accounts is still pending, so the hold on this allocation stays until it completes. Check funding to finish.",
   lock_release_pending:
-    "The escrow is funded, but releasing the hold on this allocation did not complete. Check funding to release it."
+    "The escrow is funded, but releasing the hold on this allocation did not complete. Check funding to release it.",
+  rollback_cleanup_pending:
+    "Funding did not go through and no funds moved. Closing the temporary proof accounts is still pending, so the hold on this allocation stays until it completes. Check funding to finish, then fund the claim escrow again.",
+  rollback_release_pending:
+    "Funding did not go through and no funds moved, but releasing the hold on this allocation did not complete. Check funding to release it, then fund the claim escrow again."
 };
 
 const GENERIC_PENDING_MESSAGE =

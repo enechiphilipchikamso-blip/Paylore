@@ -7,7 +7,6 @@ import {
   createKeyPairSignerFromBytes,
   createSolanaRpc,
   createTransactionMessage,
-  createTransactionPlanExecutorWithConcurrentLeaves,
   createTransactionPlanner,
   fetchEncodedAccount,
   getBase64EncodedWireTransaction,
@@ -54,6 +53,7 @@ import {
   sealReserveKey
 } from "../reserve-crypto-policy";
 import { configuredRpcEndpoint } from "./rpc-configured";
+import { executeTransactionPlanSequentially } from "./sequential-plan-execution";
 
 /**
  * Synchronous Netlify functions stop at 60 seconds. Escrow setup waits for
@@ -75,18 +75,6 @@ export class PayrollClaimEscrowError extends Error {
   constructor(readonly code: string, readonly statusCode: number) {
     super(code);
     this.name = "PayrollClaimEscrowError";
-  }
-}
-
-class FinalityPendingError extends Error {
-  constructor(readonly signature: string) {
-    super("The escrow account setup is awaiting finality.");
-  }
-}
-
-class FinalityFailedError extends Error {
-  constructor(readonly signature: string) {
-    super("The escrow account setup failed at finality.");
   }
 }
 
@@ -163,19 +151,6 @@ async function persistedSignatureState(
   return transactionFinality(status);
 }
 
-async function waitForFinality(
-  rpc: ReturnType<typeof createSolanaRpc>,
-  signature: Signature,
-  deadline: number
-): Promise<Finality> {
-  while (Date.now() < deadline) {
-    const result = await checkSignatureFinality(rpc, [String(signature)]);
-    if (result !== "pending") return result;
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  return "pending";
-}
-
 async function executePlan(
   rpc: ReturnType<typeof createSolanaRpc>,
   feePayer: Signer,
@@ -199,47 +174,20 @@ async function executePlan(
     }
   });
   const planned = await planner(plan);
-  const signatures: string[] = [];
-  let trackingFailed = false;
-  const executor = createTransactionPlanExecutorWithConcurrentLeaves({
-    executeTransactionMessage: async (_context, message) => {
+  // Steps run in plan order and the whole plan is settled to finality inside the
+  // request budget; anything slower is "pending" and resumed from its signatures.
+  const result = await executeTransactionPlanSequentially({
+    rpc, plan: planned, timeoutMs: Math.max(0, deadline - Date.now()), onSubmitted,
+    prepare: async (message) => {
       const signed = await partiallySignTransactionMessageWithSigners(
         addSignersToTransactionMessage([feePayer, ...additionalSigners], message)
       );
-      const encoded = getBase64EncodedWireTransaction(signed);
-      const signature = await rpc.sendTransaction(encoded, {
-        encoding: "base64",
-        preflightCommitment: "confirmed",
-        maxRetries: 3n
-      }).send();
-      const signatureText = String(signature);
-      signatures.push(signatureText);
-      if (onSubmitted) {
-        try {
-          await onSubmitted(signatureText);
-        } catch {
-          trackingFailed = true;
-        }
-      }
-      const finality = await waitForFinality(rpc, signature, deadline);
-      if (finality === "pending") throw new FinalityPendingError(signatureText);
-      if (finality === "failed") throw new FinalityFailedError(signatureText);
-      return { signature };
+      return { wire: getBase64EncodedWireTransaction(signed) };
     }
   });
-
-  try {
-    await executor(planned);
-    return { status: trackingFailed ? "pending" : "finalized", signatures, trackingFailed };
-  } catch (error) {
-    if (error instanceof FinalityPendingError) {
-      return { status: "pending", signatures, trackingFailed };
-    }
-    if (error instanceof FinalityFailedError) {
-      return { status: "failed", signatures, trackingFailed };
-    }
-    throw error;
-  }
+  const status: Finality = result.pending || (result.trackingFailed && !result.successful)
+    ? "pending" : result.successful ? "finalized" : "failed";
+  return { status, signatures: result.signatures, trackingFailed: result.trackingFailed };
 }
 
 /**

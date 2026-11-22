@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { findAuthenticatedWallet } from "./authenticated-wallet";
 import { ensureClaimAndCashOutAccount } from "./claim-and-cash-out-setup";
-import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
+import { describeContributorClaimPending, getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 import { ClaimAndCashOutStatus } from "./claim-and-cash-out-status";
 import { BusyActionButton } from "./BusyActionButton";
 import {
@@ -336,7 +336,10 @@ export function ContributorCompensation({
             if (result.warning === "proof_context_cleanup_pending") cleanupPending++;
           } else if (result.status === "workspace_busy") { pending++; break; }
           else if (result.status === "state_conflict") { stateConflict = true; break; }
-          else if (result.status === "pending" || result.status === "retry_ready") pending++;
+          else if (result.status === "pending" || result.status === "retry_ready") {
+            pending++;
+            pendingReason ??= describeContributorClaimPending(result.status, result.stage);
+          }
           else {
             failed++;
             failureReason ??= `Paylore returned an unrecognised settlement status${typeof result.status === "string" ? ` (${result.status})` : ""}. Refresh to see the recorded state before retrying.`;

@@ -42,7 +42,7 @@ import {
   createSolanaRpc,
   getTransactionDecoder,
   createTransactionMessage,
-  createTransactionPlanExecutorWithConcurrentLeaves,
+  createTransactionPlanExecutor,
   createTransactionPlanner,
   fetchEncodedAccount,
   getBase58Decoder,
@@ -140,7 +140,10 @@ async function executePlan(
   });
   const transactionPlan = await planner(plan);
   const signatures: string[] = [];
-  const executor = createTransactionPlanExecutorWithConcurrentLeaves({
+  // Steps run in plan order, one wallet prompt at a time. The concurrent executor
+  // started "verify proof" before "create proof account" had landed, so the wallet
+  // was asked to sign transactions that could not succeed.
+  const executor = createTransactionPlanExecutor({
     executeTransactionMessage: async (_context, message) => {
       const contributorAlreadySigns = message.instructions.some((instruction) =>
         instruction.accounts?.some((account) =>
@@ -211,7 +214,7 @@ async function executePlan(
         let result = await response.json().catch(() => ({}));
         if ((response.ok || response.status === 202) &&
             typeof result.signature === "string") {
-          const submittedSignature = signature(getBase58Decoder().decode(result.signature));
+          const submittedSignature = signature(result.signature);
           await waitForFinality(rpc, submittedSignature);
           response = await submit();
           result = await response.json().catch(() => ({}));
@@ -229,8 +232,7 @@ async function executePlan(
                     : "Company-sponsored account setup could not be reconciled. Keep the setup screen open and retry verification before starting another setup."
           );
         }
-        const encodedSignature = getBase58Decoder().decode(result.signature);
-        const transactionSignature = signature(encodedSignature);
+        const transactionSignature = signature(result.signature);
         signatures.push(result.signature);
         return { signature: transactionSignature };
       }
@@ -242,12 +244,37 @@ async function executePlan(
       const encodedSignature = getBase58Decoder().decode(result.signature);
       const transactionSignature = signature(encodedSignature);
       signatures.push(encodedSignature);
-      await waitForFinality(rpc, transactionSignature);
+      // The next step needs this one confirmed, not finalized: waiting for
+      // finality between dependent steps doubled the time of every cash-out.
+      await waitForConfirmation(rpc, transactionSignature);
       return { signature: transactionSignature };
     }
   });
   await executor(transactionPlan);
+  // Everything is final before the operation is reported as done.
+  await Promise.all(signatures.map((encoded) => waitForFinality(rpc, signature(encoded))));
   return signatures;
+}
+
+async function waitForConfirmation(
+  rpc: ReturnType<typeof createSolanaRpc>,
+  transactionSignature: Signature
+): Promise<void> {
+  const deadline = Date.now() + FINALITY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const result = await rpc
+      .getSignatureStatuses([transactionSignature], { searchTransactionHistory: true })
+      .send();
+    const status = result.value[0];
+    if (status?.err) {
+      throw new Error("The confidential-account transaction failed on Solana.");
+    }
+    if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") return;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error(
+    `The transaction was submitted but has not confirmed: ${transactionSignature}`
+  );
 }
 
 async function waitForFinality(

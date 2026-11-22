@@ -10,9 +10,16 @@ describe("claim escrow funding pending messages", () => {
     ["transfer_outcome_unknown", "result could not be read"],
     ["balances_unverified", "balances could not be read"],
     ["proof_cleanup_pending", "temporary proof accounts"],
-    ["lock_release_pending", "releasing the hold"]
+    ["lock_release_pending", "releasing the hold"],
+    ["rollback_cleanup_pending", "no funds moved"],
+    ["rollback_release_pending", "no funds moved"]
   ])("explains the %s stage", (stage, expected) => {
     expect(describeFundingPending(stage)).toContain(expected);
+  });
+
+  it("never says the escrow is funded when funding was rolled back", () => {
+    expect(describeFundingPending("rollback_cleanup_pending")).not.toContain("escrow is funded");
+    expect(describeFundingPending("rollback_release_pending")).not.toContain("escrow is funded");
   });
 
   it("appends the transaction signature when one exists", () => {

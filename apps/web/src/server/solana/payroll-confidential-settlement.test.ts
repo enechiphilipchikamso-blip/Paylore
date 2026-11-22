@@ -55,6 +55,7 @@ const h = vi.hoisted(() => ({
   pendingSignatures: new Set<string>(),
   pendingSteps: new Set<string>(),
   contextAccounts: new Set<string>(),
+  zeroContexts: false,
   closingContext: "",
   forceDebitOnFailedTransfer: false,
   forceDebitMismatch: false,
@@ -273,6 +274,7 @@ function resetHarness(): void {
     pendingSignatures: new Set<string>(),
     pendingSteps: new Set<string>(),
     contextAccounts: new Set<string>(),
+    zeroContexts: false,
     closingContext: "",
     forceDebitOnFailedTransfer: false,
     forceDebitMismatch: false,
@@ -405,7 +407,7 @@ vi.mock("@solana/kit", () => ({
     h.currentStep = step;
     return plan;
   },
-  createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
+  createTransactionPlanExecutor: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
   partiallySignTransactionMessageWithSigners: async (message: any) => message,
@@ -426,6 +428,11 @@ vi.mock("@solana/kit", () => ({
   fetchEncodedAccount: async (_rpc: unknown, accountAddress: string) => {
     if (accountAddress === h.reserveToken) return { exists: h.reserveAccountExists, owner: h.tokenProgram };
     if (accountAddress === h.escrowToken) return { exists: true, owner: h.tokenProgram };
+    if (h.contextAccounts.has(accountAddress) && h.zeroContexts) {
+      // The reproduced production state: verify landed before create, so the proof program owns an
+      // account that was never initialised. Its authority is the zero address; nobody can close it.
+      return { exists: true, owner: h.zkProofProgram, data: new Uint8Array(297) };
+    }
     if (h.contextAccounts.has(accountAddress)) {
       // The proof program records the context authority (the payer, i.e. the Gas Tank) in the first 32 bytes.
       const data = new Uint8Array(33);
@@ -924,6 +931,15 @@ describe("settleContributorPayrollAllocation integration", () => {
     expect(h.releaseCalls).toBe(1);
   });
 
+  it("rolls a contributor claim back when funding left an uninitialised proof account", async () => {
+    h.zeroContexts = true;
+    const result = await settleContributorPayrollAllocation({} as any, input);
+    expect(result.status).toBe("retry_ready");
+    expect(h.ledgerCalls).toBe(0);
+    expect(h.escrowFunded).toBe(false);
+    expect(h.escrowStatus).toBe("ready");
+  });
+
   it("keeps an escrow-funding proof failure retryable without posting a claim ledger", async () => {
     h.failStep = "funding_proof_setup";
     const result = await settleContributorPayrollAllocation({} as any, input);
@@ -952,6 +968,29 @@ describe("settleContributorPayrollAllocation integration", () => {
       expect(h.releaseCalls).toBeGreaterThanOrEqual(1);
       expect(h.executionOrder).not.toContain("escrow_funding");
       expect(h.escrowFunded).toBe(false);
+    });
+
+    it("rolls back instead of sending the transfer when a proof account was left uninitialised", async () => {
+      // The QA-blocking state: an all-zero proof account can never be closed or used. Funding must
+      // not stall on it, must not transfer against it, and must not claim the escrow is funded.
+      h.zeroContexts = true;
+      const result = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(result.status).toBe("retry_ready");
+      expect(h.executionOrder).not.toContain("escrow_funding");
+      expect(h.escrowFunded).toBe(false);
+      expect(h.escrowStatus).toBe("ready");
+      expect(h.allocation.status).toBe("unclaimed");
+      expect(h.releaseCalls).toBeGreaterThanOrEqual(1);
+    });
+
+    it("can fund again right after an attempt that left an uninitialised proof account", async () => {
+      h.zeroContexts = true;
+      await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      h.zeroContexts = false;
+      const retried = await fundUnclaimedPayrollClaimEscrow({} as any, fundInput);
+      expect(retried.status).toBe("funded");
+      expect(h.escrowStatus).toBe("funded");
+      expect(h.allocation.status).toBe("unclaimed");
     });
 
     it("can fund again after a rejected attempt without any manual cleanup", async () => {

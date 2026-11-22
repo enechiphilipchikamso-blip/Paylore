@@ -120,6 +120,53 @@ export function pickContextStateAuthority<T extends { address: string }>(
   return candidates.find((candidate) => sameBytes(candidate.addressBytes, authority))?.signer ?? null;
 }
 
+/**
+ * What a proof-context address holds, and so what cleanup may do about it.
+ * - `absent`: nothing to close.
+ * - `closable`: initialised, and one of our signers is its recorded authority.
+ * - `uninitialized`: the proof program owns it but no proof was ever verified into
+ *   it (all zero, 297 bytes for a range proof). Its recorded authority is the
+ *   all-zero address, which no one can sign for, so it can never be closed.
+ * - `foreign`: an account the proof program does not own.
+ * - `unclosable`: initialised, but none of our signers is its authority.
+ */
+export type ProofContextAccountState<T> =
+  | { kind: "absent" }
+  | { kind: "closable"; authority: T }
+  | { kind: "uninitialized" }
+  | { kind: "foreign" }
+  | { kind: "unclosable" };
+
+/** The proof program stores the context's authority first; an all-zero authority means no proof was verified into it. */
+export function classifyProofContextAccount<T extends { address: string }>(
+  account: { exists: boolean; owner?: unknown; data?: unknown },
+  proofProgram: string,
+  candidates: ReadonlyArray<{ signer: T; addressBytes: Uint8Array }>
+): ProofContextAccountState<T> {
+  if (!account.exists) return { kind: "absent" };
+  if (account.owner !== proofProgram) return { kind: "foreign" };
+  const authority = readContextStateAuthority(account.data);
+  if (!authority) return { kind: "unclosable" };
+  if (authority.every((byte) => byte === 0)) return { kind: "uninitialized" };
+  const signer = pickContextStateAuthority(account.data, candidates);
+  return signer ? { kind: "closable", authority: signer } : { kind: "unclosable" };
+}
+
+/**
+ * True only when every proof context is initialised and owned by `authority`.
+ * The confidential transfer is sent only then: a transfer that references a
+ * missing or uninitialised context fails, and a failure after the transfer stage
+ * began cannot be told apart from a transfer that landed.
+ */
+export function proofContextsReadyForTransfer<T extends { address: string }>(
+  states: ReadonlyArray<ProofContextAccountState<T>>,
+  authority: string,
+  expectedCount: number
+): boolean {
+  return states.length === expectedCount &&
+    states.every((state) => state.kind === "closable" && state.authority.address === authority);
+}
+
 const RESERVE_STATE_DISCRIMINATOR_LENGTH = 8;
 const RESERVE_STATE_ADDRESS_LENGTH = 32;
 

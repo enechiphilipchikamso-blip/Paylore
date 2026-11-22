@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import {
   AccountRole, addSignersToTransactionMessage, address, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
-  createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
+  createTransactionMessage,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress, isSome,
   nonDivisibleSequentialInstructionPlan, partiallySignTransactionMessageWithSigners,
@@ -18,7 +18,6 @@ import {
   getApplyConfidentialPendingBalanceInstructionFromToken,
   getConfidentialTransferInstructionPlan
 } from "@solana-program/token-2022/confidential";
-import { closeContextStateProof, ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
 import { AeKey, ElGamalKeypair, ElGamalSecretKey } from "@solana/zk-sdk/bundler";
 import {
   appendPayrollClaimEscrowContextSignature, attachPayrollClaimEscrowRecoveryApplySignature,
@@ -32,14 +31,16 @@ import {
 import { loadPayloreConfig } from "../config";
 import { withWorkspaceReserveKey } from "../reserve";
 import { withWorkspaceGasTankKey } from "../gas-tank";
-import { logServerFailure } from "../server-error-log";
+import { logServerFailure, logServerRejection } from "../server-error-log";
 import {
   getFinalizedPayrollClaimState, verifyPayrollRecoveryTransaction
 } from "./payroll-program-verification";
 import { derivePayrollAmountCommitmentMaterial } from "./payroll-amount-commitment";
 import {
-  classifyTransactionFinality, getProofContextAddresses, pickContextStateAuthority
+  classifyTransactionFinality, getProofContextAddresses
 } from "./payroll-confidential-settlement-policy";
+import { closeProofContexts, proofContextsReady } from "./proof-context-accounts";
+import { executeTransactionPlanSequentially } from "./sequential-plan-execution";
 import { configuredRpcEndpoint } from "./rpc-configured";
 
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
@@ -70,13 +71,6 @@ export class PayrollConfidentialRecoveryError extends Error {
     super(code);
     this.name = "PayrollConfidentialRecoveryError";
   }
-}
-
-class FinalityPendingError extends Error {
-  constructor(readonly signature: string) { super("The transaction is awaiting finality."); }
-}
-class FinalityFailedError extends Error {
-  constructor(readonly signature: string) { super("The transaction failed at finality."); }
 }
 
 function isRecoveryReason(value: string | null): value is RecoveryReason {
@@ -144,36 +138,17 @@ async function executePlan(
     }
   });
   const planned = await planner(plan);
-  const signatures: string[] = [];
-  let trackingFailed = false;
-  const executor = createTransactionPlanExecutorWithConcurrentLeaves({
-    executeTransactionMessage: async (_context, message) => {
+  // Steps run in plan order (create a proof account, then verify into it) and the
+  // whole plan is settled to finality before this returns; see the runner.
+  return executeTransactionPlanSequentially({
+    rpc, plan: planned, timeoutMs: FINALITY_TIMEOUT_MS, onSubmitted: submitted,
+    prepare: async (message) => {
       const signed = await partiallySignTransactionMessageWithSigners(
         addSignersToTransactionMessage([feePayer, ...additionalSigners], message)
       );
-      const encoded = getBase64EncodedWireTransaction(signed);
-      const sig = await rpc.sendTransaction(encoded, {
-        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
-      }).send();
-      const text = String(sig);
-      signatures.push(text);
-      if (submitted) {
-        try { await submitted(text); } catch { trackingFailed = true; }
-      }
-      const finality = await waitForFinality(rpc, sig);
-      if (finality === "pending") throw new FinalityPendingError(text);
-      if (finality === "failed") throw new FinalityFailedError(text);
-      return { signature: sig };
+      return { wire: getBase64EncodedWireTransaction(signed) };
     }
   });
-  try {
-    await executor(planned);
-    return { successful: !trackingFailed, pending: false, signatures, trackingFailed };
-  } catch (error) {
-    if (error instanceof FinalityPendingError) return { successful: false, pending: true, signatures, trackingFailed };
-    if (error instanceof FinalityFailedError) return { successful: false, pending: false, signatures, trackingFailed };
-    throw error;
-  }
 }
 async function confidentialBalance(
   rpc: ReturnType<typeof createSolanaRpc>,
@@ -242,35 +217,18 @@ async function cleanupRecoveryProofContexts(
   input: { workspaceId: string; allocationId: string; addresses: string[] }
 ): Promise<boolean> {
   // The Gas Tank pays for and owns these contexts, and only a context's recorded
-  // authority can close it, so the authority is read from each account.
-  const addressEncoder = getAddressEncoder();
-  const candidates = [gasSigner, signer].flatMap((candidate) => {
-    try {
-      return [{ signer: candidate, addressBytes: new Uint8Array(addressEncoder.encode(address(candidate.address))) }];
-    } catch {
-      return [];
-    }
-  });
-  const closeContext = async (addressText: string): Promise<boolean> => {
-    try {
-      const account = await fetchEncodedAccount(rpc, address(addressText));
-      if (!account.exists) return true;
-      if (account.programAddress !== ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS) return false;
-      const authority = pickContextStateAuthority(account.data, candidates);
-      if (!authority) return false;
-      const close = closeContextStateProof({
-        contextState: address(addressText),
-        authority,
-        destination: address(authority.address)
-      });
-      const result = await executePlan(rpc, gasSigner, singleInstructionPlan(close), undefined, [signer]);
+  // authority can close it. A context that nobody can close is recorded as a
+  // leftover instead of blocking the recovery forever.
+  const resolved = await closeProofContexts({
+    rpc, addresses: input.addresses, gasSigner, signer,
+    close: async (instruction) => {
+      const result = await executePlan(rpc, gasSigner, singleInstructionPlan(instruction), undefined, [signer]);
       return result.successful && !result.pending && !result.trackingFailed;
-    } catch {
-      return false;
-    }
-  };
-  // Independent closes confirm together rather than one finality wait after another.
-  const resolved = (await Promise.all([...new Set(input.addresses)].map(closeContext))).every(Boolean);
+    },
+    onLeftover: (leftover, reason) => logServerRejection("payroll_proof_context_left_on_chain", reason, 200, {
+      workspaceId: input.workspaceId, allocationId: input.allocationId, address: leftover
+    })
+  });
   if (!resolved) return false;
   return clearPayrollClaimEscrowProofContexts(db, {
     workspaceId: input.workspaceId, allocationId: input.allocationId, phase: "recovery"
@@ -562,7 +520,10 @@ export async function recoverPayrollAllocation(
         if (setup.pending) {
           return { status: "pending", signature: setup.signatures.at(-1), phase: "proof_setup" };
         }
-        if (!setup.successful || setup.trackingFailed) {
+        // Send the recovery transfer only when every proof context really exists, is
+        // initialised and is owned by the Gas Tank; otherwise roll back now.
+        if (!setup.successful || setup.trackingFailed ||
+            !await proofContextsReady(rpc, proofContexts, gasSigner, signer)) {
           const cleaned = await cleanupRecoveryProofContexts(db, rpc, signer, gasSigner, {
             workspaceId: input.workspaceId, allocationId: input.allocationId, addresses: proofContexts
           });

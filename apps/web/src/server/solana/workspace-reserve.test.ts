@@ -304,7 +304,7 @@ vi.mock("@solana/kit", () => ({
       instructions
     };
   },
-  createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
+  createTransactionPlanExecutor: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
   partiallySignTransactionMessageWithSigners: async (message: any) => {

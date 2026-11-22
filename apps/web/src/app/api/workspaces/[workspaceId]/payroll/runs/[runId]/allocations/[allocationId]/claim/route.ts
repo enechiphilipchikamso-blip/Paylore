@@ -61,6 +61,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       logServerRejection("payroll_claim_settlement_not_settled", result.status, 200, {
         workspaceId, runId, allocationId,
         warning: result.warning ?? null,
+        stage: result.stage ?? null,
         signature: result.signature ?? null
       });
       const ledgerStatus = result.status === "pending" || result.status === "workspace_busy"
@@ -92,7 +93,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       status: result.status,
       ...(result.signature ? { signature: result.signature } : {}),
       ...(result.amountBaseUnits ? { amountBaseUnits: result.amountBaseUnits } : {}),
-      ...(result.warning ? { warning: result.warning } : {})
+      ...(result.warning ? { warning: result.warning } : {}),
+      ...(result.stage ? { stage: result.stage } : {})
     }, { headers });
   } catch (error) {
     if (error instanceof RequestSecurityError) return NextResponse.json({ error: "request_not_allowed" }, { status: 403 });

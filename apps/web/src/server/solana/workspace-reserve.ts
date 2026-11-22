@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import {
   AccountRole, addSignersToTransactionMessage, address, appendTransactionMessageInstruction, blockhash, createKeyPairSignerFromBytes, createSolanaRpc,
-  createTransactionMessage, createTransactionPlanExecutorWithConcurrentLeaves,
+  createTransactionMessage,
   createTransactionPlanner, fetchEncodedAccount, getAddressEncoder,
   getBase64EncodedWireTransaction, getProgramDerivedAddress,
   partiallySignTransactionMessageWithSigners, setTransactionMessageFeePayerSigner, signature,
@@ -42,6 +42,7 @@ import {
 } from "./workspace-reserve-policy";
 import { classifyTransactionFinality } from "./payroll-confidential-settlement-policy";
 import { readSolanaRpc } from "./rpc";
+import { executeTransactionPlanSequentially } from "./sequential-plan-execution";
 import { configuredRpcEndpoint } from "./rpc-configured";
 
 // Synchronous Netlify functions stop at 60 seconds. Waiting longer would let
@@ -92,13 +93,6 @@ export class WorkspaceReserveInitializationError extends Error {
     super(code);
     this.name = "WorkspaceReserveInitializationError";
   }
-}
-
-class FinalityPendingError extends Error {
-  constructor(readonly signature: string) { super("The transaction is awaiting finality."); }
-}
-class FinalityFailedError extends Error {
-  constructor(readonly signature: string) { super("The transaction failed at finality."); }
 }
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -191,57 +185,38 @@ async function executePlan(
     }
   });
   const planned = await planner(plan);
-  const signatures: string[] = [];
-  let trackingFailed = false;
-  const executor = createTransactionPlanExecutorWithConcurrentLeaves({
-    executeTransactionMessage: async (_context, message) => {
-      const messageWithMemo = memo
-        ? appendTransactionMessageInstruction({
-            programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-            accounts: [],
-            data: encoder.encode(memo)
-          }, message)
-        : message;
-      const messageWithSigners = addSignersToTransactionMessage(
-        [feePayerSigner, ...additionalSigners],
-        messageWithMemo
-      );
-      const signed = await partiallySignTransactionMessageWithSigners(messageWithSigners);
-      const wire = getBase64EncodedWireTransaction(signed);
-      const expectedSignature = reserveSignatureFromWireTransaction(wire);
-      if (prepared) {
-        if (currentLastValidBlockHeight === null) {
-          throw new WorkspaceReserveInitializationError("reserve_confidential_funding_blockhash_unavailable", 503);
-        }
-        await prepared(expectedSignature, currentLastValidBlockHeight.toString());
-      }
-      const signature = await rpc.sendTransaction(wire, {
-        encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3n
-      }).send();
-      const signatureText = String(signature);
-      if (signatureText !== expectedSignature) {
-        throw new WorkspaceReserveInitializationError("reserve_confidential_funding_signature_mismatch", 409);
-      }
-      signatures.push(signatureText);
-      if (submitted) {
-        try {
-          await submitted(signatureText);
-        } catch {
-          trackingFailed = true;
-        }
-      }
-      const finality = await waitForFinality(rpc, signature);
-      if (finality === "pending") throw new FinalityPendingError(signatureText);
-      if (finality === "failed") throw new FinalityFailedError(signatureText);
-      return { signature };
-    }
-  });
   try {
-    await executor(planned);
-    return { successful: !trackingFailed, pending: false, signatures, trackingFailed };
+    // Steps run in plan order and the whole plan is settled to finality before
+    // this returns; see the runner.
+    return await executeTransactionPlanSequentially({
+      rpc, plan: planned, timeoutMs: FINALITY_TIMEOUT_MS, onSubmitted: submitted,
+      signatureMismatchError: () =>
+        new WorkspaceReserveInitializationError("reserve_confidential_funding_signature_mismatch", 409),
+      prepare: async (message) => {
+        const messageWithMemo = memo
+          ? appendTransactionMessageInstruction({
+              programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+              accounts: [],
+              data: encoder.encode(memo)
+            }, message)
+          : message;
+        const messageWithSigners = addSignersToTransactionMessage(
+          [feePayerSigner, ...additionalSigners],
+          messageWithMemo
+        );
+        const signed = await partiallySignTransactionMessageWithSigners(messageWithSigners);
+        const wire = getBase64EncodedWireTransaction(signed);
+        const expectedSignature = reserveSignatureFromWireTransaction(wire);
+        if (prepared) {
+          if (currentLastValidBlockHeight === null) {
+            throw new WorkspaceReserveInitializationError("reserve_confidential_funding_blockhash_unavailable", 503);
+          }
+          await prepared(expectedSignature, currentLastValidBlockHeight.toString());
+        }
+        return { wire, expectedSignature };
+      }
+    });
   } catch (error) {
-    if (error instanceof FinalityPendingError) return { successful: false, pending: true, signatures, trackingFailed };
-    if (error instanceof FinalityFailedError) return { successful: false, pending: false, signatures, trackingFailed };
     if (/(insufficient funds|insufficient lamports|insufficient balance|insufficient fee|fee payer.{0,40}insufficient|attempt to debit an account but found no record of a prior credit)/i.test(
       error instanceof Error ? error.message : String(error)
     )) {

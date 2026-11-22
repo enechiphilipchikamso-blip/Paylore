@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
   recoveryPlan: null as any,
   sentSignatures: [] as string[],
   transferExecuted: false,
+  contextsClosed: false,
+  zeroContexts: false,
   sourceBefore: "2000",
   reserveBefore: "5000",
   sourceAfter: "750",
@@ -70,6 +72,7 @@ function getPlanStep(plan: any): string {
       Buffer.from(ix.data ?? []).subarray(0, 8).equals(Buffer.from(discriminator("global:recover_claim"))))) return "recovery";
   if (instructions.some((ix) => ix.programAddress === h.tokenProgram && ix.data?.[0] === 27 && ix.data?.[1] === 7)) return "confidential_transfer";
   if (instructions.some((ix) => ix.programAddress === h.zkProofProgram && ix.data?.[0] === 3)) return "proof_setup";
+  if (instructions.some((ix) => ix.programAddress === h.zkProofProgram && ix.data?.[0] === 4)) return "close_context";
   if (instructions.some((ix) => ix.programAddress === h.tokenProgram && ix.data?.[0] === 201)) return "apply";
   return "other";
 }
@@ -109,6 +112,8 @@ function reset(): void {
     recoveryPlan: null,
     sentSignatures: [],
     transferExecuted: false,
+    contextsClosed: false,
+    zeroContexts: false,
     sourceBefore: "2000",
     reserveBefore: "5000",
     sourceAfter: "750",
@@ -154,6 +159,7 @@ vi.mock("@solana/kit", () => ({
         const signature = "recovery-signature-" + (h.sentSignatures.length + 1);
         h.currentStep = step;
         h.sentSignatures.push(signature);
+        if (step === "close_context") h.contextsClosed = true;
         if (step === "recovery") {
           h.transferExecuted = true;
           h.recoveryPlan = h.currentPlan;
@@ -168,7 +174,7 @@ vi.mock("@solana/kit", () => ({
     h.currentPlan = plan;
     return plan;
   },
-  createTransactionPlanExecutorWithConcurrentLeaves: (options: any) => async (plan: any) => {
+  createTransactionPlanExecutor: (options: any) => async (plan: any) => {
     await options.executeTransactionMessage({}, plan);
   },
   partiallySignTransactionMessageWithSigners: async (message: any) => message,
@@ -189,6 +195,18 @@ vi.mock("@solana/kit", () => ({
   fetchEncodedAccount: async (_rpc: unknown, accountAddress: string) => {
     if (accountAddress === h.escrowToken || accountAddress === h.reserveToken) {
       return { exists: true, owner: h.tokenProgram };
+    }
+    if ([h.context1, h.context2, h.context3].includes(accountAddress)) {
+      // An initialised proof context: its authority is the Gas Tank (first 32 bytes),
+      // and it exists until a close instruction has been sent.
+      if (h.contextsClosed) return { exists: false };
+      // The reproduced production state: verify landed before create, leaving an all-zero context.
+      if (h.zeroContexts) {
+        return { exists: true, owner: h.zkProofProgram, programAddress: h.zkProofProgram, data: new Uint8Array(297) };
+      }
+      const data = new Uint8Array(33);
+      data.set(sha(h.reserve));
+      return { exists: true, owner: h.zkProofProgram, programAddress: h.zkProofProgram, data };
     }
     return { exists: false, owner: h.zkProofProgram };
   }
@@ -391,7 +409,9 @@ vi.mock("./payroll-amount-commitment", () => ({
   }))
 }));
 
-vi.mock("./payroll-confidential-settlement-policy", () => ({
+vi.mock("./payroll-confidential-settlement-policy", async (importOriginal) => ({
+  // The proof-context classification is real policy code: the tests feed it initialised accounts.
+  ...(await importOriginal<typeof import("./payroll-confidential-settlement-policy")>()),
   classifyTransactionFinality: (status: any) =>
     !status || status.confirmationStatus !== "finalized"
       ? "pending"
@@ -445,6 +465,19 @@ describe("confidential payroll recovery orchestration", () => {
       reserveAvailableBefore: "5000",
       reserveAvailableAfter: "6250"
     });
+    expect(h.clearedProofs).toHaveLength(1);
+  });
+
+  it("rolls recovery back without sending the transfer when a proof context was left uninitialised", async () => {
+    h.zeroContexts = true;
+
+    const result = await recoverPayrollAllocation({} as any, input);
+
+    // An all-zero context can never be closed, so it must neither stall the rollback
+    // nor let the transfer run against a proof that was never verified.
+    expect(result.status).toBe("retry_ready");
+    expect(h.transferExecuted).toBe(false);
+    expect(h.recoveryRecords).toHaveLength(0);
     expect(h.clearedProofs).toHaveLength(1);
   });
 

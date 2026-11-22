@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
+import { describeContributorClaimPending, getClaimAndCashOutOutcome } from "./claim-and-cash-out-outcome";
 
 describe("Claim & Cash Out outcome copy", () => {
   it("reports success only for fully reconciled allocations", () => {
@@ -60,5 +60,43 @@ describe("Claim & Cash Out outcome copy", () => {
       state: "partial",
       text: expect.stringContaining("Reason: Payroll claim failed: RPC request timed out")
     });
+  });
+});
+
+describe("describeContributorClaimPending", () => {
+  it("tells the contributor a rolled-back claim moved no funds and can simply be retried", () => {
+    expect(describeContributorClaimPending("retry_ready")).toContain("no payout reached your account");
+    for (const stage of ["rollback_cleanup_pending", "rollback_release_pending"]) {
+      const text = describeContributorClaimPending("pending", stage) ?? "";
+      expect(text).toContain("rolled back");
+      expect(text).toContain("select Claim again");
+      expect(text).not.toMatch(/funded|finality/i);
+    }
+  });
+
+  it("warns against a second payout only when a transfer may be on the network", () => {
+    for (const stage of ["transfer_unconfirmed", "transfer_outcome_unknown", "balances_unverified"]) {
+      expect(describeContributorClaimPending("pending", stage)).toContain("Do not start another payout");
+    }
+    expect(describeContributorClaimPending("pending", "proof_setup_unconfirmed")).toContain("Nothing has been transferred yet");
+  });
+
+  it("explains a funded escrow with unfinished cleanup and a concurrent settlement", () => {
+    expect(describeContributorClaimPending("pending", "proof_cleanup_pending")).toContain("final cleanup");
+    expect(describeContributorClaimPending("pending", "funding_in_progress")).toContain("still running");
+  });
+
+  it("gives no reason when the server named none", () => {
+    expect(describeContributorClaimPending("pending")).toBeNull();
+    expect(describeContributorClaimPending("pending", "something_new")).toBeNull();
+  });
+
+  it("feeds the outcome text for a pending claim", () => {
+    const outcome = getClaimAndCashOutOutcome({
+      settled: 0, pending: 1, failed: 0, cleanupPending: 0, stateConflict: false,
+      pendingReason: describeContributorClaimPending("retry_ready")
+    });
+    expect(outcome.state).toBe("partial");
+    expect(outcome.text).toContain("Select Claim again.");
   });
 });

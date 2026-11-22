@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { address, singleInstructionPlan, type Instruction } from "@solana/kit";
+import { address, getAddressEncoder, singleInstructionPlan, type Instruction } from "@solana/kit";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS } from "@solana-program/zk-elgamal-proof";
 import {
-  bindSettlementPendingStateToConfidentialTransfer, getProofContextAddresses, isExpectedConfidentialTransfer,
+  bindSettlementPendingStateToConfidentialTransfer, classifyProofContextAccount, getProofContextAddresses, isExpectedConfidentialTransfer,
   isOrphanedAttempt, matchesConfiguredReserveState, matchesExactConfidentialDebit, ORPHANED_ATTEMPT_AFTER_MS,
-  pickContextStateAuthority, readContextStateAuthority
+  pickContextStateAuthority, proofContextsReadyForTransfer, readContextStateAuthority
 } from "./payroll-confidential-settlement-policy";
 
 const source = address("So11111111111111111111111111111111111111112");
@@ -182,5 +182,86 @@ describe("configured reserve state", () => {
   it("does not match missing or truncated account data", () => {
     expect(matchesConfiguredReserveState(null, expected)).toBe(false);
     expect(matchesConfiguredReserveState(state().subarray(0, 100), expected)).toBe(false);
+  });
+});
+
+describe("proof context account classification", () => {
+  const proofProgram = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS;
+  const gasTank = { address: "Vote111111111111111111111111111111111111111" };
+  const reserve = { address: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" };
+  const encode = (value: string) => new Uint8Array(getAddressEncoder().encode(address(value)));
+  const candidates = [gasTank, reserve].map((signer) => ({ signer, addressBytes: encode(signer.address) }));
+  const withAuthority = (value: string, length = 297) => {
+    const data = new Uint8Array(length);
+    data.set(encode(value));
+    data[32] = 1;
+    return data;
+  };
+
+  it("is absent when the account does not exist", () => {
+    expect(classifyProofContextAccount({ exists: false }, proofProgram, candidates)).toEqual({ kind: "absent" });
+  });
+
+  it("is closable when the Gas Tank is the recorded authority", () => {
+    expect(classifyProofContextAccount(
+      { exists: true, owner: proofProgram, data: withAuthority(gasTank.address) }, proofProgram, candidates
+    )).toEqual({ kind: "closable", authority: gasTank });
+  });
+
+  it("is closable by the reserve when the reserve is the authority", () => {
+    expect(classifyProofContextAccount(
+      { exists: true, owner: proofProgram, data: withAuthority(reserve.address) }, proofProgram, candidates
+    )).toEqual({ kind: "closable", authority: reserve });
+  });
+
+  it("is uninitialized when the account is all zero, as verify-before-create left it", () => {
+    // The stuck production account: 297 zero bytes owned by the proof program. Its authority is
+    // the zero address, which no signer can ever match, so it can never be closed.
+    expect(classifyProofContextAccount(
+      { exists: true, owner: proofProgram, data: new Uint8Array(297) }, proofProgram, candidates
+    )).toEqual({ kind: "uninitialized" });
+  });
+
+  it("is foreign when another program owns the account", () => {
+    expect(classifyProofContextAccount(
+      { exists: true, owner: other, data: withAuthority(gasTank.address) }, proofProgram, candidates
+    )).toEqual({ kind: "foreign" });
+  });
+
+  it("is unclosable when initialised for an authority we do not hold", () => {
+    expect(classifyProofContextAccount(
+      { exists: true, owner: proofProgram, data: withAuthority(other) }, proofProgram, candidates
+    )).toEqual({ kind: "unclosable" });
+  });
+
+  it("is unclosable when the data is too short to carry an authority", () => {
+    expect(classifyProofContextAccount(
+      { exists: true, owner: proofProgram, data: new Uint8Array(8) }, proofProgram, candidates
+    )).toEqual({ kind: "unclosable" });
+    expect(classifyProofContextAccount({ exists: true, owner: proofProgram }, proofProgram, candidates))
+      .toEqual({ kind: "unclosable" });
+  });
+
+  describe("readiness for the confidential transfer", () => {
+    const closable = { kind: "closable" as const, authority: gasTank };
+
+    it("is ready only when every context is initialised and owned by the Gas Tank", () => {
+      expect(proofContextsReadyForTransfer([closable, closable, closable], gasTank.address, 3)).toBe(true);
+    });
+
+    it.each([
+      ["an all-zero context", { kind: "uninitialized" as const }],
+      ["a missing context", { kind: "absent" as const }],
+      ["a foreign context", { kind: "foreign" as const }],
+      ["an unclosable context", { kind: "unclosable" as const }],
+      ["a context owned by the reserve instead of the Gas Tank", { kind: "closable" as const, authority: reserve }]
+    ])("is not ready with %s", (_label, state) => {
+      expect(proofContextsReadyForTransfer([closable, closable, state], gasTank.address, 3)).toBe(false);
+    });
+
+    it("is not ready when a context was not read at all", () => {
+      expect(proofContextsReadyForTransfer([closable, closable], gasTank.address, 3)).toBe(false);
+      expect(proofContextsReadyForTransfer([], gasTank.address, 0)).toBe(true);
+    });
   });
 });
